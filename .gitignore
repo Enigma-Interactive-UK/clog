@@ -1,6 +1,16 @@
 # Sample log fixtures - kept locally only
 research/
 
+# Rust build artifacts
+/target/
+
+# Node / Vite artifacts
+/ui/node_modules/
+/ui/dist/
+
+# Tauri generated files (regenerated each build)
+/crates/clog-app/gen/
+
 # OpenWolf ephemeral state
 .wolf/memory.md
 .wolf/daemon.log

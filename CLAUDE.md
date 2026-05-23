@@ -6,29 +6,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Clog** (Core Log) - a Windows desktop application for viewing, tailing, searching and filtering log4j2-formatted log files produced by Play 1.x Java applications.
 
-The project is in its earliest stage: no source code, no build system, and no tech stack chosen yet. The first substantive task is to agree on the stack before scaffolding. Do not invent build, test, or run commands - none exist yet. Update this file once they do.
+The design lives in [docs/design.md](docs/design.md). The build is sliced into ten vertical phases in [docs/build-phases.md](docs/build-phases.md). At each session's start, check the current phase and re-read its **Scope**, **Done-criteria**, and **Demo** before touching code. Resist scope creep into the current phase.
+
+## Stack
+
+- **Rust** (stable, msvc target) for the engine. MSRV 1.94.
+- **Tauri v2** as the app shell. Tauri CLI installed via `cargo install tauri-cli --version "^2.0" --locked`.
+- **Vue 3 + Vite + TypeScript** for the UI. Bare `ref`/`reactive` (no Pinia yet), Composition API + `<script setup>`.
+
+## Workspace layout
+
+```
+clog/
+  Cargo.toml                workspace manifest
+  crates/
+    clog-core/              pure engine (no Tauri deps)
+    clog-app/               Tauri v2 binary (bin name: clog)
+      tauri.conf.json
+      capabilities/         capability files (default.json grants dialog open)
+      icons/                bundle icons (placeholder until P10)
+  ui/                       Vue 3 + Vite + TS frontend
+  docs/                     design.md + build-phases.md
+  research/                 sample logs + log4j2 configs (gitignored)
+  .wolf/                    OpenWolf project memory
+```
+
+**Crate split rule:** `clog-core` stays Tauri-free (engine, parser, search, tail, persistence). `clog-app` is the only crate allowed to depend on `tauri`, `tauri-build`, or `tauri-plugin-*`. A `clog-protocol` crate is reserved for when the WSL companion daemon is real.
+
+## Run / build / verify commands
+
+All run from the workspace root.
+
+```powershell
+# Dev (launches Vite + Tauri window)
+cargo tauri dev --config crates/clog-app/tauri.conf.json
+
+# Workspace build
+cargo build --workspace
+
+# UI production build
+npm --prefix ui run build
+
+# Lints (CI-equivalent — must stay green)
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Tests
+cargo test --workspace
+```
+
+**Tauri config gotcha:** `beforeDevCommand` runs with cwd set to the frontend root (`ui/`), not the workspace root and not the tauri.conf.json dir. Keep it as `npm run dev` / `npm run build`. Prefixing with `--prefix ui` double-paths to `ui/ui/`.
 
 ## Log format Clog must parse
 
-Sample logs and the originating log4j2 configs live in [research/](research/). The pattern in production use is:
+Sample logs and the originating log4j2 configs live in [research/](research/). Two production patterns are confirmed:
 
 ```
-[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n
+[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n    (wsl-oink)
+%d{yyyy-MM-dd HH:mm:ss.SSS} %level [%t] - %msg%n              (prod, no logger field, level unbracketed)
 ```
 
-Concretely each line looks like:
-
-```
-[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress
-```
+The parser is **PatternLayout-driven**, not hardcoded - see the decision log in `.wolf/cerebrum.md`.
 
 Notes that matter for the parser:
-- Level is left-padded to 5 chars inside brackets (`INFO `, `WARN `, `ERROR`, `DEBUG`, `TRACE`).
+- Level may be bracketed and left-padded to 5 chars (`[INFO ]`) or bare (`INFO`).
 - Thread name is bracketed and may contain spaces or punctuation.
-- Logger name (`%c{1}`) is the short class name, typically `play` for framework lines but anything for app lines.
-- `%msg` may contain newlines (stack traces) - lines that do not match the leading `[LEVEL]` pattern belong to the previous record.
-- Play 1.x rolls files via log4j2's `RollingFile` with an `OnStartupTriggeringPolicy`, so tailing must survive file rotation/truncation. See [research/log4j2.wsl-oink.xml](research/log4j2.wsl-oink.xml) for a representative appender setup (main + per-level info/warn/error files).
-- A real ~8.7MB sample log lives at [research/solopress.out](research/solopress.out) - use it for parser and tailing tests rather than synthetic fixtures.
+- Logger name (`%c{1}`) is the short class name, typically `play` for framework lines.
+- `%msg` may contain newlines (stack traces) - continuation lines belong to the previous record.
+- Files rotate via `OnStartupTriggeringPolicy` (wsl-oink) and `TimeBasedTriggeringPolicy` (prod). Rotation is detected via `(size shrank) OR (first 256 bytes hash changed)`.
+
+### Sample fixtures
+
+- [research/solopress-prod.log](research/solopress-prod.log) - 8.7 MB, **74,921 lines**, prod pattern. Primary smoke fixture.
+- [research/solopress-wsl-oink.out](research/solopress-wsl-oink.out) - 42 KB, 386 lines, wsl-oink pattern.
+
+Note: `docs/build-phases.md` and `docs/design.md` still reference `research/solopress.out` (the historical name). Code should use the real filenames above.
 
 ## OpenWolf
 
