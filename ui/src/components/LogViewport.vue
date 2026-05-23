@@ -24,6 +24,7 @@ import {
   ROW_HEIGHT,
   type BucketStat,
   type HeaderFields,
+  type HitRef,
   type LevelMinimapPayload,
   type LineRow,
   type RecordRef,
@@ -208,6 +209,37 @@ function toggleFollowTail() {
   if (props.tab.followTail.value) jumpToBottom()
 }
 
+// Resolve which physical line within the hit's record actually contains the
+// first match. Multi-line records (stack traces, multiline messages) carry a
+// single HitRef per record_idx with record-relative byte ranges; centring on
+// `record_first_line` lands the viewport on the record header even when the
+// real match is buried dozens of continuation lines below. Fall back to
+// `record_first_line` when pages aren't loaded yet -- the post-scroll
+// `scheduleHitFocus` retry re-centres once the row enters the DOM.
+function hitTargetLine(hit: HitRef): number {
+  if (hit.ranges.length === 0) return hit.record_first_line
+  const firstStart = hit.ranges[0][0]
+  let target = hit.record_first_line
+  for (let i = 0; i < hit.record_line_count; i++) {
+    const li = hit.record_first_line + i
+    const row = props.tab.lineRow(li)
+    if (!row) {
+      // Page not loaded yet; nudge it in so the next scheduleHitFocus pass
+      // can refine the scroll position.
+      props.tab.fetchPage(Math.floor(li / PAGE_SIZE)).catch(() => {})
+      break
+    }
+    const start = row.byte_offset_in_record
+    const end = start + row.text.length + 1
+    if (firstStart >= start && firstStart < end) {
+      target = li
+      break
+    }
+    if (firstStart >= start) target = li
+  }
+  return target
+}
+
 // Scroll-to-current-hit, defined here because it needs the virtualizer.
 function scrollToCurrentHit() {
   const tab = props.tab
@@ -215,14 +247,15 @@ function scrollToCurrentHit() {
   const recIdx = tab.hitOrder.value[tab.currentHit.value]
   const hit = tab.hits.value.get(recIdx)
   if (!hit) return
+  const targetLine = hitTargetLine(hit)
   const filt = filteredLineIndices.value
   let targetVirtual: number
   if (filt) {
-    const want = hit.record_first_line
-    targetVirtual = filt.indexOf(want)
+    targetVirtual = filt.indexOf(targetLine)
+    if (targetVirtual < 0) targetVirtual = filt.indexOf(hit.record_first_line)
     if (targetVirtual < 0) return
   } else {
-    targetVirtual = hit.record_first_line
+    targetVirtual = targetLine
   }
   tab.followTail.value = false
   virtualizer.value.scrollToIndex(targetVirtual, { align: 'center' })
@@ -260,13 +293,27 @@ function bringCurrentHitMatchIntoView(): boolean {
   if (!el) return false
   const match = el.querySelector('.row.is-current-hit .h-search-match') as HTMLElement | null
   if (!match) return false
-  if (el.scrollWidth <= el.clientWidth) return true
-  const matchRect = match.getBoundingClientRect()
   const elRect = el.getBoundingClientRect()
-  const matchLeftInContent = matchRect.left - elRect.left + el.scrollLeft
-  const targetScrollLeft = matchLeftInContent - el.clientWidth / 2 + match.offsetWidth / 2
-  const maxScrollLeft = el.scrollWidth - el.clientWidth
-  el.scrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft))
+  // Vertical: centre the matching row, not the record header. hitTargetLine
+  // does this on the initial scrollToIndex, but the page containing the
+  // match may have arrived after that scroll, so refine here once the row
+  // has rendered.
+  const rowEl = match.closest('.row') as HTMLElement | null
+  if (rowEl) {
+    const rowRect = rowEl.getBoundingClientRect()
+    const rowCentreInContent = rowRect.top - elRect.top + el.scrollTop + rowEl.offsetHeight / 2
+    const targetScrollTop = rowCentreInContent - el.clientHeight / 2
+    const maxScrollTop = el.scrollHeight - el.clientHeight
+    const next = Math.max(0, Math.min(maxScrollTop, targetScrollTop))
+    if (Math.abs(next - el.scrollTop) > 1) el.scrollTop = next
+  }
+  if (el.scrollWidth > el.clientWidth) {
+    const matchRect = match.getBoundingClientRect()
+    const matchLeftInContent = matchRect.left - elRect.left + el.scrollLeft
+    const targetScrollLeft = matchLeftInContent - el.clientWidth / 2 + match.offsetWidth / 2
+    const maxScrollLeft = el.scrollWidth - el.clientWidth
+    el.scrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft))
+  }
   return true
 }
 

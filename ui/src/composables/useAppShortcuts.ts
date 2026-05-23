@@ -30,6 +30,13 @@ export function useAppShortcuts(opts: UseAppShortcutsOptions) {
   const { tabs, activeTabId, activateTab, closeTab, pickFile, handleFontShortcut } = opts
 
   function suppressBrowserFind(ev: KeyboardEvent) {
+    // F3 (and Shift+F3) trigger the webview "find next/previous" overlay on
+    // their own, no modifier required.
+    if (ev.key === 'F3') {
+      ev.preventDefault()
+      ev.stopPropagation()
+      return
+    }
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return
     const k = ev.key.toLowerCase()
     if (k === 'f' || k === 'g') {

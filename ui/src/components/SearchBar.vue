@@ -236,14 +236,19 @@ defineExpose({
   }
 
   .clear-search {
-    /* Anchored inside the search input; the dismiss base supplies colour,
-       hover and focus -- only positioning + sizing live here. */
+    /* Anchored inside the search input. The scoped `button` rule below
+       paints a solid background, padding and a border on every <button> in
+       the bar; without overriding here the dismiss-glyph SVG gets squeezed
+       out of the 1.2rem hit area, which is why the X went missing. */
     position: absolute;
     top: 50%;
     right: 0.3rem;
     transform: translateY(-50%);
     width: 1.2rem;
     height: 1.2rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
     font-size: 1.05rem;
     border-radius: 50%;
   }
