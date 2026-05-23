@@ -19,6 +19,34 @@ pub enum PathMode {
     Raw,
 }
 
+/// Configurable speed-rail gradient anchors. When `None` at every
+/// persistence tier, the rail falls back to per-file auto-normalisation.
+/// When `Some`, both fields are present and `fast_ms < slow_ms`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlowRequestThresholds {
+    pub fast_ms: u32,
+    pub slow_ms: u32,
+}
+
+impl SlowRequestThresholds {
+    /// Maximum permitted anchor value (10 minutes in ms).
+    pub const MAX_MS: u32 = 600_000;
+
+    /// Build a validated pair. Returns `None` when `fast_ms >= slow_ms`
+    /// or when either field exceeds `MAX_MS`. Stored on disk as
+    /// `Option<Self>` so "unset" and "set but invalid" never collide.
+    #[must_use]
+    pub fn new(fast_ms: u32, slow_ms: u32) -> Option<Self> {
+        if fast_ms >= slow_ms {
+            return None;
+        }
+        if slow_ms > Self::MAX_MS {
+            return None;
+        }
+        Some(Self { fast_ms, slow_ms })
+    }
+}
+
 /// Normalise a raw URL path for aggregation. See [`PathMode::Normalised`].
 #[must_use]
 pub fn normalise_path(raw: &str) -> String {
@@ -131,5 +159,22 @@ mod tests {
             normalise_path("/checkout/setdeliveryaddress.json"),
             "/checkout/setdeliveryaddress.json"
         );
+    }
+
+    #[test]
+    fn thresholds_new_accepts_valid_range() {
+        assert!(SlowRequestThresholds::new(1000, 5000).is_some());
+        assert!(SlowRequestThresholds::new(0, 600_000).is_some());
+    }
+
+    #[test]
+    fn thresholds_new_rejects_fast_ge_slow() {
+        assert!(SlowRequestThresholds::new(5000, 5000).is_none());
+        assert!(SlowRequestThresholds::new(5000, 1000).is_none());
+    }
+
+    #[test]
+    fn thresholds_new_rejects_out_of_bounds() {
+        assert!(SlowRequestThresholds::new(0, 600_001).is_none());
     }
 }
