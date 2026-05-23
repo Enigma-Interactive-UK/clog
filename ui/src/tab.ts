@@ -145,6 +145,46 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   const scrollTop = ref(0)
   const unread = ref(false)
 
+  // --- Bookmarks (physical line indices) ---
+  // Sorted-on-write via snapshot(); kept as a Set for O(1) toggle/lookup.
+  const bookmarks = ref<Set<number>>(new Set<number>())
+
+  function isBookmarked(lineIdx: number): boolean {
+    return bookmarks.value.has(lineIdx)
+  }
+
+  function toggleBookmark(lineIdx: number) {
+    if (lineIdx < 0 || lineIdx >= file.value.line_count) return
+    const next = new Set(bookmarks.value)
+    if (next.has(lineIdx)) next.delete(lineIdx)
+    else next.add(lineIdx)
+    bookmarks.value = next
+  }
+
+  function removeBookmark(lineIdx: number) {
+    if (!bookmarks.value.has(lineIdx)) return
+    const next = new Set(bookmarks.value)
+    next.delete(lineIdx)
+    bookmarks.value = next
+  }
+
+  function clearBookmarks() {
+    if (bookmarks.value.size === 0) return
+    bookmarks.value = new Set()
+  }
+
+  // Drop bookmarks that point past the current line_count (file shrank,
+  // rotated, or restored against a smaller file). Sorted ascending.
+  function prunedBookmarks(): number[] {
+    const out: number[] = []
+    const limit = file.value.line_count
+    for (const idx of bookmarks.value) {
+      if (idx >= 0 && idx < limit) out.push(idx)
+    }
+    out.sort((a, b) => a - b)
+    return out
+  }
+
   // --- Helpers -------------------------------------------------------------
 
   function lineRow(index: number): LineRow | null {
@@ -222,6 +262,10 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
         size_bytes: delta.last_offset,
       }
       lastTailLineCount = delta.line_count
+      // Line numbers no longer mean what they meant before rotation;
+      // existing bookmarks would point at unrelated content. Drop them
+      // silently per the feature spec.
+      clearBookmarks()
       showRotationToast()
       void fetchPage(0)
       if (!isFullLevelMask(levelAllow.value)) void refreshAllowedRecords()
@@ -430,6 +474,16 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     searchQuery.value = r.filter_text ?? ''
     followTail.value = !!r.follow_tail
     scrollTop.value = r.scroll_top
+    if (Array.isArray(r.bookmarks) && r.bookmarks.length > 0) {
+      const limit = file.value.line_count
+      const next = new Set<number>()
+      for (const idx of r.bookmarks) {
+        if (Number.isFinite(idx) && idx >= 0 && idx < limit) next.add(idx)
+      }
+      bookmarks.value = next
+    } else {
+      bookmarks.value = new Set()
+    }
   }
 
   function snapshot(): RestoredFile {
@@ -442,6 +496,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       search_mode: searchMode.value,
       search_case_sensitive: searchCaseSensitive.value,
       filter_mode: filterMode.value,
+      bookmarks: prunedBookmarks(),
     }
   }
 
@@ -494,7 +549,12 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     rotationToast,
     scrollTop,
     unread,
+    bookmarks,
     // methods
+    isBookmarked,
+    toggleBookmark,
+    removeBookmark,
+    clearBookmarks,
     lineRow,
     fetchPage,
     startTail,

@@ -107,6 +107,7 @@ export interface RestoredFile {
   search_mode: SearchMode
   search_case_sensitive: boolean
   filter_mode: boolean
+  bookmarks?: number[]
 }
 
 export interface Session {

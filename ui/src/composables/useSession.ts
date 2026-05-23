@@ -80,7 +80,7 @@ export function useSession({ tabs, activeTabId, openPath, setActiveTabId }: UseS
   // Coarse fingerprint over every tab so any per-tab knob change schedules
   // a debounced save without N separate watchers.
   watch(
-    () => tabs.value.map((t) => `${t.file.value.path}|${t.followTail.value}|${t.searchMode.value}|${t.searchQuery.value}|${t.searchCaseSensitive.value}|${t.filterMode.value}|${Object.entries(t.levelAllow.value).filter(([, v]) => v).map(([k]) => k).join(',')}|${t.scrollTop.value}`).join('||') + '#' + String(activeTabId.value),
+    () => tabs.value.map((t) => `${t.file.value.path}|${t.followTail.value}|${t.searchMode.value}|${t.searchQuery.value}|${t.searchCaseSensitive.value}|${t.filterMode.value}|${Object.entries(t.levelAllow.value).filter(([, v]) => v).map(([k]) => k).join(',')}|${t.scrollTop.value}|bm:${t.bookmarks.value.size}`).join('||') + '#' + String(activeTabId.value),
     () => {
       if (sessionRestoreInFlight.value) return
       scheduleSessionSave()

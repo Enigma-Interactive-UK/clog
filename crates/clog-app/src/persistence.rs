@@ -154,6 +154,10 @@ pub struct RestoredFile {
     pub search_case_sensitive: bool,
     #[serde(default)]
     pub filter_mode: bool,
+    /// Sorted, deduped physical line indices the user has bookmarked. Lines
+    /// that no longer exist on next open are silently dropped UI-side.
+    #[serde(default)]
+    pub bookmarks: Vec<u64>,
 }
 
 fn default_full_mask() -> u32 {

@@ -384,6 +384,39 @@ function buildFilteredMinimap(
   return buckets
 }
 
+// Physical line indices the user has bookmarked, projected to the
+// visible (possibly filter-mode) virtual index. Filter-mode bookmarks
+// whose line is hidden by the level mask or hit set are excluded from
+// the minimap but stay persisted on the tab.
+interface BookmarkVisual {
+  lineIdx: number
+  virtualIdx: number
+}
+
+const bookmarkVisuals = computed<BookmarkVisual[]>(() => {
+  const set = props.tab.bookmarks.value
+  if (set.size === 0) return []
+  const filt = filteredLineIndices.value
+  const out: BookmarkVisual[] = []
+  if (filt) {
+    // O(n) lookup per bookmark would be quadratic; build an index once.
+    const lookup = new Map<number, number>()
+    for (let v = 0; v < filt.length; v++) lookup.set(filt[v], v)
+    for (const idx of set) {
+      const v = lookup.get(idx)
+      if (v !== undefined) out.push({ lineIdx: idx, virtualIdx: v })
+    }
+  } else {
+    for (const idx of set) {
+      if (idx >= 0 && idx < props.tab.file.value.line_count) {
+        out.push({ lineIdx: idx, virtualIdx: idx })
+      }
+    }
+  }
+  out.sort((a, b) => a.virtualIdx - b.virtualIdx)
+  return out
+})
+
 function paintMinimap() {
   const canvas = minimapEl.value
   if (!canvas) return
@@ -419,17 +452,47 @@ function paintMinimap() {
       runColour = next
     }
   }
+  paintBookmarkMarkers(ctx, h)
+}
+
+function currentAccent(): string {
+  const styles = globalThis.getComputedStyle?.(document.documentElement)
+  const fromVar = styles?.getPropertyValue('--accent').trim()
+  return fromVar && fromVar.length > 0 ? fromVar : '#de6826'
+}
+
+function paintBookmarkMarkers(ctx: CanvasRenderingContext2D, h: number) {
+  const visuals = bookmarkVisuals.value
+  const eff = effectiveCount.value
+  if (visuals.length === 0 || eff === 0 || h === 0) return
+  const accent = currentAccent()
+  ctx.fillStyle = accent
+  // Dashed stripe: 3px dash, 2px gap. Pure fillRect rather than setLineDash
+  // so the dashes align to whole device pixels regardless of dpr scaling.
+  const DASH = 3
+  const GAP = 2
+  for (const bm of visuals) {
+    const y = Math.min(h - 1, Math.floor((bm.virtualIdx * h) / eff))
+    for (let x = 0; x < MINIMAP_WIDTH; x += DASH + GAP) {
+      ctx.fillRect(x, y, Math.min(DASH, MINIMAP_WIDTH - x), 2)
+    }
+  }
 }
 
 const minimapIndicator = computed(() => {
   if (props.tab.file.value.line_count === 0) {
     return { top: 0, height: 0, visible: false }
   }
-  const el = scrollEl.value
   const h = viewportHeightPx.value
-  if (!el || h <= 0) return { top: 0, height: 0, visible: false }
-  const total = el.scrollHeight
-  if (total <= h) return { top: 0, height: h, visible: false }
+  if (h <= 0) return { top: 0, height: 0, visible: false }
+  // Use the virtualizer's total size (reactive) rather than el.scrollHeight,
+  // which doesn't recompute when switching tabs.
+  const total = totalSize.value
+  // Hide the indicator when the log fully fits the viewport - the handle
+  // covering the entire minimap is meaningless and looks like a bug.
+  if (total <= 0 || total - h < 1) {
+    return { top: 0, height: h, visible: false }
+  }
   const top = (viewportScrollTop.value / total) * h
   const height = Math.max(8, (h / total) * h)
   return { top, height, visible: true }
@@ -520,8 +583,33 @@ function onMinimapPointerLeave() {
   minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null }
 }
 let minimapDragging = false
+function bookmarkVirtualIdxAtY(clientY: number): number | null {
+  const visuals = bookmarkVisuals.value
+  if (visuals.length === 0) return null
+  const canvas = minimapEl.value
+  if (!canvas) return null
+  const rect = canvas.getBoundingClientRect()
+  const eff = effectiveCount.value
+  if (rect.height <= 0 || eff === 0) return null
+  // Match the stripe Y projection used in paintBookmarkMarkers.
+  const HIT_TOLERANCE_PX = 4
+  let best: { v: number; dist: number } | null = null
+  for (const bm of visuals) {
+    const y = rect.top + Math.min(rect.height - 1, Math.floor((bm.virtualIdx * rect.height) / eff))
+    const dist = Math.abs(clientY - y)
+    if (dist > HIT_TOLERANCE_PX) continue
+    if (!best || dist < best.dist) best = { v: bm.virtualIdx, dist }
+  }
+  return best ? best.v : null
+}
+
 function onMinimapPointerDown(ev: PointerEvent) {
   props.tab.followTail.value = false
+  const bookmarkV = bookmarkVirtualIdxAtY(ev.clientY)
+  if (bookmarkV !== null) {
+    virtualizer.value.scrollToIndex(bookmarkV, { align: 'center' })
+    return
+  }
   minimapDragging = true
   ;(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId)
   scrollToMinimapY(ev.clientY)
@@ -540,6 +628,12 @@ function onMinimapPointerUp(ev: PointerEvent) {
 watch(filteredSourceRecords, () => {
   scheduleMinimapFetch(true)
 })
+
+// Repaint when bookmarks change so the accent stripes refresh.
+watch(
+  () => props.tab.bookmarks.value,
+  () => paintMinimap(),
+)
 
 watch(
   () => props.tab.pages.value,
@@ -725,6 +819,17 @@ function levelGutterVar(level: string): string {
   return `var(--level-${key})`
 }
 
+function onIdxClick(lineIdx: number, ev: MouseEvent) {
+  ev.stopPropagation()
+  props.tab.toggleBookmark(lineIdx)
+}
+
+function onIdxContextMenu(lineIdx: number, ev: MouseEvent) {
+  ev.preventDefault()
+  ev.stopPropagation()
+  props.tab.removeBookmark(lineIdx)
+}
+
 defineExpose({
   scrollToCurrentHit,
   jumpToBottom,
@@ -737,7 +842,10 @@ defineExpose({
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
-          :class="'level-row-' + stickyHeader.row.level"
+          :class="[
+            'level-row-' + stickyHeader.row.level,
+            { 'is-bookmarked': tab.isBookmarked(stickyHeader.lineIndex) },
+          ]"
           :style="{ '--gutter-color': levelGutterVar(stickyHeader.row.level) }"
         >
           <span class="gutter" />
@@ -768,6 +876,7 @@ defineExpose({
                 'is-header': lineRowVirtual(vrow.index)?.line_within_record === 0,
                 'is-continuation': (lineRowVirtual(vrow.index)?.line_within_record ?? 0) > 0,
                 'is-current-hit': isCurrentHitRow(lineRowVirtual(vrow.index)),
+                'is-bookmarked': tab.isBookmarked(actualLineIndex(vrow.index)),
               },
               'level-row-' + (lineRowVirtual(vrow.index)?.level ?? 'unknown'),
             ]"
@@ -778,7 +887,14 @@ defineExpose({
             }"
           >
             <span class="gutter" />
-            <span class="idx">{{ actualLineIndex(vrow.index) + 1 }}</span>
+            <span
+              class="idx idx-interactive"
+              :title="tab.isBookmarked(actualLineIndex(vrow.index))
+                ? 'Click to remove bookmark'
+                : 'Click to add bookmark'"
+              @click="onIdxClick(actualLineIndex(vrow.index), $event)"
+              @contextmenu="onIdxContextMenu(actualLineIndex(vrow.index), $event)"
+            >{{ actualLineIndex(vrow.index) + 1 }}</span>
             <span class="txt">
               <span
                 v-for="(span, si) in renderLine(lineRowVirtual(vrow.index)!)"
@@ -893,9 +1009,30 @@ defineExpose({
     pointer-events: none;
   }
 
+  /* Lozenge grip inside the window handle - inset so the surrounding
+     level colours remain visible around it, signalling "draggable". */
+  .minimap-indicator::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 8px;
+    height: 50%;
+    max-height: 24px;
+    min-height: 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.7);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  }
+
   &:hover .minimap-indicator {
     background: rgba(255, 255, 255, 0.32);
     border-color: var(--fg-default);
+  }
+
+  &:hover .minimap-indicator::after {
+    background: var(--fg-default);
   }
 }
 
@@ -1020,7 +1157,33 @@ defineExpose({
       text-align: right;
       padding-right: 0.6rem;
       user-select: none;
+      position: relative;
+
+      /* Bookmark marker - a small accent-coloured pin on the left edge of
+         the line-number cell. Hidden by default; faint on hover for any
+         interactive idx; solid when the row is bookmarked. */
+      &.idx-interactive {
+        cursor: pointer;
+
+        &::before {
+          content: '';
+          position: absolute;
+          left: 4px;
+          top: 50%;
+          width: 6px;
+          height: 8px;
+          transform: translateY(-50%);
+          background: var(--accent);
+          clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 70%, 0 100%);
+          opacity: 0;
+          transition: opacity 80ms ease-out;
+          pointer-events: none;
+        }
+
+        &:hover::before { opacity: 0.35; }
+      }
     }
+
 
     .txt {
       padding-right: 0.6rem;
@@ -1124,6 +1287,18 @@ defineExpose({
       box-shadow:
         inset 0 1px 0 var(--hl-search-bg),
         inset 0 -1px 0 var(--hl-search-bg);
+    }
+
+    /* Placed last so the bookmark gradient overrules any level-row-* or
+       is-current-hit gradient set above. */
+    &.is-bookmarked .idx::before { opacity: 1 !important; }
+    &.is-bookmarked .idx { color: var(--accent); }
+    &.is-bookmarked {
+      background-image: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--accent) 12%, transparent),
+        transparent 60%
+      );
     }
   }
 
