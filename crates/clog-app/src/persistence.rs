@@ -323,7 +323,6 @@ impl PerFileRulesFile {
     /// instead delete the file - leaving an empty stub on disk is wasted
     /// I/O and confuses readers grepping the per-file-rules folder.
     #[must_use]
-    #[allow(dead_code)] // wired up by the per-file rules save IPC in a later task
     pub fn is_effectively_empty(&self) -> bool {
         self.rules.is_empty() && self.slow_request_thresholds.is_none()
     }

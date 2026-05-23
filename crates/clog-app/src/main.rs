@@ -951,6 +951,101 @@ fn get_slow_request_speeds(
     ))
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct EffectiveThresholds {
+    source: &'static str,
+    effective: clog_core::SlowRequestThresholds,
+    per_file: Option<clog_core::SlowRequestThresholds>,
+    global: Option<clog_core::SlowRequestThresholds>,
+}
+
+#[tauri::command]
+fn get_slow_request_thresholds(
+    state: State<'_, AppState>,
+    file_id: u64,
+) -> Result<EffectiveThresholds, IpcError> {
+    let path = {
+        let guard = state.files.lock().expect("files mutex poisoned");
+        let file = guard
+            .get(&file_id)
+            .ok_or(IpcError::UnknownFile { file_id })?;
+        file.path.clone()
+    };
+    let per_file = persistence::PerFileRulesFile::load(&path).slow_request_thresholds;
+    let global = persistence::Settings::load().slow_request_thresholds;
+    let (effective, source) = if let Some(t) = per_file {
+        (t, "per_file")
+    } else if let Some(t) = global {
+        (t, "global")
+    } else {
+        let mut guard = state.files.lock().expect("files mutex poisoned");
+        let file = guard
+            .get_mut(&file_id)
+            .ok_or(IpcError::UnknownFile { file_id })?;
+        let line_count = file.line_count;
+        let _ = rebuild_slow_request_cache(file);
+        let occs = &file
+            .slow_request_cache
+            .as_ref()
+            .expect("rebuild leaves cache populated")
+            .occurrences;
+        let g = clog_core::build_speed_grid(occs, line_count, 256);
+        let fast = g.min_avg_ms;
+        let slow = g.max_avg_ms.max(fast.saturating_add(1));
+        (
+            clog_core::SlowRequestThresholds::new(fast, slow)
+                .unwrap_or_else(|| clog_core::SlowRequestThresholds::new(0, 1).expect("valid")),
+            "auto",
+        )
+    };
+    Ok(EffectiveThresholds {
+        source,
+        effective,
+        per_file,
+        global,
+    })
+}
+
+#[tauri::command]
+fn save_slow_request_thresholds(
+    state: State<'_, AppState>,
+    file_id: u64,
+    thresholds: Option<clog_core::SlowRequestThresholds>,
+) -> Result<(), IpcError> {
+    let path = {
+        let guard = state.files.lock().expect("files mutex poisoned");
+        let file = guard
+            .get(&file_id)
+            .ok_or(IpcError::UnknownFile { file_id })?;
+        file.path.clone()
+    };
+    let validated = match thresholds {
+        Some(t) => match clog_core::SlowRequestThresholds::new(t.fast_ms, t.slow_ms) {
+            Some(v) => Some(v),
+            None => {
+                return Err(IpcError::BadPattern {
+                    message: format!("invalid thresholds: fast={} slow={}", t.fast_ms, t.slow_ms),
+                })
+            }
+        },
+        None => None,
+    };
+    let mut f = persistence::PerFileRulesFile::load(&path);
+    f.slow_request_thresholds = validated;
+    if f.is_effectively_empty() {
+        persistence::PerFileRulesFile::forget(&path).map_err(|e| IpcError::Io {
+            message: e.to_string(),
+            path: path.display().to_string(),
+        })?;
+    } else {
+        f.save(&path).map_err(|e| IpcError::Io {
+            message: e.to_string(),
+            path: path.display().to_string(),
+        })?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_level_minimap(
     state: State<'_, AppState>,
@@ -1772,6 +1867,19 @@ pub struct SettingsPatch {
     pub theme: Option<String>,
     pub font_size: Option<u32>,
     pub follow_tail_default: Option<bool>,
+    /// Set to `Some(Some(thresholds))` to update, `Some(None)` to clear,
+    /// `None` to leave untouched.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    pub slow_request_thresholds: Option<Option<clog_core::SlowRequestThresholds>>,
+}
+
+#[allow(clippy::option_option)] // tri-state patch: None=untouched, Some(None)=clear, Some(Some)=set
+fn deserialize_optional_optional<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
 #[tauri::command]
@@ -1785,6 +1893,22 @@ fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
     }
     if let Some(b) = patch.follow_tail_default {
         s.follow_tail_default = b;
+    }
+    if let Some(opt) = patch.slow_request_thresholds {
+        match opt {
+            Some(t) => match clog_core::SlowRequestThresholds::new(t.fast_ms, t.slow_ms) {
+                Some(valid) => s.slow_request_thresholds = Some(valid),
+                None => {
+                    return Err(IpcError::BadPattern {
+                        message: format!(
+                            "invalid slow_request_thresholds: fast={} slow={}",
+                            t.fast_ms, t.slow_ms
+                        ),
+                    })
+                }
+            },
+            None => s.slow_request_thresholds = None,
+        }
     }
     s.save().map_err(|e| IpcError::Io {
         message: e.to_string(),
@@ -1973,6 +2097,8 @@ fn main() {
             get_markers,
             get_slow_requests,
             get_slow_request_speeds,
+            get_slow_request_thresholds,
+            save_slow_request_thresholds,
             start_search,
             cancel_search,
             list_records_by_level,
@@ -3207,5 +3333,26 @@ mod tests {
             "prod fixture must contain at least one slow request"
         );
         assert!(summary.entries.iter().any(|e| e.path.contains("preflight")));
+    }
+
+    #[test]
+    fn update_settings_rejects_invalid_thresholds() {
+        let result = (|| -> Result<(), IpcError> {
+            let mut s = persistence::Settings::default();
+            let patch_pair = clog_core::SlowRequestThresholds {
+                fast_ms: 1000,
+                slow_ms: 1000,
+            };
+            match clog_core::SlowRequestThresholds::new(patch_pair.fast_ms, patch_pair.slow_ms) {
+                Some(valid) => s.slow_request_thresholds = Some(valid),
+                None => {
+                    return Err(IpcError::BadPattern {
+                        message: "rejected".into(),
+                    })
+                }
+            }
+            Ok(())
+        })();
+        assert!(result.is_err());
     }
 }
