@@ -65,6 +65,11 @@ interface ApplyPatternPayload {
   pattern_source: string
 }
 
+interface LevelMinimapPayload {
+  buckets: string[]
+  line_count: number
+}
+
 interface TailDelta {
   new_record_count: number
   line_count: number
@@ -108,6 +113,17 @@ let rotationToastTimer: number | null = null
 let lastTailLineCount = 0
 
 const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
+const minimapEl = useTemplateRef<HTMLCanvasElement>('minimapEl')
+
+// Minimap state. Buckets is a Level-per-pixel array; we re-request when
+// the viewport height changes or the file grows. The fetch is debounced
+// per requestAnimationFrame to coalesce rapid tail deltas.
+const minimapBuckets = ref<string[]>([])
+const viewportHeightPx = ref(0)
+let minimapFetchPending = false
+let lastMinimapLineCount = -1
+let lastMinimapHeight = -1
+const MINIMAP_WIDTH = 20
 
 // The raw scrollTop drives sticky-header lookup (and any other "what is
 // actually at the top of the viewport" calculation). It must NOT be
@@ -272,6 +288,7 @@ async function pickFile() {
       fetchPage(0)
     }
     await startTail()
+    scheduleMinimapFetch(true)
   } catch (e) {
     const err = e as IpcError | string
     error.value = typeof err === 'string' ? err : err.message
@@ -320,6 +337,7 @@ function handleTailDelta(delta: TailDelta) {
     showRotationToast()
     // Re-fetch the first page so the viewport doesn't sit empty.
     fetchPage(0)
+    scheduleMinimapFetch(true)
     return
   }
 
@@ -346,6 +364,7 @@ function handleTailDelta(delta: TailDelta) {
     fetchPage(lastPage, true)
   }
   lastTailLineCount = delta.line_count
+  scheduleMinimapFetch()
 
   if (followTail.value) {
     jumpToBottom()
@@ -373,6 +392,258 @@ function showRotationToast() {
     rotationToastTimer = null
   }, 2500)
 }
+
+// --- Minimap ---
+
+// Faded level colours for the minimap -- a translucent overlay of the raw
+// level palette over the viewport background, mirroring the row-tint
+// treatment in style.css. `info` is deliberately absent so the most-common
+// level reads as background and the louder severities pop out of it.
+// Values are rgba strings the canvas can use directly; alphas are tuned
+// per-level so warn/error/fatal carry more visual weight.
+const LEVEL_COLOUR: Record<string, string | null> = {
+  trace: 'rgba(111, 118, 130, 0.25)',
+  debug: 'rgba(158, 197, 255, 0.22)',
+  info: null,
+  warn: 'rgba(224, 176, 74, 0.55)',
+  error: 'rgba(212, 87, 95, 0.65)',
+  fatal: 'rgba(179, 134, 232, 0.6)',
+  off: 'rgba(74, 84, 102, 0.2)',
+  all: 'rgba(108, 199, 135, 0.35)',
+  unknown: null,
+}
+// Viewport background -- matches --bg-viewport (slate-950) so the canvas
+// composites correctly without having to read it from computed styles each
+// repaint.
+const MINIMAP_BG = '#0f131a'
+
+function scheduleMinimapFetch(force = false) {
+  if (minimapFetchPending) return
+  minimapFetchPending = true
+  requestAnimationFrame(() => {
+    minimapFetchPending = false
+    void fetchMinimap(force)
+  })
+}
+
+async function fetchMinimap(force: boolean) {
+  if (!file.value) return
+  const height = viewportHeightPx.value
+  if (height <= 0) return
+  // When the file is shorter than the viewport, cap buckets at the actual
+  // content pixel height (one bucket per row) so the minimap aligns to the
+  // top instead of stretching a handful of records across the full column.
+  const contentPx = file.value.line_count * ROW_HEIGHT
+  const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
+  if (
+    !force &&
+    bucketCount === lastMinimapHeight &&
+    file.value.line_count === lastMinimapLineCount
+  ) {
+    return
+  }
+  try {
+    const payload = await invoke<LevelMinimapPayload>('get_level_minimap', {
+      fileId: file.value.file_id,
+      bucketCount,
+    })
+    minimapBuckets.value = payload.buckets
+    lastMinimapHeight = bucketCount
+    lastMinimapLineCount = payload.line_count
+    paintMinimap()
+  } catch {
+    // Non-fatal: minimap is purely decorative. Leave previous buckets in place.
+  }
+}
+
+function paintMinimap() {
+  const canvas = minimapEl.value
+  if (!canvas) return
+  const buckets = minimapBuckets.value
+  const h = buckets.length
+  if (h === 0) {
+    const ctx = canvas.getContext('2d')
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    return
+  }
+  // Render at device-pixel resolution so the stripes stay crisp on
+  // fractional-DPI Windows displays.
+  const dpr = globalThis.devicePixelRatio || 1
+  canvas.width = MINIMAP_WIDTH * dpr
+  canvas.height = h * dpr
+  canvas.style.width = `${MINIMAP_WIDTH}px`
+  canvas.style.height = `${h}px`
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  // Paint the bg first so info/unknown buckets (which have no overlay
+  // colour) read as the same flat slate as the viewport.
+  ctx.fillStyle = MINIMAP_BG
+  ctx.fillRect(0, 0, MINIMAP_WIDTH, h)
+  // Coalesce identical-colour runs into single fills -- 800px of buckets
+  // becomes ~10-30 draw calls on a typical file. `null` runs (info /
+  // unknown) are skipped entirely so the bg shows through.
+  const colourAt = (i: number): string | null =>
+    i < h ? (LEVEL_COLOUR[buckets[i]] ?? null) : null
+  let runStart = 0
+  let runColour = colourAt(0)
+  for (let i = 1; i <= h; i++) {
+    const next = colourAt(i)
+    if (next !== runColour) {
+      if (runColour !== null) {
+        ctx.fillStyle = runColour
+        ctx.fillRect(0, runStart, MINIMAP_WIDTH, i - runStart)
+      }
+      runStart = i
+      runColour = next
+    }
+  }
+}
+
+const minimapIndicator = computed(() => {
+  if (!file.value || file.value.line_count === 0) {
+    return { top: 0, height: 0, visible: false }
+  }
+  const el = scrollEl.value
+  const h = viewportHeightPx.value
+  if (!el || h <= 0) return { top: 0, height: 0, visible: false }
+  const total = el.scrollHeight
+  if (total <= h) return { top: 0, height: h, visible: false }
+  const top = (viewportScrollTop.value / total) * h
+  const height = Math.max(8, (h / total) * h)
+  return { top, height, visible: true }
+})
+
+function scrollToMinimapY(clientY: number) {
+  const canvas = minimapEl.value
+  const el = scrollEl.value
+  if (!canvas || !el) return
+  const rect = canvas.getBoundingClientRect()
+  const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+  const total = el.scrollHeight - el.clientHeight
+  el.scrollTop = ratio * total
+}
+
+// Tooltip surfaced while hovering the minimap. The line index updates on
+// every pointermove; the timestamp text follows whenever the relevant
+// page lands in the cache (we trigger a background fetch on miss).
+interface MinimapTooltip {
+  visible: boolean
+  top: number
+  left: number
+  lineIndex: number
+  timestamp: string | null
+}
+const minimapTooltip = ref<MinimapTooltip>({
+  visible: false,
+  top: 0,
+  left: 0,
+  lineIndex: 0,
+  timestamp: null,
+})
+
+function tooltipLineFromY(clientY: number): number | null {
+  const canvas = minimapEl.value
+  if (!canvas || !file.value || file.value.line_count === 0) return null
+  const rect = canvas.getBoundingClientRect()
+  if (rect.height <= 0) return null
+  const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+  const idx = Math.min(file.value.line_count - 1, Math.floor(ratio * file.value.line_count))
+  return idx
+}
+
+function timestampForLine(lineIndex: number): string | null {
+  const row = lineRow(lineIndex)
+  if (!row) return null
+  // Continuation rows don't carry their own timestamp -- the record header
+  // does. Walk back within the same record until we find it.
+  if (row.fields?.timestamp) {
+    const [s, e] = row.fields.timestamp
+    return row.text.slice(s, e)
+  }
+  for (let i = lineIndex - 1; i >= 0; i--) {
+    const candidate = lineRow(i)
+    if (!candidate || candidate.record_idx !== row.record_idx) break
+    if (candidate.fields?.timestamp) {
+      const [s, e] = candidate.fields.timestamp
+      return candidate.text.slice(s, e)
+    }
+  }
+  return null
+}
+
+function updateMinimapTooltip(ev: PointerEvent) {
+  const idx = tooltipLineFromY(ev.clientY)
+  if (idx === null) {
+    minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null }
+    return
+  }
+  // Make sure the page covering this line is in flight if not cached, so a
+  // subsequent move (or this same one re-evaluated next frame) can resolve
+  // the timestamp without further user input.
+  const pageIdx = Math.floor(idx / PAGE_SIZE)
+  if (!pages.value.has(pageIdx)) fetchPage(pageIdx)
+  const ts = timestampForLine(idx)
+  // `top` is the viewport-coordinate Y of the cursor. The tooltip uses
+  // position: fixed so it can float above the status bar without being
+  // clipped by .viewport-shell's overflow.
+  const canvas = minimapEl.value
+  const rect = canvas?.getBoundingClientRect()
+  const left = rect ? rect.left : ev.clientX
+  minimapTooltip.value = {
+    visible: true,
+    top: ev.clientY,
+    left,
+    lineIndex: idx,
+    timestamp: ts,
+  }
+}
+
+// Re-resolve the timestamp text whenever a new page lands, so the tooltip
+// fills in shortly after a cache miss without the user having to wiggle.
+watch(
+  () => pages.value,
+  () => {
+    if (!minimapTooltip.value.visible) return
+    const idx = minimapTooltip.value.lineIndex
+    const ts = timestampForLine(idx)
+    if (ts !== minimapTooltip.value.timestamp) {
+      minimapTooltip.value = { ...minimapTooltip.value, timestamp: ts }
+    }
+  },
+)
+
+function onMinimapPointerEnter(ev: PointerEvent) {
+  updateMinimapTooltip(ev)
+}
+
+function onMinimapPointerLeave() {
+  minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null }
+}
+
+let minimapDragging = false
+
+function onMinimapPointerDown(ev: PointerEvent) {
+  // Detach follow-tail when the user grabs the minimap -- otherwise the
+  // next tail delta would yank them back to the bottom.
+  followTail.value = false
+  minimapDragging = true
+  ;(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId)
+  scrollToMinimapY(ev.clientY)
+}
+
+function onMinimapPointerMove(ev: PointerEvent) {
+  updateMinimapTooltip(ev)
+  if (!minimapDragging) return
+  scrollToMinimapY(ev.clientY)
+}
+
+function onMinimapPointerUp(ev: PointerEvent) {
+  minimapDragging = false
+  ;(ev.currentTarget as HTMLElement).releasePointerCapture(ev.pointerId)
+}
+
+let resizeObserver: ResizeObserver | null = null
 
 function jumpToBottom() {
   if (!file.value || file.value.line_count === 0) return
@@ -454,6 +725,7 @@ async function applyPattern() {
     }
     pages.value = new Map()
     fetchPage(0)
+    scheduleMinimapFetch(true)
   } catch (e) {
     const err = e as IpcError | string
     patternError.value = typeof err === 'string' ? err : err.message
@@ -476,10 +748,39 @@ function suppressBrowserFind(ev: KeyboardEvent) {
 
 onMounted(() => {
   globalThis.addEventListener('keydown', suppressBrowserFind, { capture: true })
+  // Track viewport height so the minimap buckets match available pixels.
+  // Pure-CSS height = bucket count; ResizeObserver tells us when to refetch.
+  resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const h = Math.floor(entry.contentRect.height)
+      if (h !== viewportHeightPx.value) {
+        viewportHeightPx.value = h
+        scheduleMinimapFetch()
+      }
+    }
+  })
+  // Bind once the viewport DOM exists (it's gated by `v-if="file"`); watch
+  // the ref and (re)attach as files open/close.
+  watch(
+    () => scrollEl.value,
+    (el) => {
+      if (resizeObserver) resizeObserver.disconnect()
+      if (el && resizeObserver) {
+        resizeObserver.observe(el)
+        viewportHeightPx.value = Math.floor(el.clientHeight)
+        scheduleMinimapFetch()
+      }
+    },
+    { immediate: true },
+  )
 })
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', suppressBrowserFind, { capture: true })
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   if (tailPulseTimer !== null) globalThis.clearTimeout(tailPulseTimer)
   if (rotationToastTimer !== null) globalThis.clearTimeout(rotationToastTimer)
   if (file.value) {
@@ -662,7 +963,8 @@ function levelGutterVar(level: string): string {
 
     <div v-if="rotationToast" class="rotation-toast">{{ rotationToast }}</div>
 
-    <div v-if="file" ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
+    <div v-if="file" class="viewport-shell">
+    <div ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
@@ -720,7 +1022,38 @@ function levelGutterVar(level: string): string {
         </template>
       </div>
     </div>
+      <div
+        class="minimap"
+        @pointerdown="onMinimapPointerDown"
+        @pointermove="onMinimapPointerMove"
+        @pointerup="onMinimapPointerUp"
+        @pointercancel="onMinimapPointerUp"
+        @pointerenter="onMinimapPointerEnter"
+        @pointerleave="onMinimapPointerLeave"
+      >
+        <canvas ref="minimapEl" class="minimap-canvas" />
+        <div
+          v-if="minimapIndicator.visible"
+          class="minimap-indicator"
+          :style="{ top: `${minimapIndicator.top}px`, height: `${minimapIndicator.height}px` }"
+        />
+        <div
+          v-if="minimapTooltip.visible"
+          class="minimap-tooltip"
+          :style="{ top: `${minimapTooltip.top}px`, left: `${minimapTooltip.left}px` }"
+        >
+          <span class="line-no">line {{ minimapTooltip.lineIndex + 1 }}</span>
+          <span v-if="minimapTooltip.timestamp" class="ts">{{ minimapTooltip.timestamp }}</span>
+          <span v-else class="ts muted">--</span>
+        </div>
+      </div>
+    </div>
     <p v-else class="placeholder">No file open. Click <em>Open file...</em> to pick one.</p>
+
+    <footer class="status-bar">
+      <span class="slot left" />
+      <span class="slot right" />
+    </footer>
   </main>
 </template>
 
@@ -915,13 +1248,135 @@ function levelGutterVar(level: string): string {
   color: var(--fg-dim);
 }
 
+.status-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.25rem 0.75rem;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  min-height: 1.6rem;
+
+  .slot {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .slot.right { margin-left: auto; }
+}
+
+.viewport-shell {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  /* The minimap tooltip is positioned absolutely with `right` so it
+     extends leftward past the .minimap container; without clipping here
+     it pushes the shell horizontally and pulls in a page-level scrollbar.
+     The shell already bounds the viewport vertically, so clipping is
+     safe -- the tooltip stays well within it. */
+  overflow: hidden;
+}
+
+.minimap {
+  flex: 0 0 auto;
+  width: 20px;
+  position: relative;
+  background: var(--bg-viewport);
+  border-left: 1px solid var(--border-default);
+  cursor: pointer;
+  user-select: none;
+
+  .minimap-canvas {
+    display: block;
+    width: 20px;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  .minimap-indicator {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(255, 255, 255, 0.22);
+    border-top: 2px solid rgba(255, 255, 255, 0.85);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55) inset;
+    pointer-events: none;
+  }
+
+  &:hover .minimap-indicator {
+    background: rgba(255, 255, 255, 0.32);
+    border-color: var(--fg-default);
+  }
+}
+
+.minimap-tooltip {
+  position: fixed;
+  /* `left` is the minimap's left edge (set inline); translateX -100% then
+     -4px slides the tooltip just clear of the minimap. translateY -50%
+     vertically centres it on the cursor Y. position: fixed lets it float
+     above the status bar / outside .viewport-shell's overflow clip. */
+  transform: translate(calc(-100% - 4px), -50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.3rem 0.55rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--fg-default);
+  pointer-events: none;
+  white-space: nowrap;
+
+  .line-no { color: var(--fg-muted); }
+  .ts { color: var(--fg-default); }
+  .ts.muted { color: var(--fg-dim); }
+
+  /* Callout pointer aimed at the minimap. Two stacked triangles fake the
+     1px border: the outer (border-coloured) triangle sits one pixel
+     further right than the inner (bg-coloured) one, so the seam between
+     the tooltip body and the pointer reads as a continuous outline. */
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    transform: translateY(-50%);
+  }
+  &::before {
+    right: -7px;
+    border-left: 7px solid var(--border-default);
+  }
+  &::after {
+    right: -6px;
+    border-left: 6px solid var(--bg-elevated);
+  }
+}
+
 .viewport {
   flex: 1 1 auto;
   overflow: auto;
+  scrollbar-width: none;
   font-family: var(--font-mono);
   font-size: var(--font-size-base);
   line-height: var(--row-height);
   background-color: var(--bg-viewport);
+
+  &::-webkit-scrollbar { display: none; }
 
   /* Skeleton backdrop lives on `.total` (the scroll content), NOT
      `.viewport`. Anchoring it to .total bounds it to the actual log

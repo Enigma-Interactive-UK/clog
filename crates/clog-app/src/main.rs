@@ -418,6 +418,79 @@ fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesP
     })
 }
 
+#[derive(Debug, Serialize)]
+struct LevelMinimapPayload {
+    /// One level per bucket, top-of-file first. Length == requested
+    /// `bucket_count` (clamped to >= 1). When the file is empty every
+    /// bucket is `Level::Unknown`.
+    buckets: Vec<Level>,
+    /// The line span this minimap was computed over. UIs compare this to
+    /// the current `line_count` to know whether a refetch is warranted.
+    line_count: u64,
+}
+
+/// Rank for the "worst severity wins" bucket aggregation. Higher = more
+/// important. Tie semantics: warn/error/fatal beat info/debug/trace even
+/// when they're a tiny minority in the bucket (the user explicitly wants
+/// warnings and errors to pop out of the minimap).
+fn level_rank(l: Level) -> u8 {
+    match l {
+        Level::Fatal => 7,
+        Level::Error => 6,
+        Level::Warn => 5,
+        Level::Info => 3,
+        Level::Debug => 2,
+        Level::Trace => 1,
+        Level::All => 4,
+        Level::Off => 0,
+        Level::Unknown => 0,
+    }
+}
+
+#[tauri::command]
+fn get_level_minimap(
+    state: State<'_, AppState>,
+    file_id: u64,
+    bucket_count: u32,
+) -> Result<LevelMinimapPayload, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    let bucket_count = bucket_count.max(1) as usize;
+    let mut buckets = vec![Level::Unknown; bucket_count];
+    let line_count = file.line_count;
+    if line_count == 0 || file.records.is_empty() {
+        return Ok(LevelMinimapPayload {
+            buckets,
+            line_count,
+        });
+    }
+
+    // Map each record's physical-line span onto the bucket grid. The bucket
+    // for line `i` is `i * bucket_count / line_count`. We compute the
+    // first/last bucket a record touches and bump every bucket in that
+    // range to the record's level if it outranks what's there.
+    let lc = line_count;
+    let bc = bucket_count as u64;
+    for rec in &file.records {
+        let first_line = u64::from(rec.line_offset);
+        let last_line = first_line + u64::from(rec.line_count.max(1)) - 1;
+        let first_bucket = (first_line.saturating_mul(bc) / lc) as usize;
+        let last_bucket = ((last_line.saturating_mul(bc) / lc) as usize).min(bucket_count - 1);
+        for b in &mut buckets[first_bucket..=last_bucket] {
+            if level_rank(rec.level) > level_rank(*b) {
+                *b = rec.level;
+            }
+        }
+    }
+
+    Ok(LevelMinimapPayload {
+        buckets,
+        line_count,
+    })
+}
+
 #[tauri::command]
 fn close_file(state: State<'_, AppState>, file_id: u64) {
     let mut guard = state.files.lock().expect("files mutex poisoned");
@@ -769,7 +842,8 @@ fn main() {
             test_pattern,
             set_pattern,
             start_tail,
-            stop_tail
+            stop_tail,
+            get_level_minimap
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
