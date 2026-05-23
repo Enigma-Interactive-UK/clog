@@ -20,7 +20,7 @@
 //! literal placeholder so the rest of the line still parses; they show up
 //! as `PatternWarning`s in the returned `CompiledPattern`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::record::Level;
@@ -101,7 +101,7 @@ pub struct CompiledPattern {
 
 /// Byte ranges *within the first line of a record* (relative to the line's
 /// first byte, not the file). Axis-1 styling references these.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeaderFields {
     pub level: Option<(u32, u32)>,
     pub timestamp: Option<(u32, u32)>,

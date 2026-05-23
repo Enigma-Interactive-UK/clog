@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-05-23 (post-P6)
+> Last updated: 2026-05-23 (post-P7)
 
 ## User Preferences
 
@@ -148,6 +148,27 @@ HitRef ranges are record-relative bytes. UI subtracts the line offset within the
 
 ### [2026-05-23] P6 design choice: filter mode flattens to line-index array
 filteredLineIndices: number[] is the concatenated line spans of all matching records in record order. effectiveCount is its length. actualLineIndex(virtualIdx) is O(1). Trade-off: rebuild on hit/filter change costs O(visible records); negligible vs backend RTT. The virtualizer needs an exact count (design.md s9), so a precomputed array beats on-the-fly mapping.
+
+### [2026-05-23] P7 vertical slice landed
+clog-core gained `idx_cache.rs` (CacheFingerprint = `{ file_size, mtime_ns, pattern_hash [u8;32] }`; bincode-encoded body with a fixed-shape header `CLOGIX` magic + u16 schema + u64 file_size + i128 mtime_ns + [u8;32] pattern_hash; `load()` downgrades all I/O / shape errors to `Miss` so an unparseable cache never blocks open; `save()` writes to `<path>.idx.tmp` then atomically renames with a Windows-friendly remove-and-retry fallback). RecordHeader/HeaderFields/Level gained `Deserialize + PartialEq + Eq` so the cache round-trips exactly. bincode 1 + blake3 1 added to clog-core (+ tempfile dev-dep). clog-app gained `paths.rs` (portable mode detection -- `<exe-dir>/clog-data/` overrides `%LOCALAPPDATA%\clog`; per-concern path helpers; `path_hash(path)` = blake3(canonical-lowercased)[..16] hex) and `persistence.rs` (schema-versioned JSON for Settings / Session / PatternsFile with `#[serde(default)]` everywhere so v1 stays load-compatible; atomic write helper). `open_file` now consults `patterns.json` for a per-file override FIRST, then auto-detect; then tries the index cache (cache hit = ~5ms vs ~100ms+ fresh scan on the prod fixture) and writes back on miss. `set_pattern` persists the new override AND refreshes the on-disk cache. New IPC commands: `get_data_dir`, `open_data_dir` (spawns explorer.exe / open / xdg-open), `get_settings`, `update_settings(patch)` (font_size clamped 9..=24), `forget_recent`, `get_session`, `save_session`, `get_pattern_override`, `forget_pattern_override`, `reset_data(scope)`. Tracing initialised via `tracing-appender::rolling::daily(logs_dir, "clog.log")` with a non-blocking writer and `CLOG_LOG` env-filter; the WorkerGuard is held across `.run()` and dropped at exit. Panic hook routes to `tracing::error!(target: "clog::panic", ...)`. UI: light palette behind `:root[data-theme="light"]` with AA-contrast level colours; theme follows OS via `matchMedia` with manual override; Ctrl-+/-/Ctrl-= /Ctrl-- /Ctrl-_/Ctrl-0 intercepted ahead of the existing browser-find suppressor; settings modal with Appearance / File handling / Recent files / Highlighting placeholder / Updates placeholder / Advanced (data dir, open folder, per-scope reset + reset-everything); 400 ms-debounced `scheduleSessionSave` driven off a watch over `[file.path, followTail, searchMode, searchQuery, searchCaseSensitive, filterMode, buildLevelMask()]` plus `onViewportScroll`; session restore happens via a shared `openPath()` helper that tears down the prior file, calls open_file, and applies the restored knobs in a two-rAF window so the virtualiser is mounted before scroll_top lands. 70 cargo tests (4 idx_cache + 1 lib parity + 3 persistence; all earlier pass), 14 vitest unchanged. cargo fmt/clippy/test/build + npm build + npm test all green.
+
+### [2026-05-23] P7 design choice: plain std::fs JSON instead of tauri-plugin-store
+Design says `tauri-plugin-store` for settings/session/patterns. We went with raw `std::fs` + serde_json behind a `persistence.rs` module instead. Reasons: (a) the plugin's value is automatic IPC serialisation + disk coalescing, but Rust owns all three files (the tracing-appender root, portable-mode detection, pattern-override lookup at file-open time all read them server-side), so plugging the data through JS just to come back via IPC is needless ceremony; (b) the plugin's KV-shape doesn't fit our typed schemas as cleanly as serde-derived structs; (c) atomic write via tempfile+rename is trivial. If a future need for hot-reload on disk change shows up, `notify` is a smaller surface than ripping in the plugin retroactively. Documented as a deliberate deviation.
+
+### [2026-05-23] P7 design choice: index cache shape parity via fingerprint, not content hash
+A "did the bytes change?" hash over the whole file would catch all modifications but costs O(file_size) on every open -- exactly what the cache is supposed to avoid. We instead key invalidation on `(file_size, mtime_ns, pattern_source_hash)`. On real-world rotation/append/edit this is sound: appended bytes change size, atomic editors change mtime, and pattern changes flow through the pattern hash. The narrow failure mode is "another writer overwrote the file in place with the same size at sub-nanosecond mtime resolution" which doesn't happen in our SMB+log4j2 environment. P10 can layer a content-hash sanity check if it becomes a real issue.
+
+### [2026-05-23] P7 design choice: per-file override = automatic persistence
+Initially I wired `set_pattern` to only update the in-memory state and exposed `set_pattern_override` as a separate explicit IPC for the UI to call. That makes "test the pattern with Test, like it, hit Apply" require two calls. Collapsed them: `set_pattern` IS the persist action; pasting a pattern + Apply now both rebinds the live scanner and remembers the choice. `forget_pattern_override` is exposed for the future per-file UI to forget the override without changing the active scanner.
+
+### [2026-05-23] P7 design choice: session restore through two-rAF wait
+Restoring `scroll_top` immediately after `open_file` lands on the virtualizer in an empty state (no rows mounted yet), so the assignment gets clamped to 0. Routing through two nested `requestAnimationFrame` ticks gives the virtualizer one full frame to compute its total size and mount the initial overscan window; the second frame is when the scroll actually sticks. The `sessionRestoreInFlight` flag guards the autosave watcher so the act of restoring doesn't immediately overwrite the session with the half-applied state.
+
+### [2026-05-23] P7 known limitations recorded for later phases
+- Tab-strip / multi-file restore is P9; v1.0 P7 restores at most one file. `Session.last_file` is single-valued.
+- Highlight rule editor is P8; the modal's "Highlighting" section is a placeholder.
+- Auto-updater is P10; the "Updates" section is a placeholder.
+- Index cache eviction sweep is explicitly v1.x; the settings modal exposes a manual "Clear index cache" button.
 
 ### [2026-05-23] P6 known limitations recorded for later phases
 - Level mask only re-triggers the search when a query is present. Toggling levels with no query has no visible effect (no separate code path for unfiltered level-mask rendering); intentional simplification.

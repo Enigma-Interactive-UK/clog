@@ -4,12 +4,12 @@
 //! escape hatch). The hardcoded `WslOinkScanner` from P2 has been replaced
 //! with `CompiledPattern` impl of `RecordScanner`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::index::LineIndex;
 use crate::pattern::{CompiledPattern, HeaderFields, ParsedHeader};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Level {
     Trace,
@@ -26,7 +26,7 @@ pub enum Level {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecordHeader {
     /// Byte offset of the first byte of this record in the source file.
     pub byte_offset: u64,
@@ -54,6 +54,34 @@ pub trait RecordScanner {
 impl RecordScanner for CompiledPattern {
     fn try_parse_header(&self, line: &[u8]) -> Option<ParsedHeader> {
         Self::try_parse_header(self, line)
+    }
+}
+
+/// Wraps any `RecordScanner` so that `try_parse_header` always returns
+/// `Some(...)`. When the inner scanner says "this isn't a header line",
+/// `LooseScanner` synthesises an `Unknown`-level header with empty fields
+/// instead. The effect is that `scan_records` never merges lines into a
+/// preceding record's `line_count` -- every physical line becomes its own
+/// `RecordHeader`. Used when the active pattern is not a confidently
+/// detected builtin, so the assumption "lines that don't match are
+/// continuations of the previous record" is unsafe.
+pub struct LooseScanner<'a, S: ?Sized> {
+    pub inner: &'a S,
+}
+
+impl<'a, S: RecordScanner + ?Sized> LooseScanner<'a, S> {
+    #[must_use]
+    pub fn new(inner: &'a S) -> Self {
+        Self { inner }
+    }
+}
+
+impl<S: RecordScanner + ?Sized> RecordScanner for LooseScanner<'_, S> {
+    fn try_parse_header(&self, line: &[u8]) -> Option<ParsedHeader> {
+        Some(self.inner.try_parse_header(line).unwrap_or(ParsedHeader {
+            level: Level::Unknown,
+            fields: HeaderFields::default(),
+        }))
     }
 }
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useVirtualizer } from '@tanstack/vue-virtual'
@@ -40,6 +42,8 @@ interface OpenedFile {
   pattern_name: string | null
   pattern_source: string
   pattern_score: number
+  cache_hit: boolean
+  loose: boolean
 }
 
 interface LineRow {
@@ -100,6 +104,35 @@ interface LinesPayload {
   lines: LineRow[]
 }
 
+interface Settings {
+  schema: number
+  theme: 'system' | 'light' | 'dark'
+  font_size: number
+  recent_files: string[]
+  follow_tail_default: boolean
+}
+
+interface RestoredFile {
+  path: string
+  scroll_top: number
+  follow_tail: boolean
+  level_mask: number
+  filter_text: string
+  search_mode: SearchMode
+  search_case_sensitive: boolean
+  filter_mode: boolean
+}
+
+interface Session {
+  schema: number
+  last_file: RestoredFile | null
+}
+
+interface DataDirPayload {
+  path: string
+  portable: boolean
+}
+
 interface PatternTestPayload {
   score: number
   sample_size: number
@@ -108,6 +141,7 @@ interface PatternTestPayload {
 interface ApplyPatternPayload {
   record_count: number
   pattern_source: string
+  loose: boolean
 }
 
 interface LevelMinimapPayload {
@@ -200,6 +234,21 @@ function buildLevelMask(): number {
 }
 
 // Tail state.
+// --- Settings + session state (P7) ---
+const settings = ref<Settings>({
+  schema: 1,
+  theme: 'system',
+  font_size: 13,
+  recent_files: [],
+  follow_tail_default: true,
+})
+const settingsOpen = ref(false)
+const patternOpen = ref(false)
+const dataDir = ref<DataDirPayload | null>(null)
+const sessionRestoreInFlight = ref(false)
+const pendingRestore = ref<RestoredFile | null>(null)
+const sessionSaveTimer = ref<number | null>(null)
+
 const tailing = ref(false)
 const followTail = ref(true)
 const tailPulse = ref(false)
@@ -303,6 +352,16 @@ const virtualizer = useVirtualizer(
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 const totalSize = computed(() => virtualizer.value.getTotalSize())
 
+/** True when the viewport is scrolled to (or within a row of) the bottom.
+ *  Drives the floating jump-to-bottom button's visibility -- when the user
+ *  is already at the tail there's nothing to jump to. */
+const atBottom = computed(() => {
+  const total = totalSize.value
+  const h = viewportHeightPx.value
+  if (total <= 0 || h <= 0) return true
+  return viewportScrollTop.value + h >= total - ROW_HEIGHT
+})
+
 function basename(p: string): string {
   const m = p.match(/[^\\/]+$/)
   return m ? m[0] : p
@@ -310,6 +369,23 @@ function basename(p: string): string {
 
 function formatCount(n: number): string {
   return n.toLocaleString('en-GB')
+}
+
+/** Format a raw byte count as a binary-IEC human-readable size (KiB, MiB,
+ *  GiB). Under 1 KiB we show the raw byte count so a tiny fixture stays
+ *  legible. Two decimals below 10 in the chosen unit, one above. */
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return `${n}`
+  if (n < 1024) return `${n} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let value = n / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
+  const digits = value < 10 ? 2 : value < 100 ? 1 : 0
+  return `${value.toFixed(digits)} ${units[i]}`
 }
 
 function lineRow(index: number): LineRow | null {
@@ -638,10 +714,15 @@ const LEVEL_COLOUR: Record<string, string | null> = {
   all: 'rgba(108, 199, 135, 0.35)',
   unknown: null,
 }
-// Viewport background -- matches --bg-viewport (slate-950) so the canvas
-// composites correctly without having to read it from computed styles each
-// repaint.
-const MINIMAP_BG = '#0f131a'
+// Viewport background. Resolved from the live `--bg-viewport` CSS token so
+// the canvas composites correctly under both themes; light mode flips to a
+// near-white surface and the dark hard-coded value would otherwise read as
+// a black stripe down the side of the viewport.
+function currentMinimapBg(): string {
+  const styles = globalThis.getComputedStyle?.(document.documentElement)
+  const fromVar = styles?.getPropertyValue('--bg-viewport').trim()
+  return fromVar && fromVar.length > 0 ? fromVar : '#0f131a'
+}
 
 function scheduleMinimapFetch(force = false) {
   if (minimapFetchPending) return
@@ -772,7 +853,7 @@ function paintMinimap() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   // Paint the bg first so info/unknown buckets (which have no overlay
   // colour) read as the same flat slate as the viewport.
-  ctx.fillStyle = MINIMAP_BG
+  ctx.fillStyle = currentMinimapBg()
   ctx.fillRect(0, 0, MINIMAP_WIDTH, h)
   // Coalesce identical-colour runs into single fills -- 800px of buckets
   // becomes ~10-30 draw calls on a typical file. `null` runs (info /
@@ -994,6 +1075,7 @@ function onViewportScroll() {
     }
   }
   viewportScrollTop.value = el.scrollTop
+  if (!sessionRestoreInFlight.value) scheduleSessionSave()
   // If the user scrolls away from the bottom, disable follow-tail. We
   // compare against a small slack so single-row jitter doesn't disengage.
   if (!followTail.value) return
@@ -1320,6 +1402,7 @@ async function applyPattern() {
         record_count: payload.record_count,
         pattern_source: payload.pattern_source,
         pattern_name: null,
+        loose: payload.loose,
       }
     }
     pages.value = new Map()
@@ -1345,8 +1428,372 @@ function suppressBrowserFind(ev: KeyboardEvent) {
   }
 }
 
+// --- Theme + font scaling (P7) ---
+
+const systemDarkMql =
+  typeof globalThis !== 'undefined' && typeof globalThis.matchMedia === 'function'
+    ? globalThis.matchMedia('(prefers-color-scheme: dark)')
+    : null
+const systemPrefersDark = ref(!!systemDarkMql?.matches)
+
+function applyTheme(theme: 'system' | 'light' | 'dark') {
+  let wantDark = !!systemDarkMql?.matches
+  if (theme === 'dark') wantDark = true
+  else if (theme === 'light') wantDark = false
+  document.documentElement.setAttribute('data-theme', wantDark ? 'dark' : 'light')
+  // The minimap's canvas-painted background reads `--bg-viewport` at paint
+  // time; switching themes only updates the token, so trigger a repaint
+  // here so the stripe doesn't stay in the previous theme's surface colour.
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => paintMinimap())
+  }
+}
+
+function applyFontSize(px: number) {
+  const clamped = Math.max(9, Math.min(24, Math.round(px)))
+  document.documentElement.style.setProperty('--font-size-base', `${clamped}px`)
+}
+
+async function loadSettings() {
+  try {
+    const s = (await invoke('get_settings')) as Settings
+    settings.value = s
+    applyTheme(s.theme)
+    applyFontSize(s.font_size)
+  } catch (e) {
+    // First launch / corrupted file: keep defaults, write them back so the
+    // next launch starts from a known shape.
+    applyTheme('system')
+    applyFontSize(13)
+    void e
+  }
+}
+
+async function updateSettings(patch: Partial<Settings>) {
+  try {
+    const s = (await invoke('update_settings', { patch })) as Settings
+    settings.value = s
+    if (patch.theme !== undefined) applyTheme(s.theme)
+    if (patch.font_size !== undefined) applyFontSize(s.font_size)
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+function onSystemThemeChange() {
+  systemPrefersDark.value = !!systemDarkMql?.matches
+  if (settings.value.theme === 'system') applyTheme('system')
+}
+
+function bumpFontSize(delta: number) {
+  const target = settings.value.font_size + delta
+  void updateSettings({ font_size: target })
+}
+
+function resetFontSize() {
+  void updateSettings({ font_size: 13 })
+}
+
+const THEME_CYCLE = ['system', 'light', 'dark'] as const
+const THEME_GLYPH: Record<'light' | 'dark', string> = {
+  light: '☀', // sun
+  dark: '☽', // crescent moon
+}
+const THEME_LABEL: Record<'system' | 'light' | 'dark', string> = {
+  system: 'Theme: auto (follows OS)',
+  light: 'Theme: light',
+  dark: 'Theme: dark',
+}
+
+/** Glyph to render in the toggle for the current selection. `system` picks
+ *  whichever the OS currently resolves to so the icon reflects the live
+ *  appearance. */
+const themeToggleGlyph = computed(() => {
+  if (settings.value.theme === 'light') return THEME_GLYPH.light
+  if (settings.value.theme === 'dark') return THEME_GLYPH.dark
+  return systemPrefersDark.value ? THEME_GLYPH.dark : THEME_GLYPH.light
+})
+
+function cycleTheme() {
+  const cur = settings.value.theme
+  const idx = THEME_CYCLE.indexOf(cur as typeof THEME_CYCLE[number])
+  const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]
+  void updateSettings({ theme: next })
+}
+
+function handleFontShortcut(ev: KeyboardEvent): boolean {
+  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey) return false
+  if (ev.key === '+' || ev.key === '=') {
+    ev.preventDefault()
+    bumpFontSize(1)
+    return true
+  }
+  if (ev.key === '-' || ev.key === '_') {
+    ev.preventDefault()
+    bumpFontSize(-1)
+    return true
+  }
+  if (ev.key === '0') {
+    ev.preventDefault()
+    resetFontSize()
+    return true
+  }
+  return false
+}
+
+// --- Session restore + autosave (P7) ---
+
+function captureSession(): RestoredFile | null {
+  if (!file.value) return null
+  return {
+    path: file.value.path,
+    scroll_top: scrollEl.value?.scrollTop ?? 0,
+    follow_tail: followTail.value,
+    level_mask: buildLevelMask(),
+    filter_text: searchQuery.value,
+    search_mode: searchMode.value,
+    search_case_sensitive: searchCaseSensitive.value,
+    filter_mode: filterMode.value,
+  }
+}
+
+function scheduleSessionSave() {
+  if (sessionSaveTimer.value !== null) {
+    globalThis.clearTimeout(sessionSaveTimer.value)
+  }
+  sessionSaveTimer.value = globalThis.setTimeout(() => {
+    sessionSaveTimer.value = null
+    const last = captureSession()
+    void invoke('save_session', { session: { schema: 1, last_file: last } }).catch(() => {})
+  }, 400) as unknown as number
+}
+
+async function restoreSession() {
+  try {
+    const sess = (await invoke('get_session')) as Session
+    const last = sess.last_file
+    if (!last) return
+    pendingRestore.value = last
+    sessionRestoreInFlight.value = true
+    await openPath(last.path)
+  } catch {
+    // Last file gone or unreadable. Forget it from recents + session and
+    // launch into the empty state.
+    if (pendingRestore.value?.path) {
+      void invoke('forget_recent', { path: pendingRestore.value.path }).catch(() => {})
+    }
+    pendingRestore.value = null
+    sessionRestoreInFlight.value = false
+    void invoke('save_session', { session: { schema: 1, last_file: null } }).catch(() => {})
+  }
+}
+
+async function applyPendingRestore() {
+  const r = pendingRestore.value
+  if (!r) return
+  // Restore filter/search state BEFORE the search fires, so the first
+  // search run uses the persisted level mask + case flag.
+  for (const lvl of LEVEL_KEYS) {
+    levelAllow.value[lvl] = !!(r.level_mask & LEVEL_BIT[lvl])
+  }
+  searchMode.value = r.search_mode === 'regex' ? 'regex' : 'smart'
+  searchCaseSensitive.value = !!r.search_case_sensitive
+  filterMode.value = !!r.filter_mode
+  searchQuery.value = r.filter_text ?? ''
+  followTail.value = !!r.follow_tail
+  // Wait for the virtualizer to mount the rows, then restore scroll.
+  globalThis.requestAnimationFrame(() => {
+    globalThis.requestAnimationFrame(() => {
+      if (scrollEl.value && r.scroll_top > 0) {
+        scrollEl.value.scrollTop = r.scroll_top
+      }
+      // Run search now that all the restored knobs are in place.
+      if (searchQuery.value.trim().length > 0) scheduleSearch()
+      else if (!isFullLevelMask()) void refreshAllowedRecords()
+      pendingRestore.value = null
+      sessionRestoreInFlight.value = false
+    })
+  })
+}
+
+// --- Custom window chrome (P7 polish) ---
+
+const windowMaximized = ref(false)
+const appWindow = getCurrentWindow()
+const appWebview = getCurrentWebview()
+let unlistenWindow: (() => void) | null = null
+let unlistenDragDrop: (() => void) | null = null
+const dragHover = ref(false)
+
+async function refreshMaximized() {
+  try {
+    windowMaximized.value = await appWindow.isMaximized()
+  } catch {
+    windowMaximized.value = false
+  }
+}
+
+async function minimizeWindow() {
+  try {
+    await appWindow.minimize()
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+async function toggleMaximizeWindow() {
+  try {
+    await appWindow.toggleMaximize()
+    await refreshMaximized()
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+async function closeWindow() {
+  try {
+    await appWindow.close()
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+async function openPath(path: string) {
+  if (busy.value) return
+  busy.value = true
+  error.value = null
+  try {
+    if (file.value) {
+      const oldId = file.value.file_id
+      void invoke('cancel_search', { fileId: oldId }).catch(() => {})
+      void invoke('stop_tail', { fileId: oldId }).catch(() => {})
+      void invoke('close_file', { fileId: oldId }).catch(() => {})
+    }
+    pages.value = new Map()
+    inflight.clear()
+    hits.value = new Map()
+    hitOrder.value = []
+    currentHit.value = -1
+    allowedRecords.value = null
+    const opened = (await invoke('open_file', { path })) as OpenedFile
+    file.value = opened
+    patternInput.value = opened.pattern_source
+    patternMode.value = opened.pattern_source.startsWith('regex:') ? 'regex' : 'pattern'
+    patternScore.value = null
+    patternError.value = null
+    lastTailLineCount = opened.line_count
+    void startTail()
+    void fetchMinimap(true)
+    if (pendingRestore.value) {
+      void applyPendingRestore()
+    }
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+    pendingRestore.value = null
+    sessionRestoreInFlight.value = false
+  } finally {
+    busy.value = false
+  }
+}
+
+async function openSettings() {
+  try {
+    dataDir.value = (await invoke('get_data_dir')) as DataDirPayload
+  } catch {
+    dataDir.value = null
+  }
+  settingsOpen.value = true
+}
+
+async function openDataFolder() {
+  try {
+    await invoke('open_data_dir')
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+async function resetData(scope: 'settings' | 'session' | 'patterns' | 'index' | 'all') {
+  try {
+    await invoke('reset_data', { req: { scope } })
+    if (scope === 'settings' || scope === 'all') {
+      await loadSettings()
+    }
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+async function openRecent(path: string) {
+  settingsOpen.value = false
+  await openPath(path)
+}
+
+async function forgetRecent(path: string) {
+  try {
+    const s = (await invoke('forget_recent', { path })) as Settings
+    settings.value = s
+  } catch (e) {
+    error.value = (e as IpcError).message ?? String(e)
+  }
+}
+
+// Persist the user-visible knobs to session.json whenever they change. The
+// scroll position autosaves from onViewportScroll (added below); everything
+// else flows through this watcher.
+watch(
+  [
+    () => file.value?.path,
+    () => followTail.value,
+    () => searchMode.value,
+    () => searchQuery.value,
+    () => searchCaseSensitive.value,
+    () => filterMode.value,
+    () => buildLevelMask(),
+  ],
+  () => {
+    if (sessionRestoreInFlight.value) return
+    scheduleSessionSave()
+  },
+)
+
+function onGlobalKey(ev: KeyboardEvent) {
+  if (handleFontShortcut(ev)) return
+  suppressBrowserFind(ev)
+}
+
 onMounted(() => {
-  globalThis.addEventListener('keydown', suppressBrowserFind, { capture: true })
+  globalThis.addEventListener('keydown', onGlobalKey, { capture: true })
+  // Theme + settings boot, then session restore.
+  void (async () => {
+    await loadSettings()
+    systemDarkMql?.addEventListener?.('change', onSystemThemeChange)
+    void refreshMaximized()
+    try {
+      const unlistenResize = await appWindow.onResized(() => void refreshMaximized())
+      unlistenWindow = unlistenResize
+    } catch {
+      unlistenWindow = null
+    }
+    try {
+      unlistenDragDrop = await appWebview.onDragDropEvent((evt) => {
+        const t = evt.payload.type
+        if (t === 'enter' || t === 'over') {
+          dragHover.value = true
+        } else if (t === 'leave') {
+          dragHover.value = false
+        } else if (t === 'drop') {
+          dragHover.value = false
+          const paths = (evt.payload as { paths?: string[] }).paths ?? []
+          const first = paths.find((p) => typeof p === 'string' && p.length > 0)
+          if (first) void openPath(first)
+        }
+      })
+    } catch {
+      unlistenDragDrop = null
+    }
+    await restoreSession()
+  })()
   // Track viewport height so the minimap buckets match available pixels.
   // Pure-CSS height = bucket count; ResizeObserver tells us when to refetch.
   resizeObserver = new ResizeObserver((entries) => {
@@ -1375,7 +1822,17 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  globalThis.removeEventListener('keydown', suppressBrowserFind, { capture: true })
+  globalThis.removeEventListener('keydown', onGlobalKey, { capture: true })
+  systemDarkMql?.removeEventListener?.('change', onSystemThemeChange)
+  if (unlistenWindow) {
+    unlistenWindow()
+    unlistenWindow = null
+  }
+  if (unlistenDragDrop) {
+    unlistenDragDrop()
+    unlistenDragDrop = null
+  }
+  if (sessionSaveTimer.value !== null) globalThis.clearTimeout(sessionSaveTimer.value)
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -1504,19 +1961,22 @@ function levelGutterVar(level: string): string {
 
 <template>
   <main class="shell">
-    <header class="bar">
-      <h1>Clog</h1>
+    <header class="bar" data-tauri-drag-region>
+      <h1 data-tauri-drag-region class="app-title">
+        <img src="/clog-icon.png" alt="Clog" class="app-icon" data-tauri-drag-region title="Clog: The Core log viewer" />
+      </h1>
       <button :disabled="busy" @click="pickFile">
         {{ busy ? 'Reading...' : 'Open file...' }}
       </button>
+      <button
+        type="button"
+        class="settings-btn"
+        title="Settings"
+        aria-label="Open settings"
+        @click="openSettings"
+      >&#9881;</button>
       <span v-if="file" class="meta">
         <strong>{{ basename(file.path) }}</strong>
-        <span class="sep">--</span>
-        {{ formatCount(file.record_count) }} records
-        <span class="sep">--</span>
-        {{ formatCount(file.line_count) }} lines
-        <span class="sep">--</span>
-        {{ formatCount(file.size_bytes) }} bytes
       </span>
       <span v-if="file" class="tail-controls">
         <span
@@ -1537,47 +1997,33 @@ function levelGutterVar(level: string): string {
           :title="followTail ? 'Auto-scroll is on -- click to detach' : 'Auto-scroll is off'"
           @click="toggleFollowTail"
         >
-          {{ followTail ? 'Following' : 'Detached' }}
+          {{ followTail ? 'Following' : 'Follow' }}
         </button>
+      </span>
+      <span class="window-controls" :class="{ 'no-file': !file }">
         <button
-          v-if="!followTail"
           type="button"
-          class="jump-bottom"
-          title="Jump to bottom and re-enable follow"
-          @click="toggleFollowTail"
-        >
-          Jump to bottom
-        </button>
+          class="win-btn"
+          title="Minimize"
+          aria-label="Minimize"
+          @click="minimizeWindow"
+        >&#9472;</button>
+        <button
+          type="button"
+          class="win-btn"
+          :title="windowMaximized ? 'Restore' : 'Maximize'"
+          :aria-label="windowMaximized ? 'Restore' : 'Maximize'"
+          @click="toggleMaximizeWindow"
+        >{{ windowMaximized ? '⧉' : '□' }}</button>
+        <button
+          type="button"
+          class="win-btn close"
+          title="Close"
+          aria-label="Close"
+          @click="closeWindow"
+        >&times;</button>
       </span>
     </header>
-
-    <section v-if="file" class="pattern-bar">
-      <label class="kind">
-        Pattern:
-        <select v-model="patternMode">
-          <option value="pattern">PatternLayout</option>
-          <option value="regex">Regex</option>
-        </select>
-      </label>
-      <input
-        v-model="patternInput"
-        class="pat-input"
-        :placeholder="patternMode === 'pattern'
-          ? '[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n'
-          : '^(?P<timestamp>\\d{4}-...) (?P<level>INFO|WARN|ERROR) ...'"
-        spellcheck="false"
-      />
-      <button type="button" @click="testPattern">Test</button>
-      <button type="button" @click="applyPattern">Apply</button>
-      <span v-if="patternScore !== null" class="score">
-        match score: <strong>{{ (patternScore * 100).toFixed(1) }}%</strong>
-        <span v-if="patternSampleSize > 0" class="muted"> of {{ patternSampleSize }} lines</span>
-      </span>
-      <span v-if="file.pattern_name" class="auto">
-        auto-detected: <strong>{{ file.pattern_name }}</strong>
-      </span>
-      <span v-if="patternError" class="pat-error">{{ patternError }}</span>
-    </section>
 
     <section v-if="error" class="error">{{ error }}</section>
 
@@ -1668,6 +2114,14 @@ function levelGutterVar(level: string): string {
           <span v-else class="ts muted">--</span>
         </div>
       </div>
+      <button
+        v-if="!followTail && !atBottom"
+        type="button"
+        class="jump-bottom-floating"
+        title="Jump to bottom and re-enable follow"
+        aria-label="Jump to bottom"
+        @click="toggleFollowTail"
+      >&darr;</button>
     </div>
     <p v-else class="placeholder">No file open. Click <em>Open file...</em> to pick one.</p>
 
@@ -1751,9 +2205,192 @@ function levelGutterVar(level: string): string {
     </section>
 
     <footer class="status-bar">
-      <span class="slot left" />
-      <span class="slot right" />
+      <span class="slot left">
+        <span v-if="file?.cache_hit" class="cache-hint" title="Records loaded from the on-disk index cache">cached</span>
+      </span>
+      <span class="slot right">
+        <template v-if="file">
+          <span class="stat">{{ formatCount(file.record_count) }} records</span>
+          <span class="stat">{{ formatCount(file.line_count) }} lines</span>
+          <span class="stat" :title="`${formatCount(file.size_bytes)} bytes`">{{ formatBytes(file.size_bytes) }}</span>
+        </template>
+        <button
+          type="button"
+          class="theme-toggle"
+          :class="{ 'is-auto': settings.theme === 'system' }"
+          :title="THEME_LABEL[settings.theme]"
+          :aria-label="THEME_LABEL[settings.theme]"
+          @click="cycleTheme"
+        >{{ themeToggleGlyph }}</button>
+        <span class="font-size-hint" :title="`Base font size (Ctrl-+ / Ctrl-- / Ctrl-0)`">
+          {{ settings.font_size }}px
+        </span>
+        <span v-if="file" class="pattern-status">
+          <span class="pattern-label" :title="file.pattern_source">
+            Pattern:
+            <strong>{{ file.pattern_name ?? 'custom' }}</strong>
+          </span>
+          <button
+            type="button"
+            class="pattern-edit-btn"
+            title="Edit pattern"
+            aria-label="Edit pattern"
+            @click="patternOpen = true"
+          >Edit</button>
+        </span>
+      </span>
     </footer>
+
+    <div v-if="dragHover" class="drop-overlay">
+      <div class="drop-hint">
+        <span class="arrow">&darr;</span>
+        Drop a log file to open it
+      </div>
+    </div>
+
+    <div v-if="patternOpen && file" class="modal-backdrop" @click.self="patternOpen = false">
+      <div class="modal pattern-modal" role="dialog" aria-label="Pattern">
+        <header class="modal-head">
+          <h2>Pattern</h2>
+          <button
+            type="button"
+            class="modal-close"
+            aria-label="Close pattern editor"
+            @click="patternOpen = false"
+          >&times;</button>
+        </header>
+        <section class="modal-body">
+          <div class="row-grid">
+            <label>Kind</label>
+            <select v-model="patternMode">
+              <option value="pattern">PatternLayout</option>
+              <option value="regex">Regex</option>
+            </select>
+          </div>
+          <div class="pattern-input-row">
+            <input
+              v-model="patternInput"
+              class="pat-input"
+              :placeholder="patternMode === 'pattern'
+                ? '[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n'
+                : '^(?P&lt;timestamp&gt;\\d{4}-...) (?P&lt;level&gt;INFO|WARN|ERROR) ...'"
+              spellcheck="false"
+            />
+            <button type="button" @click="testPattern">Test</button>
+            <button type="button" @click="applyPattern">Apply</button>
+          </div>
+          <p v-if="patternScore !== null" class="score">
+            Match score: <strong>{{ (patternScore * 100).toFixed(1) }}%</strong>
+            <span v-if="patternSampleSize > 0" class="muted"> of {{ patternSampleSize }} lines</span>
+          </p>
+          <p v-if="file.pattern_name" class="muted">
+            Auto-detected: <strong>{{ file.pattern_name }}</strong>
+          </p>
+          <p v-if="patternError" class="pat-error">{{ patternError }}</p>
+          <p class="muted">
+            Apply saves the pattern as a per-file override; the next time you open this file the same pattern is used automatically.
+          </p>
+        </section>
+      </div>
+    </div>
+
+    <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
+      <div class="modal" role="dialog" aria-label="Settings">
+        <header class="modal-head">
+          <h2>Settings</h2>
+          <button
+            type="button"
+            class="modal-close"
+            aria-label="Close settings"
+            @click="settingsOpen = false"
+          >&times;</button>
+        </header>
+        <section class="modal-body">
+          <h3>Appearance</h3>
+          <div class="row-grid">
+            <span class="row-label">Theme</span>
+            <span class="seg">
+              <button
+                v-for="opt in (['system', 'light', 'dark'] as const)"
+                :key="opt"
+                type="button"
+                class="seg-btn"
+                :class="{ 'is-on': settings.theme === opt }"
+                @click="updateSettings({ theme: opt })"
+              >{{ opt[0].toUpperCase() + opt.slice(1) }}</button>
+            </span>
+          </div>
+          <div class="row-grid">
+            <span class="row-label">Font size</span>
+            <span class="seg font-seg">
+              <button type="button" class="seg-btn" @click="bumpFontSize(-1)" title="Decrease (Ctrl--)">&minus;</button>
+              <button type="button" class="seg-btn font-val" @click="resetFontSize" title="Reset to default (Ctrl-0)">{{ settings.font_size }}px</button>
+              <button type="button" class="seg-btn" @click="bumpFontSize(1)" title="Increase (Ctrl-+)">+</button>
+            </span>
+          </div>
+
+          <h3>Behaviour</h3>
+          <div class="row-grid">
+            <label for="follow-tail-default">Follow tail by default</label>
+            <span class="control-cell">
+              <input
+                id="follow-tail-default"
+                type="checkbox"
+                :checked="settings.follow_tail_default"
+                @change="(e: Event) => updateSettings({ follow_tail_default: (e.target as HTMLInputElement).checked })"
+              />
+            </span>
+          </div>
+
+          <h3>Recent files</h3>
+          <ul v-if="settings.recent_files.length > 0" class="recent-list">
+            <li v-for="p in settings.recent_files" :key="p">
+              <button type="button" class="open-btn" @click="openRecent(p)">{{ basename(p) }}</button>
+              <span class="path">{{ p }}</span>
+              <button type="button" class="forget-btn" @click="forgetRecent(p)" title="Remove from list">&times;</button>
+            </li>
+          </ul>
+          <p v-else class="muted">No recent files yet. Open a log to populate this list.</p>
+
+          <h3>Advanced</h3>
+          <div class="row-grid">
+            <span class="row-label">Data folder</span>
+            <span class="control-cell data-cell">
+              <code class="data-path">{{ dataDir?.path ?? '(loading...)' }}</code>
+              <span v-if="dataDir?.portable" class="badge">portable</span>
+              <button type="button" class="seg-btn" @click="openDataFolder">Open folder</button>
+            </span>
+          </div>
+          <div class="reset-grid">
+            <div class="row-grid">
+              <span class="row-label">Session state</span>
+              <span class="control-cell"><button type="button" class="seg-btn" @click="resetData('session')">Reset</button></span>
+            </div>
+            <div class="row-grid">
+              <span class="row-label">Settings</span>
+              <span class="control-cell"><button type="button" class="seg-btn" @click="resetData('settings')">Reset</button></span>
+            </div>
+            <div class="row-grid">
+              <span class="row-label">Pattern overrides</span>
+              <span class="control-cell"><button type="button" class="seg-btn" @click="resetData('patterns')">Reset</button></span>
+            </div>
+            <div class="row-grid">
+              <span class="row-label">Index cache</span>
+              <span class="control-cell"><button type="button" class="seg-btn" @click="resetData('index')">Clear</button></span>
+            </div>
+            <div class="row-grid">
+              <span class="row-label">Everything</span>
+              <span class="control-cell"><button type="button" class="seg-btn danger" @click="resetData('all')">Reset all data</button></span>
+            </div>
+          </div>
+
+          <p class="footer-note muted">
+            Custom highlighting rules and automatic update checks are planned for a later milestone.
+            Built-in highlights cover Java exceptions, <code>Caused by:</code>, stack frames, file paths and URLs.
+          </p>
+        </section>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -1765,6 +2402,9 @@ function levelGutterVar(level: string): string {
   font-family: var(--font-sans);
   color: var(--fg-default);
   background: var(--bg-app);
+  /* Frameless window: a 1px hairline keeps the app visually contained
+     against the desktop and gives a subtle theme-aware edge. */
+  border: 1px solid var(--border-default);
 }
 
 .bar {
@@ -1779,6 +2419,21 @@ function levelGutterVar(level: string): string {
     margin: 0;
     font-size: 1.1rem;
     letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .app-icon {
+    display: block;
+    height: 22px;
+    width: 22px;
+    /* Let the browser do its default high-quality bilinear/bicubic
+       downscaling. Any explicit `image-rendering` hint (`pixelated`,
+       `-webkit-optimize-contrast`) on a downscale ends up looking like
+       nearest-neighbour on Chromium. */
+    image-rendering: auto;
+    object-fit: contain;
+    pointer-events: none;
   }
 
   button {
@@ -1800,6 +2455,46 @@ function levelGutterVar(level: string): string {
     font-size: 0.85rem;
 
     .sep { color: var(--fg-separator); margin: 0 0.5rem; }
+  }
+
+  .settings-btn {
+    margin-left: 0.2rem;
+    padding: 0.35rem 0.55rem;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  /* Frameless-window controls. Always sit at the far right of the header.
+     When no file is open, the tail-controls cluster (which normally owns
+     margin-left: auto) is absent, so this cluster carries the push. */
+  .window-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    -webkit-app-region: no-drag;
+
+    &.no-file { margin-left: auto; }
+
+    .win-btn {
+      background: transparent;
+      color: var(--fg-muted);
+      border: 0;
+      padding: 0.3rem 0.7rem;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+
+      &:hover {
+        background: var(--bg-button-hover);
+        color: var(--fg-default);
+      }
+
+      &.close:hover {
+        background: var(--level-error);
+        color: var(--fg-on-accent);
+      }
+    }
   }
 
   .tail-controls {
@@ -1836,7 +2531,7 @@ function levelGutterVar(level: string): string {
       }
     }
 
-    .follow-toggle, .jump-bottom {
+    .follow-toggle {
       background: var(--bg-button);
       color: var(--fg-default);
       border: 1px solid var(--border-button);
@@ -2003,7 +2698,7 @@ function levelGutterVar(level: string): string {
 
       &.is-on {
         background: var(--level-info);
-        color: var(--slate-950);
+        color: var(--fg-on-accent);
         border-color: var(--level-info);
         font-weight: 600;
       }
@@ -2167,7 +2862,369 @@ function levelGutterVar(level: string): string {
     gap: 0.6rem;
   }
 
-  .slot.right { margin-left: auto; }
+  .slot.right {
+    margin-left: auto;
+    gap: 1.5em;
+  }
+
+  .stat { color: var(--fg-muted); }
+
+  .cache-hint {
+    padding: 0.05rem 0.4rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-button);
+    color: var(--fg-dim);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .font-size-hint { color: var(--fg-dim); }
+
+  .theme-toggle {
+    background: transparent;
+    color: var(--fg-muted);
+    border: 1px solid var(--border-button);
+    border-radius: var(--radius-sm);
+    padding: 0.05rem 0.5rem;
+    font-size: 0.85rem;
+    line-height: 1.2;
+    cursor: pointer;
+
+    /* Auto-follow-OS state shows whichever glyph the system currently
+       resolves to, dimmed to 50% so it reads as "no manual override". */
+    &.is-auto { opacity: 0.5; }
+
+    &:hover {
+      background: var(--bg-button-hover);
+      color: var(--fg-default);
+      opacity: 1;
+    }
+  }
+
+  .pattern-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .pattern-label strong {
+    color: var(--fg-default);
+    font-weight: 600;
+  }
+
+  .pattern-edit-btn {
+    background: var(--bg-button);
+    color: var(--fg-default);
+    border: 1px solid var(--border-button);
+    border-radius: var(--radius-sm);
+    padding: 0.05rem 0.45rem;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    cursor: pointer;
+
+    &:hover { background: var(--bg-button-hover); }
+  }
+}
+
+.pattern-modal {
+  width: min(720px, 92vw);
+
+  .pattern-input-row {
+    display: flex;
+    gap: 0.4rem;
+    margin: 0.6rem 0;
+
+    .pat-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg-viewport);
+      color: var(--fg-default);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 0.4rem 0.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+    }
+
+    button {
+      background: var(--bg-button);
+      color: var(--fg-default);
+      border: 1px solid var(--border-button);
+      border-radius: var(--radius-sm);
+      padding: 0.3rem 0.8rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+
+      &:hover { background: var(--bg-button-hover); }
+    }
+  }
+
+  .score, .muted, .pat-error {
+    font-size: 0.85rem;
+    margin: 0.3rem 0;
+  }
+  .muted { color: var(--fg-muted); }
+  .pat-error {
+    color: var(--fg-error);
+    font-family: var(--font-mono);
+  }
+}
+
+/* --- Drag-drop overlay ------------------------------------------------- */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--level-info) 18%, transparent);
+  border: 3px dashed var(--level-info);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 250;
+
+  .drop-hint {
+    background: var(--bg-elevated);
+    color: var(--fg-default);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 1rem 1.6rem;
+    font-size: 1rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+
+    .arrow {
+      color: var(--level-info);
+      font-size: 1.4rem;
+    }
+  }
+}
+
+/* --- Settings modal (P7) ----------------------------------------------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal {
+  width: min(720px, 92vw);
+  max-height: 88vh;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .modal-head {
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-app);
+
+    h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+  }
+
+  .modal-close {
+    margin-left: auto;
+    background: transparent;
+    color: var(--fg-default);
+    border: 0;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .modal-body {
+    padding: 1rem 1.2rem 1.5rem;
+    overflow-y: auto;
+
+    h3 {
+      margin: 1.2rem 0 0.4rem;
+      font-size: 0.95rem;
+      border-bottom: 1px solid var(--border-default);
+      padding-bottom: 0.25rem;
+    }
+    h3:first-of-type { margin-top: 0; }
+
+    h4 {
+      margin: 0.8rem 0 0.4rem;
+      font-size: 0.85rem;
+      color: var(--fg-muted);
+    }
+
+    p.muted {
+      color: var(--fg-muted);
+      font-size: 0.85rem;
+      margin: 0.4rem 0;
+    }
+
+    code {
+      background: var(--bg-button);
+      padding: 0.05rem 0.3rem;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+    }
+
+    .row-grid {
+      display: grid;
+      grid-template-columns: 10rem 1fr;
+      align-items: center;
+      gap: 0.8rem;
+      margin: 0.35rem 0;
+    }
+
+    .row-label {
+      color: var(--fg-muted);
+      font-size: 0.85rem;
+    }
+
+    .control-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+
+    .seg {
+      display: inline-flex;
+      gap: 0.3rem;
+    }
+    .seg-btn {
+      background: var(--bg-button);
+      color: var(--fg-default);
+      border: 1px solid var(--border-button);
+      border-radius: var(--radius-sm);
+      padding: 0.3rem 0.7rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+
+      &.is-on {
+        background: var(--fg-default);
+        color: var(--bg-app);
+        border-color: var(--fg-default);
+      }
+
+      &.danger {
+        color: var(--level-error);
+        border-color: var(--level-error);
+      }
+    }
+
+    .font-seg .font-val {
+      font-family: var(--font-mono);
+      min-width: 3.5rem;
+      text-align: center;
+    }
+
+    .recent-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.3rem 0 0;
+      max-height: 14rem;
+      overflow-y: auto;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+
+      li {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.3rem 0.5rem;
+        border-bottom: 1px dashed var(--border-default);
+        font-size: 0.82rem;
+
+        &:last-child { border-bottom: 0; }
+
+        .open-btn {
+          background: transparent;
+          border: 0;
+          color: var(--level-info);
+          cursor: pointer;
+          padding: 0;
+          font-weight: 600;
+          flex: 0 0 auto;
+
+          &:hover { text-decoration: underline; }
+        }
+
+        .path {
+          color: var(--fg-dim);
+          font-family: var(--font-mono);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .forget-btn {
+          background: transparent;
+          border: 0;
+          color: var(--fg-dim);
+          cursor: pointer;
+          font-size: 1rem;
+          line-height: 1;
+
+          &:hover { color: var(--level-error); }
+        }
+      }
+    }
+
+    .data-cell {
+      flex-wrap: wrap;
+
+      .data-path {
+        background: var(--bg-button);
+        padding: 0.2rem 0.45rem;
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--fg-default);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .badge {
+        padding: 0.05rem 0.4rem;
+        border-radius: var(--radius-sm);
+        background: var(--level-info);
+        color: var(--bg-app);
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+    }
+
+    .reset-grid {
+      margin-top: 0.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .footer-note {
+      margin-top: 1.2rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--border-default);
+      font-size: 0.8rem;
+    }
+  }
 }
 
 .viewport-shell {
@@ -2175,12 +3232,43 @@ function levelGutterVar(level: string): string {
   display: flex;
   flex-direction: row;
   min-height: 0;
+  position: relative;
   /* The minimap tooltip is positioned absolutely with `right` so it
      extends leftward past the .minimap container; without clipping here
      it pushes the shell horizontally and pulls in a page-level scrollbar.
      The shell already bounds the viewport vertically, so clipping is
      safe -- the tooltip stays well within it. */
   overflow: hidden;
+
+  .jump-bottom-floating {
+    position: absolute;
+    /* Park clear of the minimap (20px wide + 1px border-left) and a
+       comfortable touch-target distance up from the bottom edge. */
+    right: 32px;
+    bottom: 16px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-button);
+    background: var(--bg-elevated);
+    color: var(--fg-default);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.25;
+    transition: opacity 120ms ease-out, background 120ms ease-out;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+
+    &:hover, &:focus-visible {
+      opacity: 1;
+      background: var(--bg-button-hover);
+      outline: none;
+    }
+  }
 }
 
 .minimap {
@@ -2496,7 +3584,7 @@ function levelGutterVar(level: string): string {
      above row 1 when the file is scrolled to the very top. */
   .sticky-shell {
     position: sticky;
-    top: 1px;
+    top: 0;
     z-index: 2;
     height: 0;
     overflow: visible;

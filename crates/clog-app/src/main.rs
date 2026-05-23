@@ -4,6 +4,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 mod channels;
+mod paths;
+mod persistence;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -14,11 +16,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use clog_core::{
-    auto_detect, index_file, sample_lines, scan_records, search_records, CompiledPattern,
-    CoreError, HeaderFields, HitRef, Level, LevelMask, LineSource, PatternError, RecordHeader,
-    RecordScanner, RegexScanner, RegexScannerError, SearchError, SearchMode, SearchOptions,
-    TailEvent, TailState, BUILTIN_PATTERNS, DEFAULT_POLL_INTERVAL_MS,
+    auto_detect, index_file, sample_lines, scan_records, search_records, CacheFingerprint,
+    CompiledPattern, CoreError, HeaderFields, HitRef, Level, LevelMask, LineSource, LoadOutcome,
+    LooseScanner, PatternError, RecordHeader, RecordScanner, RegexScanner, RegexScannerError,
+    SearchError, SearchMode, SearchOptions, StreamedFile, TailEvent, TailState, BUILTIN_PATTERNS,
+    DEFAULT_POLL_INTERVAL_MS,
 };
+use persistence::{PatternOverride, PatternsFile, Session, Settings};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -135,6 +139,11 @@ struct OpenedFile {
     pattern_source: String,
     pattern_name: Option<String>,
     scanner_kind: ScannerKind,
+    /// When true, every physical line is treated as its own record (an
+    /// `Unknown`-level orphan rather than a continuation of the previous
+    /// record) so a custom / unconfirmed pattern does not visually merge
+    /// unrelated lines together. Mirrors `pattern_name.is_none()`.
+    loose: bool,
     /// Shutdown signal for the running tail task, if any.
     tail_shutdown: Option<oneshot::Sender<()>>,
     /// `JoinHandle` for the running tail task, retained so we can drop it
@@ -208,6 +217,15 @@ struct OpenedFilePayload {
     pattern_source: String,
     /// Match-score (0.0..=1.0) of the chosen pattern against a 64KB sample.
     pattern_score: f32,
+    /// True iff the records/line-offsets came from the persistent index
+    /// cache rather than a fresh `index_file` walk. Surfaced so the UI can
+    /// show a "cached" hint or telemetry can track hit rate.
+    cache_hit: bool,
+    /// True iff the active pattern is "custom" (no auto-detected builtin
+    /// and / or a user override) -- the UI uses this to suppress the
+    /// continuation-line styling that would otherwise visually merge
+    /// physical lines into the preceding record.
+    loose: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -231,6 +249,7 @@ struct PatternTestPayload {
 struct ApplyPatternPayload {
     record_count: u64,
     pattern_source: String,
+    loose: bool,
 }
 
 /// Per-tick payload emitted on the `start_tail` Channel. The UI uses
@@ -253,37 +272,131 @@ pub struct TailDelta {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_lines)]
 fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePayload, IpcError> {
     let path_buf = PathBuf::from(&path);
-    // Sample first to decide which pattern to use.
-    let sample = sample_lines(&path_buf, 64 * 1024)?;
-    let sample_refs: Vec<&[u8]> = sample.iter().map(Vec::as_slice).collect();
-    let (name, scanner, score) = if let Some(hit) = auto_detect(sample_refs.iter().copied()) {
-        (Some(hit.0.to_string()), hit.1, hit.2)
+
+    // 1. Resolve which scanner to use: per-file override beats auto-detect.
+    let patterns = PatternsFile::load();
+    let path_key = path_buf.to_string_lossy().to_string();
+    let mut override_score: Option<f32> = None;
+    let (name, scanner, score, scanner_kind) = if let Some(ov) =
+        patterns.overrides.get(&path_key).cloned()
+    {
+        tracing::debug!(target: "clog::open", path = %path_key, kind = %ov.kind, "using per-file pattern override");
+        if ov.kind.as_str() == "regex" {
+            // Validate the regex compiles cleanly so a broken override
+            // surfaces as a clear error here rather than a confusing
+            // "no records parsed" downstream.
+            let _ = RegexScanner::compile(&ov.source)?;
+            override_score = Some(1.0);
+            (
+                None,
+                CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("builtin compiles"),
+                1.0,
+                ScannerKind::Regex(ov.source.clone()),
+            )
+        } else {
+            let p = CompiledPattern::compile(&ov.source)?;
+            (None, p, 1.0, ScannerKind::Pattern(ov.source.clone()))
+        }
     } else {
-        // Fallback: still build a wsl-dev scanner so records are at
-        // least segmented per line. User can paste the real pattern.
-        let scanner = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("builtin valid");
-        (None, scanner, 0.0)
+        let sample = sample_lines(&path_buf, 64 * 1024)?;
+        let sample_refs: Vec<&[u8]> = sample.iter().map(Vec::as_slice).collect();
+        if let Some(hit) = auto_detect(sample_refs.iter().copied()) {
+            let kind = ScannerKind::Pattern(hit.1.source.clone());
+            (Some(hit.0.to_string()), hit.1, hit.2, kind)
+        } else {
+            let scanner = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("builtin valid");
+            let kind = ScannerKind::Pattern(scanner.source.clone());
+            (None, scanner, 0.0, kind)
+        }
+    };
+    let _ = override_score;
+
+    // 2. Resolve which compiled scanner to actually index with (matches the
+    //    kind selected above). When no builtin pattern matched (`name` is
+    //    `None`) the file is "custom" -- we don't trust the scanner to know
+    //    what is and isn't a continuation, so wrap it in `LooseScanner` so
+    //    every line becomes its own record.
+    let compiled = scanner_kind.compile()?;
+    let loose = name.is_none();
+
+    // 3. Try the persistent index cache first. A hit skips the full
+    //    `index_file` walk; a miss falls back to a fresh index + cache write.
+    //    Loose vs strict produces different record shapes, so the fingerprint
+    //    string distinguishes them.
+    let pattern_source_for_fp = {
+        let raw = match &scanner_kind {
+            ScannerKind::Pattern(s) => s.clone(),
+            ScannerKind::Regex(s) => format!("regex:{s}"),
+        };
+        if loose { format!("loose:{raw}") } else { raw }
+    };
+    let cache_path = paths::index_cache_path(&path_buf);
+    let cache_load_t = std::time::Instant::now();
+    let (line_index, records, cache_hit) = if let Ok(fp) =
+        CacheFingerprint::for_path(&path_buf, &pattern_source_for_fp)
+    {
+        match clog_core::load_index_cache(&cache_path, &fp) {
+            LoadOutcome::Hit {
+                line_index,
+                records,
+            } => {
+                tracing::info!(
+                    target: "clog::cache",
+                    path = %path_key,
+                    elapsed_ms = u64::try_from(cache_load_t.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                    records = records.len(),
+                    "index cache hit"
+                );
+                (line_index, records, true)
+            }
+            LoadOutcome::Miss => {
+                let (_src, li, recs) = if loose {
+                    index_file(&path_buf, &LooseScanner::new(&compiled))?
+                } else {
+                    index_file(&path_buf, &compiled)?
+                };
+                if let Err(e) = clog_core::save_index_cache(&cache_path, &fp, &li, &recs) {
+                    tracing::warn!(target: "clog::cache", error = %e, "index cache write failed");
+                }
+                (li, recs, false)
+            }
+        }
+    } else {
+        let (_src, li, recs) = if loose {
+            index_file(&path_buf, &LooseScanner::new(&compiled))?
+        } else {
+            index_file(&path_buf, &compiled)?
+        };
+        (li, recs, false)
     };
 
-    let (source, line_index, records) = index_file(&path_buf, &scanner)?;
+    let pattern_source = match &scanner_kind {
+        ScannerKind::Pattern(s) => s.clone(),
+        ScannerKind::Regex(s) => format!("regex:{s}"),
+    };
 
-    let pattern_source = scanner.source.clone();
+    let mut source = StreamedFile::open(&path_buf)?;
+    let size_bytes = source.file_size();
+    let bytes = source.read_all()?;
 
     let file_id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let payload = OpenedFilePayload {
         file_id,
         path: source.path().to_path_buf(),
-        size_bytes: source.file_size(),
+        size_bytes,
         line_count: line_index.line_count() as u64,
         record_count: records.len() as u64,
         pattern_name: name.clone(),
         pattern_source: pattern_source.clone(),
         pattern_score: score,
+        cache_hit,
+        loose,
     };
-    let mut source = source;
-    let bytes = source.read_all()?;
+    let _ = scanner; // suppress unused warning when override path discarded it
     let mut opened = OpenedFile {
         path: source.path().to_path_buf(),
         records,
@@ -293,7 +406,8 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
         line_offsets: Vec::new(),
         pattern_source: pattern_source.clone(),
         pattern_name: name,
-        scanner_kind: ScannerKind::Pattern(pattern_source),
+        scanner_kind,
+        loose,
         tail_shutdown: None,
         tail_join: None,
         current_search_id: 0,
@@ -309,6 +423,15 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
         .lock()
         .expect("files mutex poisoned")
         .insert(file_id, opened);
+
+    // 4. Touch the recent-files list (best-effort).
+    let abs_path_str = payload.path.to_string_lossy().to_string();
+    let mut settings = Settings::load();
+    settings.touch_recent(&abs_path_str);
+    if let Err(e) = settings.save() {
+        tracing::warn!(target: "clog::settings", error = %e, "settings write failed");
+    }
+
     Ok(payload)
 }
 
@@ -848,12 +971,15 @@ fn set_pattern(
                 path: file.path.display().to_string(),
             }
         })?;
+    // User-applied patterns clear the auto-detected name, so the file
+    // becomes "custom" and switches to loose-mode scanning (each line is
+    // its own record).
     let (records, source_string, kind) = match (pattern, regex) {
         (Some(p), _) => {
             let scanner = CompiledPattern::compile(&p)?;
             let src = scanner.source.clone();
             (
-                scan_records(&scanner, &line_index, &file.bytes),
+                scan_records(&LooseScanner::new(&scanner), &line_index, &file.bytes),
                 src.clone(),
                 ScannerKind::Pattern(src),
             )
@@ -861,7 +987,7 @@ fn set_pattern(
         (_, Some(r)) => {
             let scanner = RegexScanner::compile(&r)?;
             (
-                scan_records(&scanner, &line_index, &file.bytes),
+                scan_records(&LooseScanner::new(&scanner), &line_index, &file.bytes),
                 format!("regex:{r}"),
                 ScannerKind::Regex(r),
             )
@@ -876,12 +1002,57 @@ fn set_pattern(
     file.records = records;
     file.pattern_source.clone_from(&source_string);
     file.pattern_name = None;
-    file.scanner_kind = kind;
+    file.scanner_kind = kind.clone();
+    file.loose = true;
     let line_count = line_index.line_count() as u64;
-    file.rebuild_line_caches(line_count, line_index.line_offsets);
+    file.rebuild_line_caches(line_count, line_index.line_offsets.clone());
+
+    // Persist a per-file override so the next open uses this pattern
+    // automatically, and refresh the on-disk index cache to match.
+    let path_key = file.path.to_string_lossy().to_string();
+    let path_buf = file.path.clone();
+    let bytes_view = file.bytes.clone();
+    let records_view = file.records.clone();
+    drop(guard);
+    let (override_kind, override_source) = match &kind {
+        ScannerKind::Pattern(s) => ("pattern".to_string(), s.clone()),
+        ScannerKind::Regex(s) => ("regex".to_string(), s.clone()),
+    };
+    let mut patterns = PatternsFile::load();
+    patterns.overrides.insert(
+        path_key,
+        PatternOverride {
+            kind: override_kind,
+            source: override_source.clone(),
+        },
+    );
+    if let Err(e) = patterns.save() {
+        tracing::warn!(target: "clog::patterns", error = %e, "patterns.json write failed");
+    }
+    let fp_source = {
+        let raw = match &kind {
+            ScannerKind::Pattern(s) => s.clone(),
+            ScannerKind::Regex(s) => format!("regex:{s}"),
+        };
+        // set_pattern always switches to loose mode, so mirror open_file's
+        // fingerprint scheme.
+        format!("loose:{raw}")
+    };
+    if let Ok(fp) = CacheFingerprint::for_path(&path_buf, &fp_source) {
+        let li = clog_core::LineIndex {
+            line_offsets: line_index.line_offsets,
+            file_size: bytes_view.len() as u64,
+        };
+        let cache_path = paths::index_cache_path(&path_buf);
+        if let Err(e) = clog_core::save_index_cache(&cache_path, &fp, &li, &records_view) {
+            tracing::warn!(target: "clog::cache", error = %e, "index cache refresh after set_pattern failed");
+        }
+    }
+
     Ok(ApplyPatternPayload {
         record_count: count,
         pattern_source: source_string,
+        loose: true,
     })
 }
 
@@ -990,7 +1161,12 @@ fn apply_appended(
     };
 
     let prev_records = file.records.len();
-    extend_with_appended(file, &scanner, from_offset, appended);
+    if file.loose {
+        let loose = LooseScanner::new(&scanner);
+        extend_with_appended(file, &loose, from_offset, appended);
+    } else {
+        extend_with_appended(file, &scanner, from_offset, appended);
+    }
     let new_record_count = (file.records.len() - prev_records) as u64;
     Some(TailDelta {
         new_record_count,
@@ -1105,19 +1281,23 @@ fn extend_with_appended<S: RecordScanner>(
 /// `(line_count, record_count, new_size)`.
 fn apply_rotation(app: &AppHandle, file_id: u64) -> Result<(u64, u64, u64), IpcError> {
     let state = app.state::<AppState>();
-    let (path, scanner_kind) = {
+    let (path, scanner_kind, loose) = {
         let guard = state.files.lock().expect("files mutex poisoned");
         let file = guard
             .get(&file_id)
             .ok_or(IpcError::UnknownFile { file_id })?;
-        (file.path.clone(), file.scanner_kind.clone())
+        (file.path.clone(), file.scanner_kind.clone(), file.loose)
     };
 
     let scanner = scanner_kind.compile()?;
     // Re-read everything. The file may transiently be very small or even
     // empty between rotation steps; that's fine, we'll re-index again on
     // the next growth event.
-    let (mut source, line_index, records) = index_file(&path, &scanner)?;
+    let (mut source, line_index, records) = if loose {
+        index_file(&path, &LooseScanner::new(&scanner))?
+    } else {
+        index_file(&path, &scanner)?
+    };
     let bytes = source.read_all()?;
     let new_size = source.file_size();
     let line_count = line_index.line_count() as u64;
@@ -1132,7 +1312,179 @@ fn apply_rotation(app: &AppHandle, file_id: u64) -> Result<(u64, u64, u64), IpcE
     Ok((line_count, record_count, new_size))
 }
 
+// --- Persistence IPC -------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct DataDirPayload {
+    path: String,
+    portable: bool,
+}
+
+#[tauri::command]
+fn get_data_dir() -> DataDirPayload {
+    let dir = paths::data_dir();
+    let portable = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.join("clog-data").is_dir()))
+        .unwrap_or(false);
+    DataDirPayload {
+        path: dir.to_string_lossy().to_string(),
+        portable,
+    }
+}
+
+#[tauri::command]
+fn open_data_dir() -> Result<(), IpcError> {
+    let dir = paths::data_dir();
+    #[cfg(target_os = "windows")]
+    let res = std::process::Command::new("explorer.exe")
+        .arg(&dir)
+        .spawn()
+        .map(|_| ());
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open")
+        .arg(&dir)
+        .spawn()
+        .map(|_| ());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let res = std::process::Command::new("xdg-open")
+        .arg(&dir)
+        .spawn()
+        .map(|_| ());
+
+    res.map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: dir.display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn get_settings() -> Settings {
+    Settings::load()
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SettingsPatch {
+    pub theme: Option<String>,
+    pub font_size: Option<u32>,
+    pub follow_tail_default: Option<bool>,
+}
+
+#[tauri::command]
+fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
+    let mut s = Settings::load();
+    if let Some(t) = patch.theme {
+        s.theme = t;
+    }
+    if let Some(f) = patch.font_size {
+        s.font_size = f.clamp(9, 24);
+    }
+    if let Some(b) = patch.follow_tail_default {
+        s.follow_tail_default = b;
+    }
+    s.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::settings_path().display().to_string(),
+    })?;
+    Ok(s)
+}
+
+#[tauri::command]
+fn forget_recent(path: String) -> Result<Settings, IpcError> {
+    let mut s = Settings::load();
+    s.forget_recent(&path);
+    s.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::settings_path().display().to_string(),
+    })?;
+    Ok(s)
+}
+
+#[tauri::command]
+fn get_session() -> Session {
+    Session::load()
+}
+
+#[tauri::command]
+fn save_session(session: Session) -> Result<(), IpcError> {
+    session.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::session_path().display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn get_pattern_override(path: String) -> Option<PatternOverride> {
+    PatternsFile::load().overrides.get(&path).cloned()
+}
+
+#[tauri::command]
+fn forget_pattern_override(path: String) -> Result<(), IpcError> {
+    let mut p = PatternsFile::load();
+    p.overrides.remove(&path);
+    p.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::patterns_path().display().to_string(),
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ResetRequest {
+    /// `"settings"` | `"session"` | `"patterns"` | `"index"` | `"all"`.
+    pub scope: String,
+}
+
+#[tauri::command]
+fn reset_data(req: ResetRequest) -> Result<(), IpcError> {
+    let dir = paths::data_dir();
+    let candidates: Vec<PathBuf> = match req.scope.as_str() {
+        "settings" => vec![paths::settings_path()],
+        "session" => vec![paths::session_path()],
+        "patterns" => vec![paths::patterns_path()],
+        "index" => vec![paths::index_dir()],
+        "all" => vec![
+            paths::settings_path(),
+            paths::session_path(),
+            paths::patterns_path(),
+            paths::index_dir(),
+        ],
+        other => {
+            return Err(IpcError::BadPattern {
+                message: format!("unknown reset scope {other:?}"),
+            })
+        }
+    };
+    for p in candidates {
+        if p.is_dir() {
+            let _ = std::fs::remove_dir_all(&p);
+        } else {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+    tracing::info!(target: "clog::reset", scope = %req.scope, root = %dir.display(), "reset data");
+    Ok(())
+}
+
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let logs = paths::logs_dir();
+    let appender = tracing_appender::rolling::daily(&logs, "clog.log");
+    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let env_filter = tracing_subscriber::EnvFilter::try_from_env("CLOG_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(writer)
+        .with_ansi(false)
+        .try_init();
+    tracing::info!(target: "clog::boot", logs = %logs.display(), "tracing initialised");
+    guard
+}
+
 fn main() {
+    let log_guard = init_tracing();
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(target: "clog::panic", "panic: {info}");
+    }));
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_dialog::init())
@@ -1149,10 +1501,21 @@ fn main() {
             get_level_minimap,
             start_search,
             cancel_search,
-            list_records_by_level
+            list_records_by_level,
+            get_data_dir,
+            open_data_dir,
+            get_settings,
+            update_settings,
+            forget_recent,
+            get_session,
+            save_session,
+            get_pattern_override,
+            forget_pattern_override,
+            reset_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+    drop(log_guard);
 }
 
 #[cfg(test)]
@@ -1177,6 +1540,7 @@ mod tests {
             pattern_source: pattern_src.to_string(),
             pattern_name: Some("wsl-dev".to_string()),
             scanner_kind,
+            loose: false,
             tail_shutdown: None,
             tail_join: None,
             current_search_id: 0,
@@ -1328,7 +1692,11 @@ mod tests {
         let (mut file, scanner) = fresh_file();
         for (tick, payload) in body.iter().enumerate() {
             extend(&mut file, &scanner, payload.as_bytes());
-            assert_eq!(file.line_count, (tick + 1) as u64, "tick {tick}: line_count");
+            assert_eq!(
+                file.line_count,
+                (tick + 1) as u64,
+                "tick {tick}: line_count"
+            );
             assert_eq!(file.records.len(), tick + 1, "tick {tick}: records.len");
             for (ri, rec) in file.records.iter().enumerate() {
                 assert_eq!(
@@ -1406,7 +1774,10 @@ mod tests {
         );
         assert_eq!(file.line_count, 4);
         assert_eq!(file.records.len(), 2);
-        assert_eq!(file.records[0].line_count, 3, "stack frames attach to ERROR");
+        assert_eq!(
+            file.records[0].line_count, 3,
+            "stack frames attach to ERROR"
+        );
         assert_eq!(file.records[1].line_count, 1, "INFO is its own record");
 
         let lines = build_lines_payload(&file, 0, 4).expect("build_lines_payload");
@@ -1691,8 +2062,7 @@ mod tests {
         assert_eq!(file.line_count, 4, "four lines at open");
 
         // Start a tail state anchored at the file's current size.
-        let mut tail =
-            TailState::new(&path, file.bytes.len() as u64).expect("TailState::new");
+        let mut tail = TailState::new(&path, file.bytes.len() as u64).expect("TailState::new");
 
         // --- Step 3: append the fifth line WITHOUT trailing `\n`. ---
         let line5_no_nl =
@@ -1941,7 +2311,10 @@ mod tests {
         let r3 = &file.records[3];
         let r3_last_byte =
             usize::try_from(r3.byte_offset + u64::from(r3.byte_len) - 1).unwrap_or(usize::MAX);
-        assert_eq!(file.bytes[r3_last_byte], b'\n', "record 3 now ends in `\\n`");
+        assert_eq!(
+            file.bytes[r3_last_byte], b'\n',
+            "record 3 now ends in `\\n`"
+        );
     }
 
     /// Latest user repro: file opened with NO trailing `\n` on line 4,
@@ -2119,7 +2492,10 @@ mod tests {
             5,
             "the blank line is a continuation, so only one new record"
         );
-        assert_eq!(file.records[3].line_count, 2, "ERROR record has a phantom blank continuation");
+        assert_eq!(
+            file.records[3].line_count, 2,
+            "ERROR record has a phantom blank continuation"
+        );
         assert_eq!(file.records[4].level, Level::Info);
     }
 

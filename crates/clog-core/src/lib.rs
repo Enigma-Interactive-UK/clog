@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use thiserror::Error;
 
+pub mod idx_cache;
 pub mod index;
 pub mod pattern;
 pub mod record;
@@ -14,12 +15,17 @@ pub mod search;
 pub mod source;
 pub mod tail;
 
+pub use idx_cache::{
+    load as load_index_cache, save as save_index_cache, CacheFingerprint, LoadOutcome,
+    SCHEMA_VERSION as IDX_CACHE_SCHEMA,
+};
+
 pub use index::LineIndex;
 pub use pattern::{
     auto_detect, builtin_pattern, CompiledPattern, DateAtom, DateFormat, HeaderFields,
     ParsedHeader, PatternError, PatternWarning, Token, BUILTIN_PATTERNS,
 };
-pub use record::{scan_records, Level, RecordHeader, RecordScanner};
+pub use record::{scan_records, Level, LooseScanner, RecordHeader, RecordScanner};
 pub use regex_scanner::{RegexScanner, RegexScannerError};
 pub use search::{search_records, HitRef, LevelMask, SearchError, SearchMode, SearchOptions};
 pub use source::{LineSource, StreamedFile};
@@ -199,6 +205,44 @@ mod tests {
         // important assertion is that wsl-dev wins; we just sanity-check
         // it dominates noise.
         assert!(score > 0.4, "score {score} too low to be a confident pick");
+    }
+
+    /// P7: indexing the wsl-dev fixture, saving the index cache, and then
+    /// loading it back must produce a `(LineIndex, Vec<RecordHeader>)` byte-
+    /// for-byte identical to a fresh `index_file`. Guards against shape drift
+    /// in the on-disk format.
+    #[test]
+    fn index_cache_roundtrip_matches_fresh_index() {
+        use crate::idx_cache::{load, save, CacheFingerprint, LoadOutcome};
+        use crate::pattern::BUILTIN_PATTERNS;
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../research/solopress-wsl-oink.out"
+        );
+        if !Path::new(path).exists() {
+            eprintln!("skipping: fixture {path} not present");
+            return;
+        }
+        let scanner = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("compile");
+        let (_src, fresh_index, fresh_records) = index_file(path, &scanner).expect("index_file");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache_path = dir.path().join("test.idx");
+        let fp = CacheFingerprint::for_path(Path::new(path), &scanner.source).expect("fp");
+        save(&cache_path, &fp, &fresh_index, &fresh_records).expect("save");
+
+        match load(&cache_path, &fp) {
+            LoadOutcome::Hit {
+                line_index,
+                records,
+            } => {
+                assert_eq!(line_index.line_offsets, fresh_index.line_offsets);
+                assert_eq!(line_index.file_size, fresh_index.file_size);
+                assert_eq!(records, fresh_records);
+            }
+            LoadOutcome::Miss => panic!("cache miss after immediate save"),
+        }
     }
 
     /// P3: auto-detect must choose prod for the prod sample.
