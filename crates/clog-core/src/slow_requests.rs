@@ -156,9 +156,156 @@ pub fn extract_raw(message: &[u8]) -> Option<RawSlowRequest> {
     })
 }
 
+use crate::record::RecordHeader;
+
+/// A `RawSlowRequest` plus the source location (line index + record
+/// index) needed for the UI to scroll back to the occurrence.
+#[derive(Debug, Clone)]
+pub struct LocatedRaw {
+    pub raw: RawSlowRequest,
+    pub line_index: u64,
+    pub record_idx: u32,
+    pub timestamp_span: Option<(u32, u32)>,
+}
+
+/// Walk every record's first physical line message bytes and emit one
+/// `LocatedRaw` per match. Continuation lines are skipped because they
+/// don't have their own `RecordHeader.fields.message` slot.
+#[must_use]
+pub fn scan_raw(records: &[RecordHeader], bytes: &[u8], line_offsets: &[u64]) -> Vec<LocatedRaw> {
+    let mut out = Vec::new();
+    let total_lines = line_offsets.len();
+    for (rec_idx, rec) in records.iter().enumerate() {
+        let Some(message) = record_message_bytes(rec, bytes, line_offsets, total_lines) else {
+            continue;
+        };
+        let Some(raw) = extract_raw(message) else {
+            continue;
+        };
+        out.push(LocatedRaw {
+            raw,
+            line_index: u64::from(rec.line_offset),
+            record_idx: u32::try_from(rec_idx).unwrap_or(u32::MAX),
+            timestamp_span: rec.fields.timestamp,
+        });
+    }
+    out
+}
+
+fn record_message_bytes<'a>(
+    rec: &RecordHeader,
+    bytes: &'a [u8],
+    line_offsets: &[u64],
+    total_lines: usize,
+) -> Option<&'a [u8]> {
+    let line_idx = rec.line_offset as usize;
+    if line_idx >= total_lines {
+        return None;
+    }
+    let line_start = usize::try_from(line_offsets[line_idx]).unwrap_or(usize::MAX);
+    let line_end = if line_idx + 1 < total_lines {
+        usize::try_from(line_offsets[line_idx + 1])
+            .unwrap_or(usize::MAX)
+            .saturating_sub(1)
+    } else {
+        usize::try_from(rec.byte_offset + u64::from(rec.byte_len)).unwrap_or(usize::MAX)
+    };
+    let line_end = line_end.min(bytes.len()).max(line_start);
+    let line = &bytes[line_start..line_end];
+    match rec.fields.message {
+        Some((s, e)) => {
+            let s = s as usize;
+            let e = (e as usize).min(line.len());
+            if s <= e && e <= line.len() {
+                Some(&line[s..e])
+            } else {
+                Some(line)
+            }
+        }
+        None => Some(line),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pattern::{builtin_pattern, CompiledPattern, ParsedHeader};
+    use crate::record::RecordHeader;
+
+    fn wsl_dev_scanner() -> CompiledPattern {
+        let src = builtin_pattern("wsl-dev").expect("wsl-dev builtin exists");
+        CompiledPattern::compile(src).expect("wsl-dev compiles")
+    }
+
+    /// Build a (bytes, `line_offsets`, records) triple from a body, using
+    /// the `wsl-dev` scanner. Each `\n` ends a line.
+    #[allow(clippy::cast_possible_truncation)]
+    fn make_file(body: &str) -> (Vec<u8>, Vec<u64>, Vec<RecordHeader>) {
+        let scanner = wsl_dev_scanner();
+        let bytes = body.as_bytes().to_vec();
+        let mut line_offsets = vec![0u64];
+        for (i, b) in bytes.iter().enumerate() {
+            if *b == b'\n' && i + 1 < bytes.len() {
+                line_offsets.push((i + 1) as u64);
+            }
+        }
+        let mut records: Vec<RecordHeader> = Vec::new();
+        for (idx, &start) in line_offsets.iter().enumerate() {
+            let end = line_offsets
+                .get(idx + 1)
+                .copied()
+                .unwrap_or(bytes.len() as u64);
+            let end_no_nl = if end > start && bytes[(end as usize) - 1] == b'\n' {
+                end - 1
+            } else {
+                end
+            };
+            let line = &bytes[(start as usize)..(end_no_nl as usize)];
+            match scanner.try_parse_header(line) {
+                Some(ParsedHeader { level, fields }) => records.push(RecordHeader {
+                    byte_offset: start,
+                    byte_len: (end - start) as u32,
+                    line_offset: idx as u32,
+                    line_count: 1,
+                    level,
+                    fields,
+                }),
+                None => {
+                    if let Some(last) = records.last_mut() {
+                        last.line_count = last.line_count.saturating_add(1);
+                        last.byte_len = (end - last.byte_offset) as u32;
+                    }
+                }
+            }
+        }
+        (bytes, line_offsets, records)
+    }
+
+    #[test]
+    fn scan_raw_extracts_one_per_matching_record() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:04.401 [play-thread-1] play - SLOW REQUEST: 2826ms - / (CoreRender.renderPublishedPage)\n",
+            "[INFO ] 2026-05-21 00:00:30.409 [play-thread-20] play - Google 360 identifier /event-tickets/\n",
+            "[INFO ] 2026-05-21 00:00:44.830 [play-thread-11] play - SLOW REQUEST (5064ms) - /preflight/killpreflightrequest.json [SoloPreflightFront.killPreflightRequest_JSON] - consider using an asynchronous call to ease the load on the threadpool.\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let raws = scan_raw(&records, &bytes, &line_offsets);
+        assert_eq!(raws.len(), 2);
+        assert_eq!(raws[0].raw.duration_ms, 2826);
+        assert_eq!(raws[0].raw.raw_path, "/");
+        assert_eq!(raws[1].raw.duration_ms, 5064);
+    }
+
+    #[test]
+    fn scan_raw_skips_continuation_lines() {
+        let body = concat!(
+            "[ERROR] 2026-05-21 00:00:00.000 [play-thread-1] play - boom\n",
+            "    at SLOW REQUEST: 9999ms - /x (Y.Z)\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let raws = scan_raw(&records, &bytes, &line_offsets);
+        assert!(raws.is_empty(), "continuation line must not flag");
+    }
 
     #[test]
     fn normalise_strips_query_string() {
