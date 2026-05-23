@@ -99,14 +99,41 @@ impl Settings {
 
 // --- session.json ----------------------------------------------------------
 
-/// Restoration state for the previously-open file. P7 is single-file; P9
-/// will generalise to `Vec<OpenedTab>` once tabs land.
+/// Restoration state for the previously-open files. P9 generalised this
+/// from a single `last_file` to an ordered tab list. The `last_file` field
+/// is retained so a v1 session file still loads (it becomes the sole tab).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Session {
     #[serde(default = "default_schema")]
     pub schema: u32,
+    /// Legacy single-file slot. Written for forward-compat with older
+    /// builds so a downgrade still reopens *something*. Mirrors
+    /// `tabs[active_tab]` at save time.
     #[serde(default)]
     pub last_file: Option<RestoredFile>,
+    /// Tabs in display order. Empty on first launch.
+    #[serde(default)]
+    pub tabs: Vec<RestoredFile>,
+    /// Index into `tabs` of the active tab. Clamped at load time.
+    #[serde(default)]
+    pub active_tab: usize,
+}
+
+impl Session {
+    /// After load, fold the legacy `last_file` field into `tabs` if `tabs`
+    /// is empty so the rest of the app sees a single shape.
+    pub fn normalise(mut self) -> Self {
+        if self.tabs.is_empty() {
+            if let Some(f) = self.last_file.take() {
+                self.tabs.push(f);
+                self.active_tab = 0;
+            }
+        }
+        if !self.tabs.is_empty() && self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,13 +165,18 @@ fn default_smart() -> String {
 
 impl Session {
     pub fn load() -> Self {
-        load_or_default(&paths::session_path())
+        load_or_default::<Self>(&paths::session_path()).normalise()
     }
 
     /// # Errors
     /// Bubbles up filesystem errors.
     pub fn save(&self) -> io::Result<()> {
-        write_atomic(&paths::session_path(), self)
+        // Mirror the active tab into `last_file` so an older binary can still
+        // open something. We clone rather than move so callers' state is
+        // unchanged.
+        let mut to_write = self.clone();
+        to_write.last_file = to_write.tabs.get(to_write.active_tab).cloned();
+        write_atomic(&paths::session_path(), &to_write)
     }
 }
 

@@ -28,7 +28,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
 use crate::channels::{SearchEmitter, TailEmitter};
@@ -201,6 +201,28 @@ impl OpenedFile {
 struct AppState {
     files: Mutex<HashMap<u64, OpenedFile>>,
     next_id: AtomicU64,
+    /// Paths the binary was launched with. Drained by the UI on boot via
+    /// `take_startup_paths` so a `clog.exe path1 path2` invocation opens
+    /// each as a tab. Empty when launched with no args.
+    startup_paths: Mutex<Vec<String>>,
+}
+
+/// Filter a list of argv strings down to plausible file paths -- anything
+/// that exists on disk and isn't the executable itself. Used at startup
+/// and on the single-instance forward.
+fn filter_paths(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .skip(1) // executable
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| std::path::Path::new(a).is_file())
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+fn take_startup_paths(state: State<'_, AppState>) -> Vec<String> {
+    let mut guard = state.startup_paths.lock().expect("startup_paths mutex");
+    std::mem::take(&mut *guard)
 }
 
 #[derive(Debug, Serialize)]
@@ -331,7 +353,11 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
             ScannerKind::Pattern(s) => s.clone(),
             ScannerKind::Regex(s) => format!("regex:{s}"),
         };
-        if loose { format!("loose:{raw}") } else { raw }
+        if loose {
+            format!("loose:{raw}")
+        } else {
+            raw
+        }
     };
     let cache_path = paths::index_cache_path(&path_buf);
     let cache_load_t = std::time::Instant::now();
@@ -1485,8 +1511,34 @@ fn main() {
     std::panic::set_hook(Box::new(|info| {
         tracing::error!(target: "clog::panic", "panic: {info}");
     }));
+
+    // Seed startup_paths from this process's argv so the UI picks them up
+    // on boot via `take_startup_paths`.
+    let argv: Vec<String> = std::env::args().collect();
+    let initial_paths = filter_paths(&argv);
+    let state = AppState::default();
+    if !initial_paths.is_empty() {
+        *state.startup_paths.lock().expect("startup_paths mutex") = initial_paths;
+    }
+
     tauri::Builder::default()
-        .manage(AppState::default())
+        // The single-instance plugin must be registered first so a second
+        // launch is shut down before any heavy state allocates. The callback
+        // runs in the *already-running* instance with the new process's argv
+        // and cwd; we forward filtered paths to the webview via an event.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let paths = filter_paths(&argv);
+            tracing::info!(
+                target: "clog::single_instance",
+                count = paths.len(),
+                "second instance forwarded paths"
+            );
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_focus();
+            }
+            let _ = app.emit("single-instance-paths", paths);
+        }))
+        .manage(state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -1512,6 +1564,7 @@ fn main() {
             get_pattern_override,
             forget_pattern_override,
             reset_data,
+            take_startup_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
