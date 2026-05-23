@@ -1,0 +1,80 @@
+/**
+ * Global keyboard shortcuts wired to the document in capture phase.
+ *
+ *   Ctrl+T          new tab via file picker
+ *   Ctrl+W          close active tab
+ *   Ctrl+Tab        cycle forward through tabs
+ *   Ctrl+Shift+Tab  cycle backward through tabs
+ *   Ctrl + / -      font size bump (delegated to useSettings)
+ *   Ctrl 0          font size reset (delegated to useSettings)
+ *   Ctrl F / Ctrl G suppressed (we own our own search bar)
+ *
+ * Capture phase is used so the shortcuts win against focused inputs
+ * (the search box, the pattern editor).
+ */
+
+import { onBeforeUnmount, onMounted, type Ref } from 'vue'
+
+import type { Tab } from '../tab'
+
+export interface UseAppShortcutsOptions {
+  tabs: Ref<Tab[]>
+  activeTabId: Ref<number | null>
+  activateTab: (id: number) => void
+  closeTab: (id: number) => Promise<void>
+  pickFile: () => Promise<void>
+  handleFontShortcut: (ev: KeyboardEvent) => boolean
+}
+
+export function useAppShortcuts(opts: UseAppShortcutsOptions) {
+  const { tabs, activeTabId, activateTab, closeTab, pickFile, handleFontShortcut } = opts
+
+  function suppressBrowserFind(ev: KeyboardEvent) {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return
+    const k = ev.key.toLowerCase()
+    if (k === 'f' || k === 'g') {
+      ev.preventDefault()
+      ev.stopPropagation()
+    }
+  }
+
+  function handleTabShortcuts(ev: KeyboardEvent): boolean {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return false
+    const k = ev.key.toLowerCase()
+    if (k === 'w') {
+      if (activeTabId.value !== null) {
+        ev.preventDefault()
+        void closeTab(activeTabId.value)
+        return true
+      }
+    }
+    if (k === 't') {
+      ev.preventDefault()
+      void pickFile()
+      return true
+    }
+    if (ev.key === 'Tab') {
+      ev.preventDefault()
+      if (tabs.value.length < 2) return true
+      const idx = tabs.value.findIndex((t) => t.localId === activeTabId.value)
+      const step = ev.shiftKey ? -1 : 1
+      const next = (idx + step + tabs.value.length) % tabs.value.length
+      activateTab(tabs.value[next].localId)
+      return true
+    }
+    return false
+  }
+
+  function onGlobalKey(ev: KeyboardEvent) {
+    if (handleTabShortcuts(ev)) return
+    if (handleFontShortcut(ev)) return
+    suppressBrowserFind(ev)
+  }
+
+  onMounted(() => {
+    globalThis.addEventListener('keydown', onGlobalKey, { capture: true })
+  })
+  onBeforeUnmount(() => {
+    globalThis.removeEventListener('keydown', onGlobalKey, { capture: true })
+  })
+}

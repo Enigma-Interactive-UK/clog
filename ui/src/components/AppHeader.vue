@@ -1,0 +1,145 @@
+<script setup lang="ts">
+/**
+ * Title bar: app logo (opens About), Open button, Settings cog, and the
+ * three window-control buttons (minimize / maximize-restore / close).
+ *
+ * Window-chrome state is owned by useWindowChrome so the resize listener
+ * lives next to the maximize-tracking ref.
+ */
+
+import { useWindowChrome } from '../composables/useWindowChrome'
+
+defineProps<{
+  busy: boolean
+  hasFile: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'pick-file'): void
+  (e: 'open-settings'): void
+  (e: 'open-about'): void
+  (e: 'error', msg: string): void
+}>()
+
+const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = useWindowChrome(
+  (msg) => emit('error', msg),
+)
+</script>
+
+<template>
+  <header class="bar" data-tauri-drag-region>
+    <h1 class="app-title">
+      <button
+        type="button"
+        class="logo-btn"
+        title="About Clog"
+        @click="emit('open-about')"
+      >
+        <img src="/clog-icon.png" alt="" class="app-icon" />
+      </button>
+    </h1>
+    <button :disabled="busy" @click="emit('pick-file')">
+      {{ busy ? 'Reading...' : 'Open file...' }}
+    </button>
+    <button
+      type="button"
+      class="settings-btn"
+      title="Settings"
+      aria-label="Open settings"
+      @click="emit('open-settings')"
+    >&#9881;</button>
+    <span class="window-controls" :class="{ 'no-file': !hasFile }">
+      <button type="button" class="win-btn" title="Minimize" aria-label="Minimize" @click="minimizeWindow">&#9472;</button>
+      <button
+        type="button"
+        class="win-btn"
+        :title="windowMaximized ? 'Restore' : 'Maximize'"
+        :aria-label="windowMaximized ? 'Restore' : 'Maximize'"
+        @click="toggleMaximizeWindow"
+      >{{ windowMaximized ? '⧉' : '□' }}</button>
+      <button type="button" class="win-btn close" title="Close" aria-label="Close" @click="closeWindow">&times;</button>
+    </span>
+  </header>
+</template>
+
+<style scoped>
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border-default);
+  flex-wrap: wrap;
+
+  h1 {
+    margin: 0;
+    font-size: 1.1rem;
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .app-icon {
+    display: block;
+    height: 22px;
+    width: 22px;
+    image-rendering: auto;
+    object-fit: contain;
+    pointer-events: none;
+  }
+
+  button {
+    background: var(--bg-button);
+    color: var(--fg-default);
+    border: 1px solid var(--border-button);
+    padding: 0.35rem 0.9rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    cursor: pointer;
+
+    &:hover:not(:disabled) { background: var(--bg-button-hover); }
+    &:disabled { opacity: 0.6; cursor: progress; }
+  }
+
+  .settings-btn {
+    margin-left: 0.2rem;
+    padding: 0.35rem 0.55rem;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .window-controls {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    -webkit-app-region: no-drag;
+
+    .win-btn {
+      background: transparent;
+      color: var(--fg-muted);
+      border: 0;
+      padding: 0.3rem 0.7rem;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+
+      &:hover { background: var(--bg-button-hover); color: var(--fg-default); }
+      &.close:hover { background: var(--level-error); color: var(--fg-on-accent); }
+    }
+  }
+}
+
+.logo-btn {
+  all: unset;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  -webkit-app-region: no-drag;
+
+  &:hover .app-icon { filter: brightness(1.15); }
+  &:focus-visible { outline: 1px solid var(--level-info); outline-offset: 2px; }
+}
+</style>
