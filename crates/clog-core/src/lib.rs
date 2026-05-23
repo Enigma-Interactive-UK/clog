@@ -11,15 +11,17 @@ pub mod pattern;
 pub mod record;
 pub mod regex_scanner;
 pub mod source;
+pub mod tail;
 
 pub use index::LineIndex;
 pub use pattern::{
-    auto_detect, CompiledPattern, DateAtom, DateFormat, HeaderFields, ParsedHeader, PatternError,
-    PatternWarning, Token, BUILTIN_PATTERNS,
+    auto_detect, builtin_pattern, CompiledPattern, DateAtom, DateFormat, HeaderFields,
+    ParsedHeader, PatternError, PatternWarning, Token, BUILTIN_PATTERNS,
 };
 pub use record::{scan_records, Level, RecordHeader, RecordScanner};
 pub use regex_scanner::{RegexScanner, RegexScannerError};
 pub use source::{LineSource, StreamedFile};
+pub use tail::{TailEvent, TailState, DEFAULT_POLL_INTERVAL_MS, HEAD_HASH_BYTES};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileSummary {

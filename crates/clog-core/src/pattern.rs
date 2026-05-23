@@ -8,7 +8,10 @@
 //! Supported subset (matches design.md s5):
 //! - `%d{...}` timestamps (digit/literal classification of the format)
 //! - `%level`, `%-Nlevel`, `%p`, `%-Np`
-//! - `%t`, `%c`, `%c{N}`
+//! - `%t`, `%c`, `%c{N}`, `%C`, `%C{N}` (class name; aliased to logger for
+//!   structural styling - same field-role as logger from the parser's POV)
+//! - `%F` (source filename, variable-length up to next literal)
+//! - `%L` (source line number, digits up to next literal)
 //! - `%msg`, `%m`
 //! - `%n`
 //! - literal text
@@ -42,6 +45,13 @@ pub enum Token {
     Message,
     /// Record terminator (`%n`). Must be the last token if present.
     Newline,
+    /// Source filename (`%F`). Variable-length, bounded by the next literal.
+    /// Recorded into `HeaderFields::logger` for axis-1 styling since it
+    /// occupies the same structural lane visually.
+    SourceFile,
+    /// Source line number (`%L`). Variable-length digit run, bounded by the
+    /// next literal. Not styled separately.
+    SourceLine,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,7 +200,7 @@ impl CompiledPattern {
                     flush_lit(&mut lit, &mut tokens);
                     tokens.push(Token::Thread);
                 }
-                "c" => {
+                "c" | "C" => {
                     flush_lit(&mut lit, &mut tokens);
                     let precision = match parse_braced(bytes, &mut i, spec_col, BraceFor::Logger)? {
                         Some(s) => Some(s.parse::<u32>().map_err(|_| {
@@ -202,6 +212,14 @@ impl CompiledPattern {
                         None => None,
                     };
                     tokens.push(Token::Logger { precision });
+                }
+                "F" => {
+                    flush_lit(&mut lit, &mut tokens);
+                    tokens.push(Token::SourceFile);
+                }
+                "L" => {
+                    flush_lit(&mut lit, &mut tokens);
+                    tokens.push(Token::SourceLine);
                 }
                 "msg" | "m" => {
                     flush_lit(&mut lit, &mut tokens);
@@ -293,6 +311,33 @@ impl CompiledPattern {
                     let start = cur;
                     cur += consumed;
                     fields.logger = Some((u32_of(start), u32_of(cur)));
+                }
+                Token::SourceFile => {
+                    let next_lit = next_literal_bytes(toks, idx + 1);
+                    let (consumed, _ok) = read_until_literal(&line[cur..], next_lit)?;
+                    let start = cur;
+                    cur += consumed;
+                    // Reuse the logger field-span so axis-1 styling treats the
+                    // source filename as the same structural lane visually.
+                    // If the pattern already had a logger token, the previous
+                    // span wins; we only overwrite when nothing was recorded.
+                    if fields.logger.is_none() {
+                        fields.logger = Some((u32_of(start), u32_of(cur)));
+                    }
+                }
+                Token::SourceLine => {
+                    // Read a run of ASCII digits. Length is bounded by the
+                    // next literal (parens/space) but we don't need to
+                    // forward-search: digits stop on the first non-digit.
+                    let start = cur;
+                    let mut j = cur;
+                    while j < line.len() && line[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j == start {
+                        return None;
+                    }
+                    cur = j;
                 }
                 Token::Message => {
                     let start = cur;
@@ -540,12 +585,13 @@ fn is_date_digit_char(b: u8) -> bool {
 }
 
 fn validate_variable_terminators(tokens: &[Token]) -> Result<(), PatternError> {
-    // Thread/Logger must be DIRECTLY followed by either a Literal anchor or
-    // by the header tail (Message/Newline, or end of pattern).
+    // Variable-length tokens must be DIRECTLY followed by a Literal anchor,
+    // SourceLine (digits self-terminate), or the header tail.
     for (idx, tok) in tokens.iter().enumerate() {
         let kind = match tok {
             Token::Thread => "t",
             Token::Logger { .. } => "c",
+            Token::SourceFile => "F",
             _ => continue,
         };
         let Some(next) = tokens.get(idx + 1) else {
@@ -560,18 +606,41 @@ fn validate_variable_terminators(tokens: &[Token]) -> Result<(), PatternError> {
     Ok(())
 }
 
-/// Built-in patterns auto-detect runs against, in priority order.
+/// Built-in patterns auto-detect runs against, in priority order. Order
+/// matters as a tie-breaker: when two patterns score the same against a
+/// sample, the earlier-listed wins. More specific patterns (more literal
+/// anchors / extra tokens) come first so they edge out looser supersets.
 pub const BUILTIN_PATTERNS: &[(&str, &str)] = &[
     (
         "wsl-oink",
         "[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n",
     ),
+    ("play-class-site", "%d %-5p [%t] %C{2} (%F:%L) - %m%n"),
+    ("play-absolute-site", "%d{ABSOLUTE} %-5p ~ (%F:%L) - %m%n"),
     ("prod", "%d{yyyy-MM-dd HH:mm:ss.SSS} %level [%t] - %msg%n"),
     (
         "log4j2-default",
         "%d{ISO8601} [%t] %-5level %c{36} - %msg%n",
     ),
+    ("play-short-dash", "%d{HH:mm:ss,SSS} %level ~ - %msg%n"),
+    ("play-absolute", "%d{ABSOLUTE} %-5p ~ %m%n"),
+    ("play-short", "%d{HH:mm:ss,SSS} %level ~ %msg%n"),
+    (
+        "prod-no-thread",
+        "%d{yyyy-MM-dd HH:mm:ss.SSS} %level - %msg%n",
+    ),
 ];
+
+/// Look up a built-in pattern source by name. Returns `None` if no such
+/// pattern is registered. Tests prefer this over `BUILTIN_PATTERNS[i]` so
+/// reordering or extending the list doesn't break call sites.
+#[must_use]
+pub fn builtin_pattern(name: &str) -> Option<&'static str> {
+    BUILTIN_PATTERNS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, src)| *src)
+}
 
 /// Compile every built-in pattern, score each against `lines`, and return
 /// the best match together with its score. Returns `None` if no pattern
@@ -637,7 +706,7 @@ mod tests {
 
     #[test]
     fn parse_prod_header_no_logger() {
-        let p = CompiledPattern::compile(BUILTIN_PATTERNS[1].1).expect("compile");
+        let p = CompiledPattern::compile(builtin_pattern("prod").unwrap()).expect("compile");
         let line = b"2026-05-21 00:00:04.401 INFO [play-thread-1] - SLOW REQUEST: 2826ms";
         let h = p.try_parse_header(line).expect("parses");
         assert_eq!(h.level, Level::Info);
@@ -652,7 +721,8 @@ mod tests {
 
     #[test]
     fn parse_log4j2_default_header() {
-        let p = CompiledPattern::compile(BUILTIN_PATTERNS[2].1).expect("compile");
+        let p =
+            CompiledPattern::compile(builtin_pattern("log4j2-default").unwrap()).expect("compile");
         let line = b"2026-05-22 16:28:59,246 [main] INFO  com.example.Foo - hi";
         let h = p.try_parse_header(line).expect("parses");
         assert_eq!(h.level, Level::Info);
@@ -714,6 +784,96 @@ mod tests {
             CompiledPattern::compile("foo %"),
             Err(PatternError::DanglingPercent)
         ));
+    }
+
+    #[test]
+    fn parse_class_site_header() {
+        let p =
+            CompiledPattern::compile(builtin_pattern("play-class-site").unwrap()).expect("compile");
+        let line = b"2026-05-22 16:28:59,246 INFO  [main] com.example.Foo (Foo.java:42) - boot";
+        let h = p.try_parse_header(line).expect("parses");
+        assert_eq!(h.level, Level::Info);
+        let (ts, te) = h.fields.timestamp.unwrap();
+        assert_eq!(&line[ts as usize..te as usize], b"2026-05-22 16:28:59,246");
+        let (ths, the) = h.fields.thread.unwrap();
+        assert_eq!(&line[ths as usize..the as usize], b"main");
+        // %C records into the logger field; the later %F does not overwrite it.
+        let (lgs, lge) = h.fields.logger.unwrap();
+        assert_eq!(&line[lgs as usize..lge as usize], b"com.example.Foo");
+        let (ms, me) = h.fields.message.unwrap();
+        assert_eq!(&line[ms as usize..me as usize], b"boot");
+    }
+
+    #[test]
+    fn parse_absolute_site_header() {
+        let p = CompiledPattern::compile(builtin_pattern("play-absolute-site").unwrap())
+            .expect("compile");
+        let line = b"12:30:45,123 INFO  ~ (App.java:7) - hello";
+        let h = p.try_parse_header(line).expect("parses");
+        assert_eq!(h.level, Level::Info);
+        // %F lands in fields.logger because no prior %C/%c claimed it.
+        let (lgs, lge) = h.fields.logger.unwrap();
+        assert_eq!(&line[lgs as usize..lge as usize], b"App.java");
+    }
+
+    #[test]
+    fn parse_short_dash_distinguishes_from_short() {
+        let dash =
+            CompiledPattern::compile(builtin_pattern("play-short-dash").unwrap()).expect("compile");
+        let plain =
+            CompiledPattern::compile(builtin_pattern("play-short").unwrap()).expect("compile");
+        let with_dash = b"12:30:45,123 INFO ~ - greetings";
+        let no_dash = b"12:30:45,123 INFO ~ greetings";
+        assert!(dash.try_parse_header(with_dash).is_some());
+        // play-short still matches the dashed line because %msg eats anything.
+        assert!(plain.try_parse_header(with_dash).is_some());
+        // But the dashed pattern must NOT match a line without the dash.
+        assert!(dash.try_parse_header(no_dash).is_none());
+        assert!(plain.try_parse_header(no_dash).is_some());
+    }
+
+    #[test]
+    fn parse_absolute_pattern() {
+        let p =
+            CompiledPattern::compile(builtin_pattern("play-absolute").unwrap()).expect("compile");
+        let line = b"12:30:45,123 INFO  ~ application booted";
+        let h = p.try_parse_header(line).expect("parses");
+        assert_eq!(h.level, Level::Info);
+        let (ts, te) = h.fields.timestamp.unwrap();
+        assert_eq!(&line[ts as usize..te as usize], b"12:30:45,123");
+    }
+
+    #[test]
+    fn parse_prod_no_thread_header() {
+        let p =
+            CompiledPattern::compile(builtin_pattern("prod-no-thread").unwrap()).expect("compile");
+        let line = b"2026-05-22 16:28:59.246 WARN - cache miss";
+        let h = p.try_parse_header(line).expect("parses");
+        assert_eq!(h.level, Level::Warn);
+    }
+
+    #[test]
+    fn auto_detect_prefers_prod_over_prod_no_thread() {
+        // A prod-shaped line (with thread) must keep auto-detecting as "prod"
+        // even now that "prod-no-thread" exists. The shape with `[%t]` is
+        // strictly more specific, so prod scores 1.0 and prod-no-thread 0.0.
+        let lines: Vec<&[u8]> = vec![
+            b"2026-05-21 00:00:04.401 INFO [play-thread-1] - hi" as &[u8],
+            b"2026-05-21 00:00:30.409 WARN [play-thread-20] - oh" as &[u8],
+        ];
+        let (name, _, _) = auto_detect(lines).expect("detects");
+        assert_eq!(name, "prod");
+    }
+
+    #[test]
+    fn auto_detect_picks_class_site() {
+        let lines: Vec<&[u8]> = vec![
+            b"2026-05-22 16:28:59,246 INFO  [main] com.example.Foo (Foo.java:42) - hi" as &[u8],
+            b"2026-05-22 16:28:59,247 WARN  [main] com.example.Bar (Bar.java:7) - oh" as &[u8],
+        ];
+        let (name, _, score) = auto_detect(lines).expect("detects");
+        assert_eq!(name, "play-class-site");
+        assert!(score > 0.9);
     }
 
     #[test]

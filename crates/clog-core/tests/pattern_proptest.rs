@@ -2,7 +2,7 @@
 //! records from a chosen builtin pattern, parse them back, and assert that
 //! every emitted record is classified as a header with the expected level.
 
-use clog_core::{CompiledPattern, Level, BUILTIN_PATTERNS};
+use clog_core::{builtin_pattern, CompiledPattern, Level};
 use proptest::prelude::*;
 
 fn level_word(lv: Level) -> &'static str {
@@ -69,7 +69,7 @@ proptest! {
         logger in logger_name(),
         msg in message_body(),
     ) {
-        let pat = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("compile");
+        let pat = CompiledPattern::compile(builtin_pattern("wsl-oink").unwrap()).expect("compile");
         let level_text = pad_right(level_word(level), 5);
         let line = format!(
             "[{level_text}] 2026-05-22 16:28:59.246 [{thread}] {logger} - {msg}"
@@ -87,7 +87,7 @@ proptest! {
         thread in thread_name(),
         msg in message_body(),
     ) {
-        let pat = CompiledPattern::compile(BUILTIN_PATTERNS[1].1).expect("compile");
+        let pat = CompiledPattern::compile(builtin_pattern("prod").unwrap()).expect("compile");
         let level_text = level_word(level);
         let line = format!(
             "2026-05-21 00:00:04.401 {level_text} [{thread}] - {msg}"

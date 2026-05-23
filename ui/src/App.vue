@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 
@@ -52,6 +52,14 @@ interface ApplyPatternPayload {
   pattern_source: string
 }
 
+interface TailDelta {
+  new_record_count: number
+  line_count: number
+  record_count: number
+  last_offset: number
+  rotated: boolean
+}
+
 const PAGE_SIZE = 256
 const ROW_HEIGHT = 18
 const OVERSCAN = 32
@@ -70,6 +78,15 @@ const patternMode = ref<'pattern' | 'regex'>('pattern')
 const patternScore = ref<number | null>(null)
 const patternSampleSize = ref<number>(0)
 const patternError = ref<string | null>(null)
+
+// Tail state.
+const tailing = ref(false)
+const followTail = ref(true)
+const tailPulse = ref(false)
+const rotationToast = ref<string | null>(null)
+let tailPulseTimer: number | null = null
+let rotationToastTimer: number | null = null
+let lastTailLineCount = 0
 
 const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
 
@@ -101,9 +118,9 @@ function lineRow(index: number): LineRow | null {
   return page[index % PAGE_SIZE] ?? null
 }
 
-async function fetchPage(pageIdx: number) {
+async function fetchPage(pageIdx: number, force = false) {
   if (!file.value) return
-  if (pages.value.has(pageIdx)) return
+  if (!force && pages.value.has(pageIdx)) return
   if (inflight.has(pageIdx)) return
   const start = pageIdx * PAGE_SIZE
   const total = file.value.line_count
@@ -116,6 +133,9 @@ async function fetchPage(pageIdx: number) {
       start,
       end,
     })
+    // Swap atomically. The old entry stays in the Map until this line runs,
+    // so visible rows on this page keep rendering their cached data instead
+    // of flickering to blank during the round trip.
     pages.value.set(pageIdx, payload.lines)
     pages.value = new Map(pages.value)
   } catch (e) {
@@ -180,6 +200,8 @@ async function pickFile() {
       const prev = file.value.file_id
       file.value = null
       pages.value = new Map()
+      tailing.value = false
+      await invoke('stop_tail', { fileId: prev }).catch(() => {})
       await invoke('close_file', { fileId: prev }).catch(() => {})
     }
     const opened = await invoke<OpenedFile>('open_file', { path: selected })
@@ -188,13 +210,143 @@ async function pickFile() {
     patternMode.value = 'pattern'
     patternScore.value = opened.pattern_score
     patternError.value = null
-    fetchPage(0)
+    lastTailLineCount = opened.line_count
+    // Tail is on by default, so start at the bottom: fetch the last page
+    // and scroll there. The virtualizer's watcher picks up additional
+    // pages as the user scrolls up.
+    if (opened.line_count > 0) {
+      const lastPage = Math.floor((opened.line_count - 1) / PAGE_SIZE)
+      fetchPage(lastPage)
+      if (followTail.value) jumpToBottom()
+    } else {
+      fetchPage(0)
+    }
+    await startTail()
   } catch (e) {
     const err = e as IpcError | string
     error.value = typeof err === 'string' ? err : err.message
     file.value = null
   } finally {
     busy.value = false
+  }
+}
+
+async function startTail() {
+  if (!file.value) return
+  const fileId = file.value.file_id
+  const channel = new Channel<TailDelta>()
+  channel.onmessage = handleTailDelta
+  try {
+    await invoke('start_tail', { fileId, onDelta: channel })
+    tailing.value = true
+  } catch (e) {
+    const err = e as IpcError | string
+    error.value = typeof err === 'string' ? err : err.message
+    tailing.value = false
+  }
+}
+
+function handleTailDelta(delta: TailDelta) {
+  if (!file.value) return
+  // Briefly highlight the tail indicator so users know data arrived.
+  tailPulse.value = true
+  if (tailPulseTimer !== null) globalThis.clearTimeout(tailPulseTimer)
+  tailPulseTimer = globalThis.setTimeout(() => {
+    tailPulse.value = false
+    tailPulseTimer = null
+  }, 250)
+
+  if (delta.rotated) {
+    // Drop the page cache; records and offsets have all shifted. Snap to
+    // top because the file just shrank.
+    pages.value = new Map()
+    file.value = {
+      ...file.value,
+      line_count: delta.line_count,
+      record_count: delta.record_count,
+      size_bytes: delta.last_offset,
+    }
+    lastTailLineCount = delta.line_count
+    showRotationToast()
+    // Re-fetch the first page so the viewport doesn't sit empty.
+    fetchPage(0)
+    return
+  }
+
+  // Pure append: the user might be reading a stable section, so we must
+  // not let the viewport visually shift. Capture scrollTop before the
+  // count bump so we can re-anchor on the next frame if anything moves it.
+  const el = scrollEl.value
+  const preserveTop = !followTail.value && el ? el.scrollTop : null
+
+  file.value = {
+    ...file.value,
+    line_count: delta.line_count,
+    record_count: delta.record_count,
+    size_bytes: delta.last_offset,
+  }
+
+  // The previously-cached final page (which may have been partial because
+  // line_count grew past its end) needs a force-refetch to pick up the new
+  // entries. Force is used so the in-place swap keeps the visible rows
+  // rendered with the old data until the new payload arrives -- no blank
+  // flash during the round trip.
+  if (lastTailLineCount > 0) {
+    const lastPage = Math.floor((lastTailLineCount - 1) / PAGE_SIZE)
+    fetchPage(lastPage, true)
+  }
+  lastTailLineCount = delta.line_count
+
+  if (followTail.value) {
+    jumpToBottom()
+  } else if (preserveTop !== null && el) {
+    // Re-anchor across two frames: once for the synchronous count bump,
+    // once for any virtualizer-internal re-measure that runs on the next
+    // tick. The user explicitly detached -- the visible bytes must not
+    // move out from under them.
+    const target = el
+    const top = preserveTop
+    requestAnimationFrame(() => {
+      if (Math.abs(target.scrollTop - top) > 0.5) target.scrollTop = top
+      requestAnimationFrame(() => {
+        if (Math.abs(target.scrollTop - top) > 0.5) target.scrollTop = top
+      })
+    })
+  }
+}
+
+function showRotationToast() {
+  rotationToast.value = 'File rotated -- re-indexed.'
+  if (rotationToastTimer !== null) globalThis.clearTimeout(rotationToastTimer)
+  rotationToastTimer = globalThis.setTimeout(() => {
+    rotationToast.value = null
+    rotationToastTimer = null
+  }, 2500)
+}
+
+function jumpToBottom() {
+  if (!file.value || file.value.line_count === 0) return
+  // Defer to the next frame so any virtualizer resize from the count bump
+  // has settled before we ask for a scroll target.
+  requestAnimationFrame(() => {
+    if (!file.value || file.value.line_count === 0) return
+    virtualizer.value.scrollToIndex(file.value.line_count - 1, { align: 'end' })
+  })
+}
+
+function toggleFollowTail() {
+  followTail.value = !followTail.value
+  if (followTail.value) jumpToBottom()
+}
+
+function onViewportScroll() {
+  // If the user scrolls away from the bottom, disable follow-tail. We
+  // compare against a small slack so single-row jitter doesn't disengage.
+  const el = scrollEl.value
+  if (!el || !followTail.value) return
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (distance > ROW_HEIGHT * 4) {
+    followTail.value = false
   }
 }
 
@@ -259,8 +411,12 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', suppressBrowserFind, { capture: true })
+  if (tailPulseTimer !== null) globalThis.clearTimeout(tailPulseTimer)
+  if (rotationToastTimer !== null) globalThis.clearTimeout(rotationToastTimer)
   if (file.value) {
-    invoke('close_file', { fileId: file.value.file_id }).catch(() => {})
+    const id = file.value.file_id
+    invoke('stop_tail', { fileId: id }).catch(() => {})
+    invoke('close_file', { fileId: id }).catch(() => {})
   }
 })
 
@@ -332,6 +488,37 @@ function levelGutterVar(level: string): string {
         <span class="sep">--</span>
         {{ formatCount(file.size_bytes) }} bytes
       </span>
+      <span v-if="file" class="tail-controls">
+        <span
+          class="tail-indicator"
+          :class="{
+            'is-active': tailing,
+            'is-pulsing': tailPulse,
+          }"
+          :title="tailing ? 'Tailing this file' : 'Tail inactive'"
+        >
+          <span class="dot" />
+          {{ tailing ? 'tailing' : 'idle' }}
+        </span>
+        <button
+          type="button"
+          class="follow-toggle"
+          :class="{ 'is-on': followTail }"
+          :title="followTail ? 'Auto-scroll is on -- click to detach' : 'Auto-scroll is off'"
+          @click="toggleFollowTail"
+        >
+          {{ followTail ? 'Following' : 'Detached' }}
+        </button>
+        <button
+          v-if="!followTail"
+          type="button"
+          class="jump-bottom"
+          title="Jump to bottom and re-enable follow"
+          @click="toggleFollowTail"
+        >
+          Jump to bottom
+        </button>
+      </span>
     </header>
 
     <section v-if="file" class="pattern-bar">
@@ -364,7 +551,9 @@ function levelGutterVar(level: string): string {
 
     <section v-if="error" class="error">{{ error }}</section>
 
-    <div v-if="file" ref="scrollEl" class="viewport">
+    <div v-if="rotationToast" class="rotation-toast">{{ rotationToast }}</div>
+
+    <div v-if="file" ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
       <div
         v-if="stickyHeader"
         class="sticky-shell"
@@ -467,6 +656,74 @@ function levelGutterVar(level: string): string {
 
     .sep { color: var(--fg-separator); margin: 0 0.5rem; }
   }
+
+  .tail-controls {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+
+    .tail-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--fg-dim);
+
+      .dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        background: var(--fg-dim);
+        transition: background 0.15s ease;
+      }
+
+      &.is-active {
+        color: var(--fg-default);
+
+        .dot { background: var(--level-info); }
+      }
+
+      &.is-pulsing .dot {
+        background: var(--level-warn);
+        box-shadow: 0 0 6px var(--level-warn);
+      }
+    }
+
+    .follow-toggle, .jump-bottom {
+      background: var(--bg-button);
+      color: var(--fg-default);
+      border: 1px solid var(--border-button);
+      padding: 0.25rem 0.7rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+
+      &:hover { background: var(--bg-button-hover); }
+    }
+
+    .follow-toggle.is-on {
+      border-color: var(--level-info);
+      color: var(--level-info);
+    }
+  }
+}
+
+.rotation-toast {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 10;
+  padding: 0.5rem 0.8rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--level-warn);
+  border-radius: var(--radius-sm);
+  color: var(--fg-default);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
 .pattern-bar {
