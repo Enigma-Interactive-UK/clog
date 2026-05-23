@@ -336,7 +336,12 @@ function jumpTo(line: number) {
               avg {{ formatMs(entry.avg_ms) }} . p95 {{ formatMs(entry.p95_ms) }} .
               max {{ formatMs(entry.max_ms) }}
             </span>
-            <span class="entry-expand" :class="{ open: expanded.has(entry.path) }">v</span>
+            <span class="entry-expand" :class="{ open: expanded.has(entry.path) }" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M3 8 H13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path class="vbar" d="M8 3 V13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </span>
           </div>
           <ul v-if="expanded.has(entry.path)" class="occurrence-list">
             <li
@@ -516,8 +521,35 @@ function jumpTo(line: number) {
   }
 
   & .entry-stats { color: var(--fg-muted); font-size: 0.8rem; white-space: nowrap; }
-  & .entry-expand { color: var(--fg-muted); transition: transform 120ms; }
-  & .entry-expand.open { transform: rotate(180deg); }
+  & .entry-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--fg-muted);
+    border: 1px solid var(--border-button);
+    border-radius: 3px;
+    background: var(--bg-viewport);
+
+    & svg {
+      width: 12px;
+      height: 12px;
+      display: block;
+    }
+
+    & .vbar {
+      transform-origin: center;
+      transition: transform 140ms ease;
+    }
+
+    &.open {
+      color: var(--accent);
+      border-color: var(--accent);
+
+      & .vbar { transform: scaleY(0); }
+    }
+  }
 }
 
 .occurrence-list {
