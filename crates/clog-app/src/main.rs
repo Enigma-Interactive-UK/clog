@@ -124,6 +124,13 @@ impl RecordScanner for CompiledScanner {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SlowRequestCache {
+    /// Snapshot signature: `(records.len(), bytes.len(), pattern_hash)`.
+    signature: (u64, u64, u64),
+    occurrences: Vec<clog_core::SlowRequestOccurrence>,
+}
+
 struct OpenedFile {
     path: PathBuf,
     records: Vec<RecordHeader>,
@@ -161,6 +168,10 @@ struct OpenedFile {
     search_cancel: Option<Arc<AtomicBool>>,
     /// `JoinHandle` for the running search task. Dropped on close.
     search_join: Option<JoinHandle<()>>,
+    /// Cached slow-request occurrences. Rebuilt lazily on first call
+    /// after any change to (records, bytes, pattern). Both
+    /// `get_slow_requests` and `get_slow_request_speeds` read this.
+    slow_request_cache: Option<SlowRequestCache>,
 }
 
 impl OpenedFile {
@@ -441,6 +452,7 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
         current_search_id: 0,
         search_cancel: None,
         search_join: None,
+        slow_request_cache: None,
     };
     opened.rebuild_line_caches(
         line_index.line_count() as u64,
@@ -736,6 +748,207 @@ fn build_level_minimap_payload(
         max_error_warn_sum,
         max_total,
     }
+}
+
+fn pattern_hash(pattern_source: &str) -> u64 {
+    let h = blake3::hash(pattern_source.as_bytes());
+    let bytes = h.as_bytes();
+    u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0; 8]))
+}
+
+/// Pull a timestamp out of a record by re-rendering the slice covered
+/// by `RecordHeader.fields.timestamp` and feeding it through a cheap
+/// `YYYY-MM-DD HH:MM:SS.sss` parser. Returns `None` when the pattern
+/// produced no timestamp field or the bytes don't match the expected
+/// shape.
+fn extract_record_timestamp_ms(rec: &RecordHeader, bytes: &[u8]) -> Option<i64> {
+    let (s, e) = rec.fields.timestamp?;
+    let base = usize::try_from(rec.byte_offset).ok()?;
+    let start = base.saturating_add(s as usize);
+    let end = base.saturating_add(e as usize);
+    let slice = bytes.get(start..end)?;
+    let text = std::str::from_utf8(slice).ok()?;
+    parse_yyyy_mm_dd_hh_mm_ss_sss(text)
+}
+
+fn parse_yyyy_mm_dd_hh_mm_ss_sss(s: &str) -> Option<i64> {
+    if s.len() != 23 {
+        return None;
+    }
+    let year: i64 = s[0..4].parse().ok()?;
+    let month: i64 = s[5..7].parse().ok()?;
+    let day: i64 = s[8..10].parse().ok()?;
+    let hour: i64 = s[11..13].parse().ok()?;
+    let min: i64 = s[14..16].parse().ok()?;
+    let sec: i64 = s[17..19].parse().ok()?;
+    let ms: i64 = s[20..23].parse().ok()?;
+    Some(
+        ((year * 372 + (month - 1) * 31 + (day - 1)) * 86_400 + hour * 3600 + min * 60 + sec)
+            * 1000
+            + ms,
+    )
+}
+
+fn rebuild_slow_request_cache(file: &mut OpenedFile) -> &[clog_core::SlowRequestOccurrence] {
+    let signature = (
+        file.records.len() as u64,
+        file.bytes.len() as u64,
+        pattern_hash(&file.pattern_source),
+    );
+    let needs_rebuild = file
+        .slow_request_cache
+        .as_ref()
+        .is_none_or(|c| c.signature != signature);
+    if needs_rebuild {
+        let summary = clog_core::extract_slow_requests(
+            &file.records,
+            &file.bytes,
+            &file.line_offsets,
+            clog_core::PathMode::Raw,
+            extract_record_timestamp_ms,
+        );
+        let mut occurrences: Vec<clog_core::SlowRequestOccurrence> = Vec::new();
+        for entry in summary.entries {
+            occurrences.extend(entry.occurrences);
+        }
+        file.slow_request_cache = Some(SlowRequestCache {
+            signature,
+            occurrences,
+        });
+    }
+    &file
+        .slow_request_cache
+        .as_ref()
+        .expect("cache built above")
+        .occurrences
+}
+
+#[tauri::command]
+fn get_slow_requests(
+    state: State<'_, AppState>,
+    file_id: u64,
+    mode: clog_core::PathMode,
+) -> Result<clog_core::SlowRequestSummary, IpcError> {
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get_mut(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    let _ = rebuild_slow_request_cache(file);
+    let occs = file
+        .slow_request_cache
+        .as_ref()
+        .expect("rebuild leaves cache populated")
+        .occurrences
+        .clone();
+    Ok(reaggregate_from_cache(&occs, mode))
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn reaggregate_from_cache(
+    occs: &[clog_core::SlowRequestOccurrence],
+    mode: clog_core::PathMode,
+) -> clog_core::SlowRequestSummary {
+    use std::collections::HashMap;
+    struct G {
+        path: String,
+        raw_paths: Vec<String>,
+        occs: Vec<clog_core::SlowRequestOccurrence>,
+    }
+    let mut groups: HashMap<String, G> = HashMap::new();
+    for occ in occs {
+        let key = match mode {
+            clog_core::PathMode::Normalised => clog_core::normalise_path(&occ.raw_path),
+            clog_core::PathMode::Raw => occ.raw_path.clone(),
+        };
+        let g = groups.entry(key.clone()).or_insert_with(|| G {
+            path: key.clone(),
+            raw_paths: Vec::new(),
+            occs: Vec::new(),
+        });
+        if !g.raw_paths.contains(&occ.raw_path) {
+            g.raw_paths.push(occ.raw_path.clone());
+        }
+        g.occs.push(occ.clone());
+    }
+    let mut entries: Vec<clog_core::SlowRequestEntry> = groups
+        .into_values()
+        .map(|mut g| {
+            let count = u32::try_from(g.occs.len()).unwrap_or(u32::MAX);
+            let mut durations: Vec<u32> = g.occs.iter().map(|o| o.duration_ms).collect();
+            let total_ms: u64 = durations.iter().copied().map(u64::from).sum();
+            let min_ms = *durations.iter().min().unwrap_or(&0);
+            let max_ms = *durations.iter().max().unwrap_or(&0);
+            let avg_ms = if count == 0 {
+                0
+            } else {
+                u32::try_from(total_ms / u64::from(count)).unwrap_or(u32::MAX)
+            };
+            durations.sort_unstable();
+            let n = durations.len();
+            let p95_ms = if n == 0 {
+                0
+            } else {
+                let idx = (((n as f64) * 0.95).ceil() as usize)
+                    .saturating_sub(1)
+                    .min(n - 1);
+                durations[idx]
+            };
+            g.occs
+                .sort_unstable_by(|a, b| b.duration_ms.cmp(&a.duration_ms));
+            let longest_line = g.occs.first().map_or(0, |o| o.line_index);
+            g.occs.truncate(clog_core::slow_requests::OCCURRENCE_CAP);
+            clog_core::SlowRequestEntry {
+                path: g.path,
+                raw_paths: g.raw_paths,
+                count,
+                total_ms,
+                min_ms,
+                max_ms,
+                avg_ms,
+                p95_ms,
+                longest_line,
+                occurrences: g.occs,
+            }
+        })
+        .collect();
+    entries.sort_unstable_by(|a, b| b.total_ms.cmp(&a.total_ms));
+    let total_hits = entries.iter().map(|e| e.count).sum();
+    let total_ms = entries.iter().map(|e| e.total_ms).sum();
+    let deduped = occs.iter().map(|o| o.dup_count.saturating_sub(1)).sum();
+    clog_core::SlowRequestSummary {
+        entries,
+        total_hits,
+        deduped,
+        total_ms,
+    }
+}
+
+#[tauri::command]
+fn get_slow_request_speeds(
+    state: State<'_, AppState>,
+    file_id: u64,
+    bucket_count: u32,
+) -> Result<clog_core::SpeedGrid, IpcError> {
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get_mut(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    let line_count = file.line_count;
+    let _ = rebuild_slow_request_cache(file);
+    let occs = &file
+        .slow_request_cache
+        .as_ref()
+        .expect("rebuild leaves cache populated")
+        .occurrences;
+    Ok(clog_core::build_speed_grid(
+        occs,
+        line_count,
+        bucket_count as usize,
+    ))
 }
 
 #[tauri::command]
@@ -1758,6 +1971,8 @@ fn main() {
             stop_tail,
             get_level_minimap,
             get_markers,
+            get_slow_requests,
+            get_slow_request_speeds,
             start_search,
             cancel_search,
             list_records_by_level,
@@ -1811,6 +2026,7 @@ mod tests {
             current_search_id: 0,
             search_cancel: None,
             search_join: None,
+            slow_request_cache: None,
         };
         (file, scanner)
     }
@@ -2961,5 +3177,35 @@ mod tests {
         ];
         let markers = scan_markers(&file.records, &file.bytes, &file.line_offsets, rules);
         assert_eq!(markers.len(), 1);
+    }
+
+    #[test]
+    fn slow_request_smoke_against_prod_fixture() {
+        use std::path::Path;
+        let path = Path::new("..")
+            .join("..")
+            .join("research")
+            .join("solopress-prod.log");
+        if !path.exists() {
+            return;
+        }
+        let pattern_src = clog_core::builtin_pattern("prod").expect("prod builtin");
+        let scanner = clog_core::CompiledPattern::compile(pattern_src).expect("compiles");
+        let (mut source, line_index, records) =
+            clog_core::index_file(&path, &scanner).expect("indexes");
+        let bytes = source.read_all().expect("read_all");
+        let line_offsets = line_index.line_offsets;
+        let summary = clog_core::extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            clog_core::PathMode::Normalised,
+            extract_record_timestamp_ms,
+        );
+        assert!(
+            summary.total_hits > 0,
+            "prod fixture must contain at least one slow request"
+        );
+        assert!(summary.entries.iter().any(|e| e.path.contains("preflight")));
     }
 }
