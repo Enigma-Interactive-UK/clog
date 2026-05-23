@@ -6,12 +6,16 @@
 
 ## ./
 
-- `Cargo.toml` - Rust workspace (members: clog-core, clog-app)
+- `Cargo.toml` - Rust workspace (members: clog-core, clog-app); workspace version 1.0.0
 - `CLAUDE.md` - OpenWolf project instructions
 - `README.md` - dev setup + how to run P1 demo
 - `clog.code-workspace`
 - `.gitignore`
 - `.cargo/config.toml` - `cargo dev` alias for `cargo tauri dev --config crates/clog-app/tauri.conf.json`
+
+## scripts/
+
+- `make-portable-zip.ps1` - P10 slice A. Reads version from workspace Cargo.toml, runs `cargo tauri build`, stages `clog.exe` + empty `clog-data/` placeholder + `README.txt` and Compress-Archive's them to `target/release/bundle/portable/clog_<version>_x64-portable.zip`. Supports `-SkipBuild` to reuse an existing build.
 
 ## .claude/rules/
 
@@ -36,7 +40,7 @@
 
 - `Cargo.toml` - Tauri v2 binary `clog`, depends on clog-core + plugin-dialog + plugin-opener + plugin-single-instance + tokio (sync/time/macros/rt-multi-thread) + regex + tracing + tracing-subscriber (env-filter) + tracing-appender + blake3
 - `build.rs` - calls `tauri_build::build()`
-- `tauri.conf.json` - app config, `frontendDist: ../../ui/dist`
+- `tauri.conf.json` - app config, `frontendDist: ../../ui/dist`. P10 slice A: version 1.0.0, NSIS-only target, publisher/copyright/category/short+long descriptions, `homepage: https://github.com/lewster32/clog`, `bundle.fileAssociations: [{ ext: ["log","out"], name: "Clog Log File", role: "Viewer" }]`, `bundle.windows.nsis: { installMode: "currentUser", languages: ["English"], displayLanguageSelector: false, installerIcon }`.
 - `src/main.rs` - P9 additions: `AppState.startup_paths: Mutex<Vec<String>>` (drained on boot by `take_startup_paths` IPC), `filter_paths(argv)` keeps only `is_file()` paths excluding flags + the executable, `tauri-plugin-single-instance` registered with a callback that calls `filter_paths`, refocuses the `main` webview window, and emits `single-instance-paths` (Vec<String> payload) to the running instance, `tauri::Emitter` added to the import set. Existing tab-id-keyed AppState carries through unchanged.
 - `src/paths.rs` - P7 filesystem layout. `data_dir()` returns the portable root (`<exe-dir>/clog-data/` when present) or the per-user root (`%LOCALAPPDATA%\clog` on Windows, `$XDG_DATA_HOME/clog` or `$HOME/.local/share/clog` otherwise) and `mkdir -p`s on first call. `settings_path()`, `session_path()`, `patterns_path()`, `logs_dir()`, `index_dir()`, `index_cache_path(source)` pin each per-concern path. `path_hash(path)` is blake3 over the case-folded canonical path truncated to 16 hex chars (stable across runs, collision-free in practice, keeps potentially-sensitive paths out of filenames).
 - `src/persistence.rs` - P7/P9 schema-versioned JSON state. P9 bumped `Session { schema, last_file: Option<RestoredFile>, tabs: Vec<RestoredFile>, active_tab: usize }` with `Session::normalise()` (called on load) folding legacy `last_file` into `tabs` when `tabs` is empty + clamping `active_tab` into bounds; `Session::save()` mirrors `tabs[active_tab]` back into `last_file` so an older binary downgraded to P7 still reopens *something*. P7 `Settings { schema, theme: "system"|"light"|"dark", font_size: u32 clamped 9..=24, recent_files: Vec<String> (cap 20, MRU), follow_tail_default: bool }`, `Session { schema, last_file: Option<RestoredFile { path, scroll_top, follow_tail, level_mask, filter_text, search_mode, search_case_sensitive, filter_mode } > }`, `PatternsFile { schema, overrides: BTreeMap<path, PatternOverride { kind, source }> }`. Every type round-trips through serde_json with `#[serde(default)]` on optional fields so a v1 file missing a future field still loads. Writes use a tempfile+rename helper with Windows remove-and-retry fallback. `Settings::touch_recent(path)` dedupes-and-promotes; `Settings::forget_recent(path)` drops. 3 unit tests (dedupe+cap, round-trip, unknown-field-default-decode).

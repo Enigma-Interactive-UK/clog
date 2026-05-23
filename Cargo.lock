@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "clog-app"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "clog-core",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "clog-core"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "bincode",
  "blake3",
