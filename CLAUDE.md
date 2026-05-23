@@ -38,8 +38,9 @@ clog/
 All run from the workspace root.
 
 ```powershell
-# Dev (launches Vite + Tauri window)
-cargo tauri dev --config crates/clog-app/tauri.conf.json
+# Dev (launches Vite + Tauri window) -- alias from .cargo/config.toml
+cargo dev
+# (equivalent to: cargo tauri dev --config crates/clog-app/tauri.conf.json)
 
 # Workspace build
 cargo build --workspace

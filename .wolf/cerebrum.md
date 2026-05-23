@@ -9,6 +9,8 @@
 - Vue 3 is the team's known frontend framework; prefer it over less-familiar alternatives unless a hard perf reason rules it out.
 - Light/dark theming must follow OS settings with an in-app manual toggle; no custom-theme/palette editor needed.
 - Register both `.log` and `.out` extensions in the installer's "Open with" menu (real sample file is `solopress.out`).
+- **CSS style:** always use CSS custom properties (two-layer: palette in `ui/src/style.css` `:root`, semantic mapping on top) - never hardcode colours, fonts, sizes, or radii in component styles. Reference tokens via `var(--name)`.
+- **CSS syntax:** always use native nested CSS (it's 2026, browsers support it). Nest descendant selectors and pseudo-classes (`&:hover`) inside their parent rule rather than flattening with descendant combinators.
 
 ## Key Learnings
 
@@ -31,6 +33,12 @@
 - [2026-05-23] Used `Bash` with Windows-style backslash paths (`mkdir e:\Work\clog\docs`). Bash interprets `\` as an escape character so this can collapse to a single mangled directory name like `eWorkclogdocs`. On Windows, for directory operations either (a) use `PowerShell` with `New-Item -ItemType Directory -Force <path>`, or (b) if using Bash, use forward slashes (`e:/Work/clog/docs`) or quote-and-escape carefully. Prefer PowerShell for filesystem ops on this machine.
 
 ## Decision Log
+
+### [2026-05-23] P2 vertical slice landed
+clog-core gained `source` (LineSource trait + StreamedFile), `index` (in-memory LineIndex), `record` (Level, RecordHeader, hardcoded WslOinkScanner, scan_records). `index_file(path, scanner)` composes them. clog-app holds an `AppState { files: Mutex<HashMap<file_id, OpenedFile>>, next_id }`; `open_file` now allocates a file_id and returns `OpenedFilePayload`, `get_records(file_id, start, end)` reads the byte range on demand and returns `RecordsPayload { start, base_offset, headers, text }`. UI uses `@tanstack/vue-virtual` with a 256-record page cache and 18px fixed row height. 11 tests green (LineIndex edges, scanner classification, single/continuation/orphan record cases, wsl-oink fixture watertight coverage, prod fixture line count smoke). Hardcoded wsl-oink scanner is deliberate per P2 scope; pattern generalisation arrives in P3.
+
+### [2026-05-23] P2 design choice: pages of records, fetched on demand
+UI fetches 256 records per page via `get_records`. Pages cached in a `Map<pageIdx, string[]>`. Avoids round-tripping the whole file (74k+ records) at open time while still keeping IPC traffic bounded by visible rows + overscan. Rust side keeps RecordHeader array in RAM (~32B/record) but does NOT keep the raw bytes; bytes are re-read from disk per `get_records` call (OS page cache makes this cheap for warm files). Aligns with design §4: "raw file bytes are not held in RAM".
 
 ### [2026-05-23] P1 scaffold landed
 Workspace + 2 crates + Vite UI + Tauri v2 wired. `open_file` IPC returns `FileSummary { path, size_bytes, line_count }`. UI uses `tauri-plugin-dialog` for the native picker. Build verifies clean: `cargo build --workspace`, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `npm --prefix ui run build`. Icons generated programmatically via `System.Drawing` (placeholder "C" glyph; design pass deferred to P10). Capability set is minimal: `core:default` + `dialog:default` + `dialog:allow-open`.
