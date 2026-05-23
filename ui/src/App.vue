@@ -173,6 +173,12 @@ async function onResetData(scope: 'settings' | 'session' | 'patterns' | 'index' 
 function onNextHit() { viewportRef.value?.scrollToCurrentHit() }
 function onPrevHit() { viewportRef.value?.scrollToCurrentHit() }
 
+function onToggleInsights() {
+  const t = currentTab.value
+  if (!t) return
+  t.insightsOpen.value = !t.insightsOpen.value
+}
+
 // --- Drag/drop into the window adds a new tab ----------------------------
 
 async function onDragDropEvent(evt: { payload: { type: string; paths?: string[] } }) {
@@ -223,9 +229,11 @@ onBeforeUnmount(() => {
     <AppHeader
       :busy="busy"
       :has-file="!!currentTab"
+      :insights-active="currentTab?.insightsOpen.value ?? false"
       @pick-file="pickFile"
       @open-settings="openSettings"
       @open-about="openAbout"
+      @toggle-insights="onToggleInsights"
       @error="(msg) => (error = msg)"
     />
 

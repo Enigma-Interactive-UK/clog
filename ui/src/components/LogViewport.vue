@@ -32,6 +32,7 @@ import {
   type SpeedGrid,
 } from '../types'
 import type { Tab } from '../tab'
+import InsightsDrawer from './InsightsDrawer.vue'
 
 const props = defineProps<{
   tab: Tab
@@ -1156,6 +1157,7 @@ function heatLine(error: number, warn: number): string {
 defineExpose({
   scrollToCurrentHit,
   jumpToBottom,
+  jumpToLine,
 })
 </script>
 
@@ -1289,6 +1291,11 @@ defineExpose({
       v-if="speedRailVisible"
       ref="speedRailEl"
       class="speed-rail"
+    />
+    <InsightsDrawer
+      v-if="tab.insightsOpen.value"
+      :tab="tab"
+      @close="tab.insightsOpen.value = false"
     />
     <button
       v-if="!tab.followTail.value && !atBottom"
