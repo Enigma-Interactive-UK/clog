@@ -110,6 +110,28 @@ export function useTabs({ settings, onError }: UseTabsOptions) {
     for (const t of tabs.value) await t.teardown()
   }
 
+  /**
+   * Move `sourceId` so it sits immediately before (or after) `targetId`.
+   * No-op if the move would leave the order unchanged, so the autosave
+   * fingerprint doesn't fire on identity drops.
+   */
+  function reorderTab(sourceId: number, targetId: number, placeBefore: boolean) {
+    if (sourceId === targetId) return
+    const list = tabs.value.slice()
+    const fromIdx = list.findIndex((t) => t.localId === sourceId)
+    if (fromIdx < 0) return
+    const [moved] = list.splice(fromIdx, 1)
+    let toIdx = list.findIndex((t) => t.localId === targetId)
+    if (toIdx < 0) return
+    if (!placeBefore) toIdx += 1
+    // Compare against the original order: if the source already sat where
+    // the user is "dropping" it (same index after removal), bail to avoid a
+    // spurious session save.
+    if (toIdx === fromIdx) return
+    list.splice(toIdx, 0, moved)
+    tabs.value = list
+  }
+
   return {
     tabs,
     activeTabId,
@@ -120,5 +142,6 @@ export function useTabs({ settings, onError }: UseTabsOptions) {
     closeTab,
     pickFile,
     teardownAll,
+    reorderTab,
   }
 }

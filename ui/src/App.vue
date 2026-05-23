@@ -67,6 +67,7 @@ const {
   closeTab,
   pickFile,
   teardownAll,
+  reorderTab,
 } = useTabs({
   settings,
   onError: (msg) => { error.value = msg },
@@ -193,9 +194,23 @@ onBeforeUnmount(() => {
       @switch="activateTab"
       @close="closeTab"
       @new-tab="pickFile"
+      @reorder="reorderTab"
     />
 
-    <section v-if="error" class="error">{{ error }}</section>
+    <section v-if="error" class="error" role="alert">
+      <span class="error-msg">{{ error }}</span>
+      <button
+        type="button"
+        class="btn-dismiss error-dismiss"
+        aria-label="Dismiss error"
+        title="Dismiss"
+        @click="error = null"
+      >
+        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
+    </section>
 
     <div v-if="currentTab?.rotationToast.value" class="rotation-toast">{{ currentTab.rotationToast.value }}</div>
 
@@ -283,11 +298,39 @@ onBeforeUnmount(() => {
 
 .error {
   margin: 0.6rem 1rem;
-  padding: 0.6rem 0.8rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.8rem;
   background: var(--bg-error);
   border: 1px solid var(--border-error);
   border-radius: var(--radius-sm);
   color: var(--fg-error);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+
+  .error-msg {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .error-dismiss {
+    flex: 0 0 auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    font-size: 1.1rem;
+    /* Sit on the error palette: dim error-red at rest, brighten on hover.
+       The .btn-dismiss base hover would land on --bg-button-hover which
+       reads as "neutral" against the red banner; override here. */
+    color: var(--fg-error);
+    opacity: 0.7;
+
+    &:hover {
+      background: color-mix(in srgb, var(--level-error) 22%, transparent);
+      color: var(--fg-error);
+      opacity: 1;
+    }
+  }
 }
 
 .placeholder {

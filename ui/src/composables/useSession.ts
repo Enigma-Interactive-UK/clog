@@ -52,13 +52,25 @@ export function useSession({ tabs, activeTabId, openPath, setActiveTabId }: UseS
       const sess = (await invoke('get_session')) as Session
       const stored = sess.tabs && sess.tabs.length > 0 ? sess.tabs : (sess.last_file ? [sess.last_file] : [])
       if (stored.length === 0) return
+      let openedCount = 0
       for (const r of stored) {
-        await openPath(r.path, r)
+        const tab = await openPath(r.path, r)
+        if (tab) openedCount++
       }
-      const active = Math.min(stored.length - 1, Math.max(0, sess.active_tab))
+      // Active tab index is from the original stored list; clamp it against
+      // however many tabs actually opened (some paths may have been pruned
+      // below because their files were moved or deleted).
+      const active = Math.min(tabs.value.length - 1, Math.max(0, sess.active_tab))
       if (tabs.value[active]) setActiveTabId(tabs.value[active].localId)
+      // If any stored path failed to open (file moved/deleted/locked), persist
+      // the pruned tab list immediately so the failure doesn't recur next
+      // launch. The autosave watcher is gated by sessionRestoreInFlight, so
+      // the cleanup would otherwise wait for the next user-driven knob change.
+      if (openedCount < stored.length) {
+        await invoke('save_session', { session: captureSession() }).catch(() => {})
+      }
     } catch {
-      // Files gone / unreadable: drop to empty state silently. The
+      // Top-level read failure: drop to empty state silently. The
       // recent-files list still holds the breadcrumbs.
     } finally {
       sessionRestoreInFlight.value = false

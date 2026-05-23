@@ -49,15 +49,19 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
       @click="emit('open-settings')"
     >&#9881;</button>
     <span class="window-controls" :class="{ 'no-file': !hasFile }">
-      <button type="button" class="win-btn" title="Minimize" aria-label="Minimize" @click="minimizeWindow">&#9472;</button>
+      <button type="button" class="win-btn" title="Minimise" aria-label="Minimise" @click="minimizeWindow">&#9472;</button>
       <button
         type="button"
         class="win-btn"
-        :title="windowMaximized ? 'Restore' : 'Maximize'"
-        :aria-label="windowMaximized ? 'Restore' : 'Maximize'"
+        :title="windowMaximized ? 'Restore' : 'Maximise'"
+        :aria-label="windowMaximized ? 'Restore' : 'Maximise'"
         @click="toggleMaximizeWindow"
       >{{ windowMaximized ? '⧉' : '□' }}</button>
-      <button type="button" class="win-btn close" title="Close" aria-label="Close" @click="closeWindow">&times;</button>
+      <button type="button" class="win-btn close" title="Close" aria-label="Close" @click="closeWindow">
+        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
     </span>
   </header>
 </template>
@@ -116,17 +120,29 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
     -webkit-app-region: no-drag;
 
     .win-btn {
+      /* Fixed-size boxes so the minimise dash, maximise square and close
+         cross all sit in identical bounds regardless of glyph width. The
+         glyph is flex-centred inside. Sized to feel comfortable as a
+         click target without dominating the bar -- roughly Windows
+         title-bar proportions, scaled down. */
       background: transparent;
       color: var(--fg-muted);
       border: 0;
-      padding: 0.3rem 0.7rem;
-      font-size: 0.95rem;
+      padding: 0;
+      width: 2.6rem;
+      height: 2rem;
+      font-size: 1.05rem;
       line-height: 1;
       cursor: pointer;
       border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-sans);
 
       &:hover { background: var(--bg-button-hover); color: var(--fg-default); }
       &.close:hover { background: var(--level-error); color: var(--fg-on-accent); }
+      &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
     }
   }
 }
@@ -140,6 +156,6 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
   -webkit-app-region: no-drag;
 
   &:hover .app-icon { filter: brightness(1.15); }
-  &:focus-visible { outline: 1px solid var(--level-info); outline-offset: 2px; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 }
 </style>

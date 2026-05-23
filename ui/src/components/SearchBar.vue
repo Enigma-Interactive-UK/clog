@@ -93,11 +93,15 @@ defineExpose({
       <button
         v-if="tab.searchQuery.value.length > 0"
         type="button"
-        class="clear-search"
+        class="btn-dismiss clear-search"
         title="Clear search (Esc)"
         aria-label="Clear search"
         @click="clearSearch"
-      >&times;</button>
+      >
+        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
     </span>
     <label class="case" title="Case-sensitive search">
       <input type="checkbox" v-model="tab.searchCaseSensitive.value" @change="tab.scheduleSearch()" />
@@ -190,9 +194,9 @@ defineExpose({
       &:hover:not(.is-on) { background: var(--bg-button-hover); }
 
       &.is-on {
-        background: var(--level-info);
+        background: var(--accent);
         color: var(--fg-on-accent);
-        border-color: var(--level-info);
+        border-color: var(--accent);
         font-weight: 600;
       }
     }
@@ -232,34 +236,16 @@ defineExpose({
   }
 
   .clear-search {
+    /* Anchored inside the search input; the dismiss base supplies colour,
+       hover and focus -- only positioning + sizing live here. */
     position: absolute;
     top: 50%;
     right: 0.3rem;
     transform: translateY(-50%);
-    width: 1.1rem;
-    height: 1.1rem;
-    padding: 0;
-    background: transparent;
-    color: var(--fg-dim);
-    border: none;
+    width: 1.2rem;
+    height: 1.2rem;
+    font-size: 1.05rem;
     border-radius: 50%;
-    font-family: var(--font-sans);
-    font-size: 1.1rem;
-    line-height: 1;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    &:hover {
-      background: var(--bg-button-hover);
-      color: var(--fg-default);
-    }
-
-    &:focus-visible {
-      outline: 1px solid var(--level-info);
-      outline-offset: 1px;
-    }
   }
 
   .case {
@@ -275,7 +261,7 @@ defineExpose({
     font-family: var(--font-mono);
     color: var(--fg-default);
 
-    strong { color: var(--level-info); }
+    strong { color: var(--accent); }
     &.muted { color: var(--fg-dim); }
   }
 
@@ -294,8 +280,8 @@ defineExpose({
   }
 
   .filter-toggle.is-on {
-    border-color: var(--level-info);
-    color: var(--level-info);
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .level-mask {

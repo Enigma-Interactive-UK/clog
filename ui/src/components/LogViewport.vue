@@ -1157,7 +1157,7 @@ defineExpose({
       line-height: 1;
 
       &:hover { color: var(--fg-default); }
-      &:focus-visible { outline: 1px solid var(--level-info); outline-offset: -1px; }
+      &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
     }
   }
 }

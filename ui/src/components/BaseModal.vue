@@ -21,7 +21,11 @@ const emit = defineEmits<{
     <div class="modal" :class="modalClass" role="dialog" :aria-label="ariaLabel ?? title">
       <header class="modal-head">
         <h2>{{ title }}</h2>
-        <button type="button" class="modal-close" :aria-label="`Close ${title.toLowerCase()}`" @click="emit('close')">&times;</button>
+        <button type="button" class="btn-dismiss modal-close" :aria-label="`Close ${title.toLowerCase()}`" @click="emit('close')">
+          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          </svg>
+        </button>
       </header>
       <section class="modal-body">
         <slot />
@@ -64,12 +68,9 @@ const emit = defineEmits<{
 
   .modal-close {
     margin-left: auto;
-    background: transparent;
-    color: var(--fg-default);
-    border: 0;
-    font-size: 1.4rem;
-    line-height: 1;
-    cursor: pointer;
+    width: 1.6rem;
+    height: 1.6rem;
+    font-size: 1.3rem;
   }
 
   .modal-body {

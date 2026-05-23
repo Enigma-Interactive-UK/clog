@@ -73,7 +73,11 @@ function basename(p: string): string {
       <li v-for="p in settings.recent_files" :key="p">
         <button type="button" class="open-btn" @click="emit('open-recent', p)">{{ basename(p) }}</button>
         <span class="path">{{ p }}</span>
-        <button type="button" class="forget-btn" @click="emit('forget-recent', p)" title="Remove from list">&times;</button>
+        <button type="button" class="btn-dismiss is-destructive forget-btn" @click="emit('forget-recent', p)" title="Remove from list" aria-label="Forget recent file">
+          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          </svg>
+        </button>
       </li>
     </ul>
     <p v-else class="muted">No recent files yet. Open a log to populate this list.</p>
@@ -176,7 +180,7 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
     .open-btn {
       background: transparent;
       border: 0;
-      color: var(--level-info);
+      color: var(--accent);
       cursor: pointer;
       padding: 0;
       font-weight: 600;
@@ -196,14 +200,10 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
     }
 
     .forget-btn {
-      background: transparent;
-      border: 0;
-      color: var(--fg-dim);
-      cursor: pointer;
-      font-size: 1rem;
-      line-height: 1;
-
-      &:hover { color: var(--level-error); }
+      /* Dismiss base + destructive modifier supplies colour + hover. */
+      width: 1.4rem;
+      height: 1.4rem;
+      font-size: 1.05rem;
     }
   }
 }
@@ -228,8 +228,8 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   .badge {
     padding: 0.05rem 0.4rem;
     border-radius: var(--radius-sm);
-    background: var(--level-info);
-    color: var(--bg-app);
+    background: var(--accent);
+    color: var(--fg-on-accent);
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;

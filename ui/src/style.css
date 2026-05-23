@@ -6,19 +6,34 @@
    light-mode override in `:root[data-theme="light"]`. */
 
 :root {
-  /* Palette */
-  --slate-950: #0f131a;
-  --slate-900: #14181f;
-  --slate-850: #1c2230;
-  --slate-800: #2a3340;
-  --slate-700: #34404f;
-  --slate-650: #3a4554;
-  --slate-500: #4a5466;
-  --slate-400: #5a6577;
-  --slate-350: #6b7484;
-  --slate-300: #8b94a3;
-  --slate-200: #d3d8e0;
-  --slate-100: #e6e9ef;
+  /* Enigma brand palette. These three are fixed; everything in the rest of
+     the file either derives from them or coexists with them. */
+  --enigma-black: #111111;
+  --enigma-white: #ffffff;
+  --enigma-orange: #de6826;
+  /* Brand-orange tints/shades for interaction states (hover lift / pressed
+     border). Picked by hand to read as the same colour family in both
+     themes without going muddy. */
+  --enigma-orange-soft: #ee7c3a;
+  --enigma-orange-strong: #b85220;
+
+  /* Grey ramp - pure neutral, anchored on --enigma-black (#111) at the
+     900 stop. The "slate" name is kept for stability across the semantic
+     layer below; values are intentionally hueless to align with the
+     Enigma brand. 950 sits one step darker than brand black so the
+     viewport reads as a sunken content surface against the chrome. */
+  --slate-950: #0a0a0a;
+  --slate-900: #111111;
+  --slate-850: #181818;
+  --slate-800: #232323;
+  --slate-700: #2e2e2e;
+  --slate-650: #383838;
+  --slate-500: #4a4a4a;
+  --slate-400: #5a5a5a;
+  --slate-350: #6b6b6b;
+  --slate-300: #8c8c8c;
+  --slate-200: #d4d4d4;
+  --slate-100: #e8e8e8;
 
   --red-900: #3a1f22;
   --red-700: #5a2b30;
@@ -37,11 +52,14 @@
 
   --grey-500: #6f7682;
 
-  /* Semantic surfaces */
-  --bg-app: var(--slate-900);
+  /* Semantic surfaces. In dark mode the outer app chrome (header bar, tab
+     strip, status bar) sits on brand black; the viewport keeps the slightly
+     cooler slate-950 so log content reads on a true content surface rather
+     than the chrome. */
+  --bg-app: var(--enigma-black);
   --bg-elevated: var(--slate-850);
   --bg-viewport: var(--slate-950);
-  --bg-sticky: rgba(20, 24, 31, 0.92);
+  --bg-sticky: rgba(17, 17, 17, 0.92);
   --bg-button: var(--slate-800);
   --bg-button-hover: var(--slate-700);
   --bg-error: var(--red-900);
@@ -50,11 +68,20 @@
   --bg-skeleton-gutter: var(--slate-500);
   --bg-skeleton-num: var(--slate-650);
 
+  /* Accent (Enigma orange) drives chrome highlights: active tab strip,
+     focus outlines, segmented "on" state, link buttons, drop overlay.
+     Distinct from --level-info (which is reserved for the INFO log level
+     in axis-1 styling). Same in both themes -- brand colour is brand
+     colour. */
+  --accent: var(--enigma-orange);
+  --accent-soft: var(--enigma-orange-soft);
+  --accent-strong: var(--enigma-orange-strong);
+
   /* Foreground for text that sits on top of an accent-coloured surface
      (e.g. the active segmented-control button, the portable badge in the
-     settings modal). Dark theme uses slate-950 against a light accent;
-     light theme overrides this to white against a dark accent. */
-  --fg-on-accent: var(--slate-950);
+     settings modal). Brand white reads cleanly on the orange in both
+     themes. */
+  --fg-on-accent: var(--enigma-white);
 
   /* Semantic foregrounds */
   --fg-default: var(--slate-100);
@@ -120,31 +147,35 @@
    darker variants so colour-against-light still has contrast. Backgrounds
    move from slate-900 to a near-white off-white; foregrounds invert. */
 :root[data-theme="light"] {
-  --bg-app: #f3f4f7;
-  --bg-elevated: #ffffff;
-  --bg-viewport: #ffffff;
+  /* In light mode the brand inverts: chrome lifts to a tinted off-white,
+     the viewport is brand white, and primary text drops to brand black.
+     All non-semantic greys are pure neutrals so the slate ramp stays
+     consistent with the dark theme. */
+  --bg-app: #f3f3f3;
+  --bg-elevated: var(--enigma-white);
+  --bg-viewport: var(--enigma-white);
   --bg-sticky: rgba(255, 255, 255, 0.94);
-  --bg-button: #e6e9ef;
-  --bg-button-hover: #d3d8e0;
+  --bg-button: #e8e8e8;
+  --bg-button-hover: #d4d4d4;
   --bg-error: #ffe4e6;
-  --bg-skeleton: #d3d8e0;
-  --bg-skeleton-row: #e6e9ef;
-  --bg-skeleton-gutter: #b9c0cb;
-  --bg-skeleton-num: #c8ced8;
+  --bg-skeleton: #d4d4d4;
+  --bg-skeleton-row: #e8e8e8;
+  --bg-skeleton-gutter: #b9b9b9;
+  --bg-skeleton-num: #c8c8c8;
 
-  --fg-default: #14181f;
-  --fg-row: #1c2230;
-  --fg-muted: #4a5466;
-  --fg-dim: #6b7484;
-  --fg-separator: #6b7484;
-  --fg-gutter: #8b94a3;
+  --fg-default: var(--enigma-black);
+  --fg-row: #1d1d1d;
+  --fg-muted: #4a4a4a;
+  --fg-dim: #6b6b6b;
+  --fg-separator: #6b6b6b;
+  --fg-gutter: #8c8c8c;
   --fg-error: #9a1d2d;
 
-  --fg-timestamp: #4a5466;
-  --fg-thread: #1c2230;
-  --fg-logger: #4a5466;
-  --fg-separator-dash: #8b94a3;
-  --fg-message: #14181f;
+  --fg-timestamp: #4a4a4a;
+  --fg-thread: #1d1d1d;
+  --fg-logger: #4a4a4a;
+  --fg-separator-dash: #8c8c8c;
+  --fg-message: var(--enigma-black);
 
   --level-trace: #6b7484;
   --level-debug: #2c6ec9;
@@ -166,14 +197,64 @@
   --hl-search-bg: #fde68a;
   --hl-search-fg: #14181f;
 
-  --border-default: #d3d8e0;
-  --border-button: #b9c0cb;
+  --border-default: #d4d4d4;
+  --border-button: #b9b9b9;
   --border-error: #f7a8a8;
-  --border-sticky: #b9c0cb;
+  --border-sticky: #b9b9b9;
 
-  /* Light-mode accents are darker than the default text colour, so flip
-     the on-accent foreground to white for contrast. */
-  --fg-on-accent: #ffffff;
+  /* Accent stays brand orange in light mode; the soft tint is reused for
+     hover, the strong shade is reused for borders/pressed states. */
+  --accent: var(--enigma-orange);
+  --accent-soft: var(--enigma-orange-soft);
+  --accent-strong: var(--enigma-orange-strong);
+  --fg-on-accent: var(--enigma-white);
+}
+
+/* --- Dismiss-button family --------------------------------------------
+   One visual treatment for every "close / dismiss / clear" button across
+   the UI: modal close, tab close, search-clear, recent-file forget. The
+   window-control close stays out of this family because it lives in the
+   Windows-chrome strip alongside minimize/maximize.
+
+   The base is neutral (fg-dim text, button-hover background, accent focus
+   ring). The `.is-destructive` modifier swaps hover to the error palette
+   for actions that actually remove data (forget recent file). Sizing,
+   padding, and positioning are intentionally left to consuming components
+   so each context can size the hit area without fighting the base. */
+.btn-dismiss {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  transition: background 0.12s ease, color 0.12s ease;
+
+  &:hover { background: var(--bg-button-hover); color: var(--fg-default); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+  &.is-destructive:hover {
+    background: var(--level-error);
+    color: var(--fg-on-accent);
+  }
+}
+
+/* Shared inline-SVG close glyph used by every dismiss button and the
+   window-chrome close. Rendering the cross as SVG instead of `&times;`
+   avoids the U+00D7 vertical-centring problem in system fonts (the
+   multiplication-sign glyph sits below the em-box centre in Segoe UI and
+   most cousins, so flex-centring lands the line-box but not the visible
+   cross). The path is drawn relative to a 16-unit viewBox so it scales
+   cleanly via em-relative width/height. */
+.dismiss-glyph {
+  width: 0.85em;
+  height: 0.85em;
+  display: block;
+  pointer-events: none;
 }
 
 html, body, #app {

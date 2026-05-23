@@ -106,7 +106,7 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 .link-btn {
   background: transparent;
   border: 0;
-  color: var(--level-info);
+  color: var(--accent);
   cursor: pointer;
   padding: 0;
   font: inherit;

@@ -21,8 +21,8 @@ defineProps<{ visible: boolean }>()
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: color-mix(in srgb, var(--level-info) 18%, transparent);
-  border: 3px dashed var(--level-info);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 3px dashed var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -40,7 +40,7 @@ defineProps<{ visible: boolean }>()
     align-items: center;
     gap: 0.6rem;
 
-    .arrow { color: var(--level-info); font-size: 1.4rem; }
+    .arrow { color: var(--accent); font-size: 1.4rem; }
   }
 }
 </style>

@@ -3,9 +3,18 @@
  * Tab strip across the top of the app. Lists open tabs with a tail status
  * dot per tab (pulses when a non-active tab receives data), a close
  * button per tab, and a "new tab" button that delegates to the parent's
- * file picker. Tabs are presented in their order in the array; this
- * component does not handle reordering -- that's deferred polish.
+ * file picker. Tabs can be reordered by dragging; the parent's
+ * useTabs.reorderTab mutates the array and the autosave fingerprint
+ * watcher picks up the new order (it joins tabs by array index).
+ *
+ * The reorder uses mouse events rather than the HTML5 drag-and-drop API
+ * because Tauri windows have `dragDropEnabled: true` by default, which
+ * intercepts all native drag events at the OS level so that file drops
+ * from Explorer can be received via the Tauri IPC. The side effect is
+ * that HTML5 drag-and-drop inside the page never fires. Switching to a
+ * mouse-driven drag sidesteps that interception entirely.
  */
+import { onBeforeUnmount, ref } from 'vue'
 import type { Tab } from '../tab'
 
 defineProps<{
@@ -17,7 +26,10 @@ const emit = defineEmits<{
   (e: 'switch', localId: number): void
   (e: 'close', localId: number): void
   (e: 'new-tab'): void
+  (e: 'reorder', sourceId: number, targetId: number, placeBefore: boolean): void
 }>()
+
+const tabStripEl = ref<HTMLElement | null>(null)
 
 function basename(p: string): string {
   const m = p.match(/[^\\/]+$/)
@@ -31,10 +43,106 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
     emit('close', localId)
   }
 }
+
+// --- Reorder via mouse drag ----------------------------------------------
+// Three-phase state machine:
+//   1. mousedown on a tab arms `pending` with start position + source id.
+//   2. mousemove past DRAG_THRESHOLD px promotes pending -> active drag;
+//      from then on the live cursor X picks a drop target.
+//   3. mouseup commits if a drop target was chosen, otherwise the original
+//      click (tab switch) goes through untouched.
+// The threshold matters: without it, every click would start a "drag" and
+// the tab-switch click handler would never fire because mouseup would land
+// in the drag-finish path. 4px is the standard browser-text-drag threshold.
+const DRAG_THRESHOLD = 4
+
+interface PendingDrag { sourceId: number; startX: number; startY: number }
+
+const pendingDrag = ref<PendingDrag | null>(null)
+const dragSourceId = ref<number | null>(null)
+const dragOverId = ref<number | null>(null)
+const dropBefore = ref<boolean>(true)
+
+function onTabMouseDown(ev: MouseEvent, localId: number) {
+  if (ev.button !== 0) return
+  pendingDrag.value = { sourceId: localId, startX: ev.clientX, startY: ev.clientY }
+  globalThis.addEventListener('mousemove', onDocMouseMove)
+  globalThis.addEventListener('mouseup', onDocMouseUp)
+}
+
+function onDocMouseMove(ev: MouseEvent) {
+  const pending = pendingDrag.value
+  if (!pending) return
+  if (dragSourceId.value === null) {
+    // Still pending: only promote to a real drag once the cursor has
+    // moved past the threshold. Below the threshold the user's intent is
+    // ambiguous (could still be a click), so we leave the click chain
+    // intact.
+    const dx = ev.clientX - pending.startX
+    const dy = ev.clientY - pending.startY
+    if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return
+    dragSourceId.value = pending.sourceId
+  }
+  updateDropTarget(ev.clientX)
+}
+
+function updateDropTarget(clientX: number) {
+  // Walk the live tab DOM elements and find which one contains clientX.
+  // Using the DOM rather than a coordinate table because the tab strip can
+  // scroll horizontally on overflow and DOMRect already accounts for that.
+  const strip = tabStripEl.value
+  if (!strip) return
+  const tabEls = strip.querySelectorAll<HTMLElement>('.tab')
+  for (const el of tabEls) {
+    const rect = el.getBoundingClientRect()
+    if (clientX >= rect.left && clientX <= rect.right) {
+      const id = Number(el.dataset.localId)
+      dragOverId.value = id
+      dropBefore.value = clientX < rect.left + rect.width / 2
+      return
+    }
+  }
+  // Past the last tab: drop after it. Before the first: drop before it.
+  if (tabEls.length > 0) {
+    const first = tabEls[0].getBoundingClientRect()
+    const last = tabEls[tabEls.length - 1].getBoundingClientRect()
+    if (clientX < first.left) {
+      dragOverId.value = Number(tabEls[0].dataset.localId)
+      dropBefore.value = true
+    } else if (clientX > last.right) {
+      dragOverId.value = Number(tabEls[tabEls.length - 1].dataset.localId)
+      dropBefore.value = false
+    }
+  }
+}
+
+function onDocMouseUp() {
+  globalThis.removeEventListener('mousemove', onDocMouseMove)
+  globalThis.removeEventListener('mouseup', onDocMouseUp)
+  const source = dragSourceId.value
+  const target = dragOverId.value
+  if (source !== null && target !== null && source !== target) {
+    emit('reorder', source, target, dropBefore.value)
+  }
+  resetDragState()
+}
+
+function resetDragState() {
+  pendingDrag.value = null
+  dragSourceId.value = null
+  dragOverId.value = null
+  dropBefore.value = true
+}
+
+onBeforeUnmount(() => {
+  // Defensive: if the component unmounts mid-drag, take the listeners with us.
+  globalThis.removeEventListener('mousemove', onDocMouseMove)
+  globalThis.removeEventListener('mouseup', onDocMouseUp)
+})
 </script>
 
 <template>
-  <nav v-if="tabs.length > 0" class="tab-strip" aria-label="Open files">
+  <nav v-if="tabs.length > 0" ref="tabStripEl" class="tab-strip" aria-label="Open files">
     <ul class="tabs">
       <li
         v-for="t in tabs"
@@ -43,9 +151,13 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
         :class="{
           'is-active': t.localId === activeTabId,
           'has-unread': t.unread.value && t.localId !== activeTabId,
+          'is-dragging': dragSourceId === t.localId,
+          'drop-before': dragOverId === t.localId && dropBefore && dragSourceId !== t.localId,
+          'drop-after': dragOverId === t.localId && !dropBefore && dragSourceId !== t.localId,
         }"
         :title="t.file.value.path"
-        @mousedown="onMiddleClick($event, t.localId)"
+        :data-local-id="t.localId"
+        @mousedown="onMiddleClick($event, t.localId); onTabMouseDown($event, t.localId)"
       >
         <button
           type="button"
@@ -66,11 +178,16 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
         </button>
         <button
           type="button"
-          class="tab-close"
+          class="btn-dismiss tab-close"
           :title="`Close ${basename(t.file.value.path)}`"
           aria-label="Close tab"
           @click.stop="emit('close', t.localId)"
-        >&times;</button>
+          @mousedown.stop
+        >
+          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          </svg>
+        </button>
       </li>
     </ul>
     <button
@@ -122,6 +239,30 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
   max-width: 24rem;
   margin-top: 0.25rem;
   position: relative;
+  cursor: grab;
+
+  &:active { cursor: grabbing; }
+
+  /* Drag-and-drop visual state.
+     - .is-dragging fades the source so the user sees what's being moved.
+     - .drop-before / .drop-after paint a vertical accent bar on the edge
+       where the dragged tab will land. Positioned absolutely so the bar
+       doesn't reflow neighbouring tabs (which would jitter the drop
+       target out from under the cursor). */
+  &.is-dragging { opacity: 0.4; }
+
+  &.drop-before::before,
+  &.drop-after::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  &.drop-before::before { left: -2px; }
+  &.drop-after::after { right: -2px; }
 
   &.is-active {
     /* Match the viewport surface so the tab visually fuses with the
@@ -131,7 +272,7 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
     background: var(--bg-viewport);
     color: var(--fg-default);
     border-color: var(--border-default);
-    border-top-color: var(--level-info);
+    border-top-color: var(--accent);
     box-shadow: 0 1px 0 0 var(--bg-viewport);
     z-index: 1;
 
@@ -155,7 +296,7 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
     min-width: 0;
 
     &:focus-visible {
-      outline: 1px solid var(--level-info);
+      outline: 1px solid var(--accent);
       outline-offset: -1px;
     }
   }
@@ -168,17 +309,26 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
   }
 
   .tail-dot {
+    /* Three states:
+       - idle    (no .is-active):  grey, the tail task is not running
+                                    (start_tail failed, or torn down).
+       - tailing (.is-active):     brand accent orange, tail is alive on
+                                    the backend and watching the file.
+       - pulsing (.is-pulsing):    brief green flash overlaid on the
+                                    tailing state when a delta lands, so
+                                    the user sees "log just updated".
+                                    Cleared 250ms later by tab.ts. */
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
     background: var(--fg-dim);
     flex: 0 0 auto;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
 
-    &.is-active { background: var(--level-info); }
+    &.is-active { background: var(--accent); }
     &.is-pulsing {
-      background: var(--level-warn);
-      box-shadow: 0 0 6px var(--level-warn);
+      background: var(--level-all);
+      box-shadow: 0 0 6px var(--level-all);
     }
   }
 
@@ -192,18 +342,12 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
   }
 
   .tab-close {
-    background: transparent;
-    border: none;
-    color: var(--fg-dim);
+    /* Pill stretched to tab height so the hit area covers the full
+       right edge -- the dismiss base handles colour + hover + focus. */
     padding: 0 0.45rem;
-    cursor: pointer;
+    align-self: stretch;
+    border-radius: 0;
     font-size: 1rem;
-    line-height: 1;
-
-    &:hover {
-      color: var(--fg-default);
-      background: var(--bg-button-hover);
-    }
   }
 
   &.has-unread:not(.is-active) .tab-name {
@@ -234,7 +378,7 @@ function onMiddleClick(ev: MouseEvent, localId: number) {
     background: var(--bg-button-hover);
     color: var(--fg-default);
     border-style: solid;
-    border-top-color: var(--level-info);
+    border-top-color: var(--accent);
   }
 }
 </style>
