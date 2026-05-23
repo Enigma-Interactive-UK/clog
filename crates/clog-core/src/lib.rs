@@ -29,7 +29,10 @@ pub use pattern::{
 pub use record::{scan_records, Level, LooseScanner, RecordHeader, RecordScanner};
 pub use regex_scanner::{RegexScanner, RegexScannerError};
 pub use search::{search_records, HitRef, LevelMask, SearchError, SearchMode, SearchOptions};
-pub use slow_requests::{normalise_path, PathMode, SlowRequestThresholds};
+pub use slow_requests::{
+    extract_slow_requests, normalise_path, PathMode, SlowRequestEntry, SlowRequestOccurrence,
+    SlowRequestSummary, SlowRequestThresholds,
+};
 pub use source::{LineSource, StreamedFile};
 pub use tail::{TailEvent, TailState, DEFAULT_POLL_INTERVAL_MS, HEAD_HASH_BYTES};
 

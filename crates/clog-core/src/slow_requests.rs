@@ -226,6 +226,211 @@ fn record_message_bytes<'a>(
     }
 }
 
+use std::collections::HashMap;
+
+/// One occurrence in the final summary, after dedup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlowRequestOccurrence {
+    pub timestamp_ms: Option<i64>,
+    pub duration_ms: u32,
+    pub line_index: u64,
+    pub record_idx: u32,
+    pub dup_count: u32,
+    pub class_method: String,
+    pub raw_path: String,
+}
+
+/// One aggregated endpoint group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlowRequestEntry {
+    pub path: String,
+    pub raw_paths: Vec<String>,
+    pub count: u32,
+    pub total_ms: u64,
+    pub min_ms: u32,
+    pub max_ms: u32,
+    pub avg_ms: u32,
+    pub p95_ms: u32,
+    pub longest_line: u64,
+    pub occurrences: Vec<SlowRequestOccurrence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlowRequestSummary {
+    pub entries: Vec<SlowRequestEntry>,
+    pub total_hits: u32,
+    pub deduped: u32,
+    pub total_ms: u64,
+}
+
+/// Per-entry occurrence cap. A group with 10 000 hits keeps the
+/// slowest 50 in `occurrences`; `count` still tracks the true total.
+pub const OCCURRENCE_CAP: usize = 50;
+
+/// Aggregate slow requests for an opened file. `timestamp_extractor`
+/// pulls the `timestamp_ms` from a record so callers can choose between
+/// a fast bespoke parser and a full date-format engine.
+#[must_use]
+pub fn extract_slow_requests<F>(
+    records: &[RecordHeader],
+    bytes: &[u8],
+    line_offsets: &[u64],
+    mode: PathMode,
+    timestamp_extractor: F,
+) -> SlowRequestSummary
+where
+    F: Fn(&RecordHeader, &[u8]) -> Option<i64>,
+{
+    let raws = scan_raw(records, bytes, line_offsets);
+    aggregate(&raws, records, bytes, mode, &timestamp_extractor)
+}
+
+#[derive(Debug)]
+struct DedupAcc {
+    kept_idx: usize,
+    dup_count: u32,
+}
+
+#[derive(Debug)]
+struct GroupAcc {
+    path: String,
+    raw_paths: Vec<String>,
+    occs: Vec<SlowRequestOccurrence>,
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::too_many_lines
+)]
+fn aggregate<F>(
+    raws: &[LocatedRaw],
+    records: &[RecordHeader],
+    bytes: &[u8],
+    mode: PathMode,
+    ts_extractor: &F,
+) -> SlowRequestSummary
+where
+    F: Fn(&RecordHeader, &[u8]) -> Option<i64>,
+{
+    // Pass 1: dedup. Key on (bucket, normalised_path, class_method)
+    // where `bucket` is the parsed timestamp_ms or, in its absence, the
+    // record's line_offset (which effectively disables dedup for that
+    // record).
+    let mut occurrences: Vec<SlowRequestOccurrence> = Vec::with_capacity(raws.len());
+    let mut dedup_index: HashMap<(i64, String, String), DedupAcc> = HashMap::new();
+    let mut deduped = 0u32;
+    for r in raws {
+        let rec = &records[r.record_idx as usize];
+        let timestamp_ms = ts_extractor(rec, bytes);
+        let bucket = timestamp_ms.unwrap_or(i64::from(r.line_index as i32));
+        let normalised = match mode {
+            PathMode::Normalised => normalise_path(&r.raw.raw_path),
+            PathMode::Raw => r.raw.raw_path.clone(),
+        };
+        let key = (bucket, normalised.clone(), r.raw.class_method.clone());
+        if let Some(acc) = dedup_index.get_mut(&key) {
+            acc.dup_count = acc.dup_count.saturating_add(1);
+            if r.line_index < occurrences[acc.kept_idx].line_index {
+                let existing = &mut occurrences[acc.kept_idx];
+                existing.line_index = r.line_index;
+                existing.record_idx = r.record_idx;
+            }
+            occurrences[acc.kept_idx].dup_count = acc.dup_count;
+            deduped = deduped.saturating_add(1);
+        } else {
+            dedup_index.insert(
+                key,
+                DedupAcc {
+                    kept_idx: occurrences.len(),
+                    dup_count: 1,
+                },
+            );
+            occurrences.push(SlowRequestOccurrence {
+                timestamp_ms,
+                duration_ms: r.raw.duration_ms,
+                line_index: r.line_index,
+                record_idx: r.record_idx,
+                dup_count: 1,
+                class_method: r.raw.class_method.clone(),
+                raw_path: r.raw.raw_path.clone(),
+            });
+        }
+    }
+
+    // Pass 2: group by aggregation key.
+    let mut groups: HashMap<String, GroupAcc> = HashMap::new();
+    for occ in occurrences {
+        let key = match mode {
+            PathMode::Normalised => normalise_path(&occ.raw_path),
+            PathMode::Raw => occ.raw_path.clone(),
+        };
+        let g = groups.entry(key.clone()).or_insert_with(|| GroupAcc {
+            path: key.clone(),
+            raw_paths: Vec::new(),
+            occs: Vec::new(),
+        });
+        if !g.raw_paths.contains(&occ.raw_path) {
+            g.raw_paths.push(occ.raw_path.clone());
+        }
+        g.occs.push(occ);
+    }
+
+    let mut entries: Vec<SlowRequestEntry> = groups
+        .into_values()
+        .map(|mut g| {
+            let count = u32::try_from(g.occs.len()).unwrap_or(u32::MAX);
+            let mut durations: Vec<u32> = g.occs.iter().map(|o| o.duration_ms).collect();
+            let total_ms: u64 = durations.iter().copied().map(u64::from).sum();
+            let min_ms = *durations.iter().min().unwrap_or(&0);
+            let max_ms = *durations.iter().max().unwrap_or(&0);
+            let avg_ms = if count == 0 {
+                0
+            } else {
+                u32::try_from(total_ms / u64::from(count)).unwrap_or(u32::MAX)
+            };
+            durations.sort_unstable();
+            let p95_idx = if durations.is_empty() {
+                0
+            } else {
+                let n = durations.len();
+                (((n as f64) * 0.95).ceil() as usize)
+                    .saturating_sub(1)
+                    .min(n - 1)
+            };
+            let p95_ms = durations.get(p95_idx).copied().unwrap_or(0);
+            g.occs
+                .sort_unstable_by(|a, b| b.duration_ms.cmp(&a.duration_ms));
+            let longest_line = g.occs.first().map_or(0, |o| o.line_index);
+            g.occs.truncate(OCCURRENCE_CAP);
+            SlowRequestEntry {
+                path: g.path,
+                raw_paths: g.raw_paths,
+                count,
+                total_ms,
+                min_ms,
+                max_ms,
+                avg_ms,
+                p95_ms,
+                longest_line,
+                occurrences: g.occs,
+            }
+        })
+        .collect();
+    entries.sort_unstable_by(|a, b| b.total_ms.cmp(&a.total_ms));
+
+    let total_hits = entries.iter().map(|e| e.count).sum();
+    let total_ms = entries.iter().map(|e| e.total_ms).sum();
+    SlowRequestSummary {
+        entries,
+        total_hits,
+        deduped,
+        total_ms,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +618,177 @@ mod tests {
     #[test]
     fn extract_rejects_anchored_substring_only() {
         assert!(extract_raw(b"prefix SLOW REQUEST: 1000ms - /x (Y.Z)").is_none());
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn parse_ts_ms(rec: &RecordHeader, bytes: &[u8]) -> Option<i64> {
+        let (s, e) = rec.fields.timestamp?;
+        let base = usize::try_from(rec.byte_offset).ok()?;
+        let slice = &bytes[(base + s as usize)..(base + e as usize)];
+        let s = std::str::from_utf8(slice).ok()?;
+        if s.len() != 23 {
+            return None;
+        }
+        let year: i64 = s[0..4].parse().ok()?;
+        let month: i64 = s[5..7].parse().ok()?;
+        let day: i64 = s[8..10].parse().ok()?;
+        let hour: i64 = s[11..13].parse().ok()?;
+        let min: i64 = s[14..16].parse().ok()?;
+        let sec: i64 = s[17..19].parse().ok()?;
+        let ms: i64 = s[20..23].parse().ok()?;
+        Some(
+            ((year * 372 + (month - 1) * 31 + (day - 1)) * 86_400 + hour * 3600 + min * 60 + sec)
+                * 1000
+                + ms,
+        )
+    }
+
+    #[test]
+    fn extract_aggregates_and_dedupes_format_a_and_b_at_same_ms() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:44.830 [play-thread-11] play - SLOW REQUEST: 5064ms - /preflight/killpreflightrequest.json (SoloPreflightFront.killPreflightRequest_JSON)\n",
+            "[INFO ] 2026-05-21 00:00:44.830 [play-thread-11] play - SLOW REQUEST (5064ms) - /preflight/killpreflightrequest.json [SoloPreflightFront.killPreflightRequest_JSON] - consider...\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert_eq!(summary.entries.len(), 1, "one endpoint");
+        let entry = &summary.entries[0];
+        assert_eq!(entry.count, 1, "dedup collapses A+B at same ts");
+        assert_eq!(entry.occurrences.len(), 1);
+        assert_eq!(entry.occurrences[0].dup_count, 2);
+        assert_eq!(summary.total_hits, 1);
+        assert_eq!(summary.deduped, 1);
+    }
+
+    #[test]
+    fn extract_does_not_dedupe_when_timestamps_differ_by_one_ms() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:44.830 [play-thread-11] play - SLOW REQUEST: 5064ms - /x (Y.Z)\n",
+            "[INFO ] 2026-05-21 00:00:44.831 [play-thread-11] play - SLOW REQUEST: 5064ms - /x (Y.Z)\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].count, 2);
+        assert_eq!(summary.deduped, 0);
+    }
+
+    #[test]
+    fn extract_normalised_mode_merges_numeric_paths() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:01.000 [t1] play - SLOW REQUEST: 1000ms - /order/12345/edit (X.x)\n",
+            "[INFO ] 2026-05-21 00:00:02.000 [t1] play - SLOW REQUEST: 3000ms - /order/67890/edit (X.x)\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert_eq!(summary.entries.len(), 1);
+        let entry = &summary.entries[0];
+        assert_eq!(entry.path, "/order/{id}/edit");
+        assert_eq!(entry.count, 2);
+        assert_eq!(entry.total_ms, 4000);
+        assert_eq!(entry.min_ms, 1000);
+        assert_eq!(entry.max_ms, 3000);
+        assert_eq!(entry.avg_ms, 2000);
+        assert_eq!(
+            entry.p95_ms, 3000,
+            "nearest-rank p95 on N=2 picks the larger"
+        );
+    }
+
+    #[test]
+    fn extract_raw_mode_keeps_paths_distinct() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:01.000 [t1] play - SLOW REQUEST: 1000ms - /order/12345/edit (X.x)\n",
+            "[INFO ] 2026-05-21 00:00:02.000 [t1] play - SLOW REQUEST: 3000ms - /order/67890/edit (X.x)\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary =
+            extract_slow_requests(&records, &bytes, &line_offsets, PathMode::Raw, parse_ts_ms);
+        assert_eq!(summary.entries.len(), 2);
+    }
+
+    #[test]
+    fn extract_returns_empty_for_no_matches() {
+        let body = "[INFO ] 2026-05-21 00:00:01.000 [t1] play - hello\n";
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.total_hits, 0);
+        assert_eq!(summary.deduped, 0);
+        assert_eq!(summary.total_ms, 0);
+    }
+
+    #[test]
+    fn extract_caps_occurrences_at_50_per_entry_keeping_top_durations() {
+        use std::fmt::Write as _;
+        let mut body = String::new();
+        for i in 1..=60u32 {
+            let _ = writeln!(
+                body,
+                "[INFO ] 2026-05-21 00:{:02}:{:02}.000 [t1] play - SLOW REQUEST: {}ms - /x (Y.Z)",
+                i / 60,
+                i % 60,
+                i * 100
+            );
+        }
+        let (bytes, line_offsets, records) = make_file(&body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert_eq!(summary.entries.len(), 1);
+        let entry = &summary.entries[0];
+        assert_eq!(entry.count, 60);
+        assert_eq!(entry.occurrences.len(), 50);
+        assert_eq!(entry.occurrences[0].duration_ms, 6000);
+        assert_eq!(entry.occurrences[49].duration_ms, 1100);
+    }
+
+    #[test]
+    fn extract_longest_line_points_at_slowest_hit() {
+        let body = concat!(
+            "[INFO ] 2026-05-21 00:00:01.000 [t1] play - SLOW REQUEST: 1000ms - /x (Y.Z)\n",
+            "[INFO ] 2026-05-21 00:00:02.000 [t1] play - SLOW REQUEST: 9000ms - /x (Y.Z)\n",
+            "[INFO ] 2026-05-21 00:00:03.000 [t1] play - SLOW REQUEST: 3000ms - /x (Y.Z)\n",
+        );
+        let (bytes, line_offsets, records) = make_file(body);
+        let summary = extract_slow_requests(
+            &records,
+            &bytes,
+            &line_offsets,
+            PathMode::Normalised,
+            parse_ts_ms,
+        );
+        assert_eq!(
+            summary.entries[0].longest_line, 1,
+            "second line is the slowest"
+        );
     }
 }
