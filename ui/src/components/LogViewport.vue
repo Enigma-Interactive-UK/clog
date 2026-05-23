@@ -271,17 +271,32 @@ function bringCurrentHitMatchIntoView(): boolean {
 }
 
 // --- Minimap ---
+// Dim "wash" alpha used as the base layer for every bucket. Buckets that
+// also have ERROR/FATAL/WARN records get a brighter second pass painted
+// on top in paintMinimap. Keep INFO/UNKNOWN deliberately null so quiet
+// regions read as background.
 const LEVEL_COLOUR: Record<string, string | null> = {
-  trace: 'rgba(111, 118, 130, 0.25)',
-  debug: 'rgba(158, 197, 255, 0.22)',
+  trace: 'rgba(111, 118, 130, 0.12)',
+  debug: 'rgba(158, 197, 255, 0.12)',
   info: null,
-  warn: 'rgba(224, 176, 74, 0.55)',
-  error: 'rgba(212, 87, 95, 0.65)',
-  fatal: 'rgba(179, 134, 232, 0.6)',
-  off: 'rgba(74, 84, 102, 0.2)',
-  all: 'rgba(108, 199, 135, 0.35)',
+  warn: 'rgba(224, 176, 74, 0.18)',
+  error: 'rgba(212, 87, 95, 0.18)',
+  fatal: 'rgba(179, 134, 232, 0.18)',
+  off: 'rgba(74, 84, 102, 0.12)',
+  all: 'rgba(108, 199, 135, 0.18)',
   unknown: null,
 }
+
+// Hot-overlay colours, used as a second layer on top of the wash for
+// buckets where (error + warn) > 0. Alpha is modulated per bucket from
+// HOT_ALPHA_MIN..HOT_ALPHA_MAX based on `heat / max_error_warn_sum`.
+const LEVEL_HOT: Record<string, string | null> = {
+  warn: 'rgba(224, 176, 74, ALPHA)',
+  error: 'rgba(212, 87, 95, ALPHA)',
+  fatal: 'rgba(179, 134, 232, ALPHA)',
+}
+const HOT_ALPHA_MIN = 0.55
+const HOT_ALPHA_MAX = 1.0
 
 function currentMinimapBg(): string {
   const styles = globalThis.getComputedStyle?.(document.documentElement)
@@ -433,6 +448,15 @@ const bookmarkVisuals = computed<BookmarkVisual[]>(() => {
   return out
 })
 
+function hotColour(level: string, heat: number, max: number): string | null {
+  if (heat <= 0 || max <= 0) return null
+  const template = LEVEL_HOT[level]
+  if (!template) return null
+  const t = Math.max(0, Math.min(1, heat / max))
+  const alpha = HOT_ALPHA_MIN + (HOT_ALPHA_MAX - HOT_ALPHA_MIN) * t
+  return template.replace('ALPHA', alpha.toFixed(3))
+}
+
 function paintMinimap() {
   const canvas = minimapEl.value
   if (!canvas) return
@@ -453,14 +477,15 @@ function paintMinimap() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.fillStyle = currentMinimapBg()
   ctx.fillRect(0, 0, MINIMAP_WIDTH, h)
-  // lastMaxErrorWarnSum is used by the hot-overlay pass added in Task 3.
-  void lastMaxErrorWarnSum
-  const colourAt = (i: number): string | null =>
+
+  // Pass 1: base wash (worst-severity, low alpha). Same run-coalescing
+  // strategy as before so paint cost stays flat in bucket count.
+  const washAt = (i: number): string | null =>
     i < h ? (LEVEL_COLOUR[buckets[i].worst] ?? null) : null
   let runStart = 0
-  let runColour = colourAt(0)
+  let runColour = washAt(0)
   for (let i = 1; i <= h; i++) {
-    const next = colourAt(i)
+    const next = washAt(i)
     if (next !== runColour) {
       if (runColour !== null) {
         ctx.fillStyle = runColour
@@ -470,6 +495,23 @@ function paintMinimap() {
       runColour = next
     }
   }
+
+  // Pass 2: hot overlay. Per-bucket alpha is bucket-local, so no run
+  // coalescing here -- a one-pixel-per-bucket loop is fine at ~viewport
+  // height (a few hundred buckets at most).
+  const max = lastMaxErrorWarnSum
+  if (max > 0) {
+    for (let i = 0; i < h; i++) {
+      const b = buckets[i]
+      const heat = b.error + b.warn
+      if (heat === 0) continue
+      const colour = hotColour(b.worst, heat, max)
+      if (!colour) continue
+      ctx.fillStyle = colour
+      ctx.fillRect(0, i, MINIMAP_WIDTH, 1)
+    }
+  }
+
   paintBookmarkMarkers(ctx, h)
 }
 
