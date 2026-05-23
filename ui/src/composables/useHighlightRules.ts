@@ -88,6 +88,19 @@ export function useHighlightRules({ activePath }: UseHighlightRulesOptions) {
     }
   }
 
+  /**
+   * Drop the in-memory rule state so the next engine refresh runs against
+   * an empty user-rule set. Used after a `reset_data` IPC removes the
+   * underlying JSON files - the disk side is cleared by the backend, this
+   * synchronises the JS side so the viewport stops applying the old rules.
+   */
+  async function clearAll() {
+    globalRules.value = []
+    perFileCache.clear()
+    activePerFileRules.value = []
+    await refreshEngine()
+  }
+
   // Re-target per-file rules when the active tab changes.
   watch(activePath, async (p) => {
     if (!p) {
@@ -107,5 +120,6 @@ export function useHighlightRules({ activePath }: UseHighlightRulesOptions) {
     savePerFile,
     forgetPerFile,
     refreshEngine,
+    clearAll,
   }
 }

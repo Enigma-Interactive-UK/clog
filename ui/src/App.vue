@@ -81,6 +81,7 @@ const {
   saveGlobal: saveGlobalRules,
   savePerFile: savePerFileRules,
   forgetPerFile: forgetPerFileRules,
+  clearAll: clearAllRules,
 } = useHighlightRules({ activePath })
 
 async function onSaveGlobalRules(rules: UserHighlightRule[]) {
@@ -158,7 +159,13 @@ async function onOpenDataFolder() {
 
 async function onResetData(scope: 'settings' | 'session' | 'patterns' | 'index' | 'highlight' | 'all') {
   const err = await resetData(scope)
-  if (err) error.value = err
+  if (err) { error.value = err; return }
+  // The IPC removed the JSON files on disk, but useHighlightRules still
+  // holds the previously-loaded rules in memory. Synchronise the JS side
+  // so the viewport actually reflects the wipe.
+  if (scope === 'highlight' || scope === 'all') {
+    await clearAllRules()
+  }
 }
 
 // --- Hit nav: SearchBar emits, we drive the viewport ---------------------

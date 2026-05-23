@@ -38,12 +38,21 @@ const emit = defineEmits<{
 }>()
 
 const DEFAULT_PREVIEW_LINES = [
-  '[ERROR] 2026-05-22 16:28:59.246 [main] play - Failed to start: java.lang.IllegalStateException: db unreachable',
-  '    at com.solopress.boot.Bootstrap.start(Bootstrap.java:42)',
-  '    at com.solopress.boot.Main.main(Main.java:18)',
-  'Caused by: java.net.ConnectException: Connection refused to https://db.internal:5432',
-  '[INFO ] 2026-05-22 16:29:01.001 [worker-3] play - Loaded module from C:\\opt\\play\\modules\\crud',
-  '[WARN ] 2026-05-22 16:29:02.412 [worker-3] play - Slow query in /var/log/queries.sql (412ms)',
+  '[TRACE] 2026-05-22 16:28:58.012 [main] play - Entering Bootstrap.start(args=[--config=/etc/play.conf])',
+  '[DEBUG] 2026-05-22 16:28:58.103 [main] play - Resolved JAVA_HOME=/usr/lib/jvm/temurin-21 (build 21.0.5+11-LTS)',
+  '[INFO ] 2026-05-22 16:28:59.001 [main] play - Listening on http://0.0.0.0:9000 (pid 18472, host wsl-oink)',
+  '[INFO ] 2026-05-22 16:29:01.001 [worker-3] play - Loaded module from C:\\opt\\play\\modules\\crud (12 controllers, 4 jobs)',
+  '[WARN ] 2026-05-22 16:29:02.412 [worker-3] play - Slow query in /var/log/queries.sql took 1.42s (threshold 500ms)',
+  '[WARN ] 2026-05-22 16:29:02.502 [worker-3] play - Retry 2/3 for upstream 10.0.4.17:5432 after timeout',
+  '[ERROR] 2026-05-22 16:29:03.246 [main] play - Failed to start: java.lang.IllegalStateException: db unreachable',
+  '    at com.cheesecake.boot.Bootstrap.start(Bootstrap.java:42)',
+  '    at com.cheesecake.boot.Main.main(Main.java:18)',
+  '    at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)',
+  'Caused by: java.net.ConnectException: Connection refused to https://db.internal:5432/cheesecake?ssl=true',
+  '    ... 14 more',
+  '[FATAL] 2026-05-22 16:29:03.901 [main] play - Aborting boot - see /var/log/play/clog.log for the full trace',
+  'GET /api/orders/47821 HTTP/1.1 -> 503 in 1812ms (client 192.168.1.42, ua "curl/8.7.0")',
+  '[INFO ] 2026-05-22 16:29:05.117 [scheduler] play - Job ImportFeed-d3f9a1c2 finished ok (842 rows, 0 errors)',
 ]
 
 const rules = reactive<UserHighlightRule[]>(deepClone(props.modelValue))
@@ -437,7 +446,7 @@ function paintMap(spans: { start: number; end: number; cls: string }[]): string 
   font-size: 0.78rem;
   color: var(--fg-default);
   overflow-x: auto;
-  max-height: 11rem;
+  max-height: 15rem;
   overflow-y: auto;
   white-space: pre;
 }

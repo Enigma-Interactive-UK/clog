@@ -7,6 +7,7 @@
  */
 
 import { ref } from 'vue'
+import { ask } from '@tauri-apps/plugin-dialog'
 
 import BaseModal from './BaseModal.vue'
 import HighlightRulesEditor from './HighlightRulesEditor.vue'
@@ -36,6 +37,70 @@ const activeTab = ref<TabId>('general')
 function basename(p: string): string {
   const m = p.match(/[^\\/]+$/)
   return m ? m[0] : p
+}
+
+interface ResetConfig {
+  scope: 'settings' | 'session' | 'patterns' | 'index' | 'highlight' | 'all'
+  title: string
+  message: string
+}
+
+async function confirmReset(cfg: ResetConfig) {
+  const ok = await ask(cfg.message, {
+    title: cfg.title,
+    kind: 'warning',
+    okLabel: 'Reset',
+    cancelLabel: 'Cancel',
+  })
+  if (ok) emit('reset-data', cfg.scope)
+}
+
+function onResetHighlight() {
+  void confirmReset({
+    scope: 'highlight',
+    title: 'Reset highlight rules',
+    message: 'Delete all global and per-file highlight rules? Built-in rules will continue to apply.',
+  })
+}
+
+function onResetSession() {
+  void confirmReset({
+    scope: 'session',
+    title: 'Reset session state',
+    message: 'Forget the currently-open tabs, scroll positions and search state? No log files will be touched.',
+  })
+}
+
+function onResetSettings() {
+  void confirmReset({
+    scope: 'settings',
+    title: 'Reset settings',
+    message: 'Restore theme, font size, follow-tail and recent-files settings to defaults?',
+  })
+}
+
+function onResetPatterns() {
+  void confirmReset({
+    scope: 'patterns',
+    title: 'Reset pattern overrides',
+    message: 'Forget every per-file pattern override? Files will use auto-detection on next open.',
+  })
+}
+
+function onResetIndex() {
+  void confirmReset({
+    scope: 'index',
+    title: 'Clear index cache',
+    message: 'Clear the on-disk index cache? The next open of each file will rebuild its index from scratch.',
+  })
+}
+
+function onResetAll() {
+  void confirmReset({
+    scope: 'all',
+    title: 'Reset all data',
+    message: 'This wipes settings, session, pattern overrides, highlight rules and the index cache. Open log files themselves are untouched. Continue?',
+  })
 }
 </script>
 
@@ -130,7 +195,14 @@ function basename(p: string): string {
       />
       <div class="row-grid reset-row">
         <span class="row-label">Reset rules</span>
-        <span class="control-cell"><button type="button" class="seg-btn" @click="emit('reset-data', 'highlight')">Reset all highlight rules</button></span>
+        <span class="control-cell">
+          <button
+            type="button"
+            class="seg-btn danger"
+            :disabled="globalRules.length === 0"
+            @click="onResetHighlight"
+          >Reset all highlight rules</button>
+        </span>
       </div>
       <p class="footer-note muted">
         Built-in highlights (Java exceptions, <code>Caused by:</code>, stack frames, file paths, URLs)
@@ -154,23 +226,23 @@ function basename(p: string): string {
       <div class="reset-grid">
         <div class="row-grid">
           <span class="row-label">Session state</span>
-          <span class="control-cell"><button type="button" class="seg-btn" @click="emit('reset-data', 'session')">Reset</button></span>
+          <span class="control-cell"><button type="button" class="seg-btn danger" @click="onResetSession">Reset</button></span>
         </div>
         <div class="row-grid">
           <span class="row-label">Settings</span>
-          <span class="control-cell"><button type="button" class="seg-btn" @click="emit('reset-data', 'settings')">Reset</button></span>
+          <span class="control-cell"><button type="button" class="seg-btn danger" @click="onResetSettings">Reset</button></span>
         </div>
         <div class="row-grid">
           <span class="row-label">Pattern overrides</span>
-          <span class="control-cell"><button type="button" class="seg-btn" @click="emit('reset-data', 'patterns')">Reset</button></span>
+          <span class="control-cell"><button type="button" class="seg-btn danger" @click="onResetPatterns">Reset</button></span>
         </div>
         <div class="row-grid">
           <span class="row-label">Index cache</span>
-          <span class="control-cell"><button type="button" class="seg-btn" @click="emit('reset-data', 'index')">Clear</button></span>
+          <span class="control-cell"><button type="button" class="seg-btn danger" @click="onResetIndex">Clear</button></span>
         </div>
         <div class="row-grid">
           <span class="row-label">Everything</span>
-          <span class="control-cell"><button type="button" class="seg-btn danger" @click="emit('reset-data', 'all')">Reset all data</button></span>
+          <span class="control-cell"><button type="button" class="seg-btn danger" @click="onResetAll">Reset all data</button></span>
         </div>
       </div>
 
@@ -258,6 +330,19 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 
   &.is-on { background: var(--fg-default); color: var(--bg-app); border-color: var(--fg-default); }
   &.danger { color: var(--level-error); border-color: var(--level-error); }
+
+  /* Disabled wins over .danger / .is-on - the button should read as
+     "inert" regardless of whatever modifier was applied. Listed last so
+     same-specificity source order favours it. */
+  &:disabled,
+  &.danger:disabled,
+  &.is-on:disabled {
+    color: var(--fg-dim);
+    border-color: var(--border-default);
+    background: var(--bg-button);
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
 }
 .font-seg .font-val { font-family: var(--font-mono); min-width: 3.5rem; text-align: center; }
 
