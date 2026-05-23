@@ -5,8 +5,9 @@
  * and a sortable entry list with click-to-jump + expandable occurrence
  * rows. Threshold editor and speed grid land in later tasks.
  */
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { Tab } from '../tab'
 import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds } from '../types'
 
@@ -238,6 +239,50 @@ const slownessScores = computed<Map<string, number>>(() => {
   return map
 })
 
+// --- Virtualised entry list ------------------------------------------------
+//
+// Without virtualisation the drawer renders every entry into the DOM.
+// In Raw mode on a busy file that can be hundreds of <li>s each with a
+// ::before slowness bar - every scroll tick repaints the whole list.
+// useVirtualizer keeps only the visible window plus a small overscan
+// mounted. Row heights are dynamic: collapsed rows are small, expanded
+// rows grow with the occurrence list. estimateSize gives the initial
+// guess; the library's ResizeObserver (auto-attached by measureElement)
+// corrects each row's real size on mount, and toggleExpanded calls
+// virtualizer.measure() after the DOM updates to invalidate the cache.
+
+const bodyEl = useTemplateRef<HTMLDivElement>('bodyEl')
+const ENTRY_COLLAPSED_HEIGHT = 34
+const OCC_HEIGHT = 22
+
+const virtualizer = useVirtualizer(
+  computed(() => ({
+    count: filteredEntries.value.length,
+    getScrollElement: () => bodyEl.value ?? null,
+    estimateSize: (i: number) => {
+      const e = filteredEntries.value[i]
+      if (!e) return ENTRY_COLLAPSED_HEIGHT
+      if (!expanded.value.has(e.path)) return ENTRY_COLLAPSED_HEIGHT
+      return ENTRY_COLLAPSED_HEIGHT + e.occurrences.length * OCC_HEIGHT
+    },
+    overscan: 6,
+    getItemKey: (i: number) => filteredEntries.value[i]?.path ?? i,
+  })),
+)
+
+const virtualRows = computed(() => virtualizer.value.getVirtualItems())
+const totalSize = computed(() => virtualizer.value.getTotalSize())
+
+function measureVirtualRow(el: Element | null) {
+  if (el) virtualizer.value.measureElement(el)
+}
+
+const originalToggle = toggleExpanded
+function toggleExpandedVirtual(path: string) {
+  originalToggle(path)
+  void nextTick(() => virtualizer.value.measure())
+}
+
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -362,7 +407,7 @@ function jumpTo(line: number) {
       </select>
       <span class="sort-dir">{{ tab.slowRequestSort.value.dir === 'desc' ? 'desc' : 'asc' }}</span>
     </div>
-    <div class="drawer-body">
+    <div ref="bodyEl" class="drawer-body">
       <div v-if="error" class="drawer-error">
         {{ error }}
         <button type="button" @click="refresh">Retry</button>
@@ -376,45 +421,54 @@ function jumpTo(line: number) {
         No slow requests match the current filter.
       </div>
 
-      <ul v-else class="entry-list">
-        <li v-for="entry in filteredEntries" :key="entry.path" class="entry">
-          <div
-            class="entry-row"
-            :style="{ '--score': slownessScores.get(entry.path) ?? 0 }"
-            @click="toggleExpanded(entry.path)"
-          >
-            <span class="entry-path" :title="entry.path" @click.stop="jumpTo(entry.longest_line)">
-              {{ entry.path }}
-            </span>
-            <span class="entry-stats">
-              {{ entry.count }} hits . total {{ formatMs(entry.total_ms) }} .
-              avg {{ formatMs(entry.avg_ms) }} . p95 {{ formatMs(entry.p95_ms) }} .
-              max {{ formatMs(entry.max_ms) }}
-            </span>
-            <span class="entry-expand" :class="{ open: expanded.has(entry.path) }" aria-hidden="true">
-              <svg viewBox="0 0 16 16" focusable="false">
-                <path d="M3 8 H13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                <path class="vbar" d="M8 3 V13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              </svg>
-            </span>
-          </div>
-          <ul v-if="expanded.has(entry.path)" class="occurrence-list">
-            <li
-              v-for="occ in entry.occurrences"
-              :key="`${entry.path}-${occ.line_index}`"
-              class="occurrence"
-              @click="jumpTo(occ.line_index)"
+      <div v-else class="entry-list-host" :style="{ height: totalSize + 'px' }">
+        <div
+          v-for="vRow in virtualRows"
+          :key="String(vRow.key)"
+          :ref="(el) => measureVirtualRow(el as Element | null)"
+          :data-index="vRow.index"
+          class="entry"
+          :style="{ transform: `translateY(${vRow.start}px)` }"
+        >
+          <template v-if="filteredEntries[vRow.index]">
+            <div
+              class="entry-row"
+              :style="{ '--score': slownessScores.get(filteredEntries[vRow.index].path) ?? 0 }"
+              @click="toggleExpandedVirtual(filteredEntries[vRow.index].path)"
             >
-              <span class="occ-ts">
-                {{ occ.timestamp_ms !== null ? new Date(occ.timestamp_ms).toISOString().slice(0, 23).replace('T', ' ') : 'no ts' }}
+              <span class="entry-path" :title="filteredEntries[vRow.index].path" @click.stop="jumpTo(filteredEntries[vRow.index].longest_line)">
+                {{ filteredEntries[vRow.index].path }}
               </span>
-              <span class="occ-dur">{{ formatMs(occ.duration_ms) }}</span>
-              <span class="occ-line">line {{ occ.line_index + 1 }}</span>
-              <span v-if="occ.dup_count > 1" class="occ-dup">x{{ occ.dup_count }}</span>
-            </li>
-          </ul>
-        </li>
-      </ul>
+              <span class="entry-stats">
+                {{ filteredEntries[vRow.index].count }} hits . total {{ formatMs(filteredEntries[vRow.index].total_ms) }} .
+                avg {{ formatMs(filteredEntries[vRow.index].avg_ms) }} . p95 {{ formatMs(filteredEntries[vRow.index].p95_ms) }} .
+                max {{ formatMs(filteredEntries[vRow.index].max_ms) }}
+              </span>
+              <span class="entry-expand" :class="{ open: expanded.has(filteredEntries[vRow.index].path) }" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M3 8 H13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path class="vbar" d="M8 3 V13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </span>
+            </div>
+            <ul v-if="expanded.has(filteredEntries[vRow.index].path)" class="occurrence-list">
+              <li
+                v-for="occ in filteredEntries[vRow.index].occurrences"
+                :key="`${filteredEntries[vRow.index].path}-${occ.line_index}`"
+                class="occurrence"
+                @click="jumpTo(occ.line_index)"
+              >
+                <span class="occ-ts">
+                  {{ occ.timestamp_ms !== null ? new Date(occ.timestamp_ms).toISOString().slice(0, 23).replace('T', ' ') : 'no ts' }}
+                </span>
+                <span class="occ-dur">{{ formatMs(occ.duration_ms) }}</span>
+                <span class="occ-line">line {{ occ.line_index + 1 }}</span>
+                <span v-if="occ.dup_count > 1" class="occ-dup">x{{ occ.dup_count }}</span>
+              </li>
+            </ul>
+          </template>
+        </div>
+      </div>
     </div>
   </aside>
 </template>
@@ -581,9 +635,16 @@ function jumpTo(line: number) {
 
 .sort-dir { color: var(--fg-muted); font-size: 0.8rem; }
 
-.entry-list { list-style: none; margin: 0; padding: 0; }
+.entry-list-host {
+  position: relative;
+  width: 100%;
+}
 
 .entry {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
   border-bottom: 1px solid var(--border-default);
 
   & .entry-row {
