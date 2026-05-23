@@ -1252,6 +1252,7 @@ defineExpose({
 
 <template>
   <div class="viewport-shell">
+    <div class="log-pane">
     <div ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
       <div v-if="stickyHeader" class="sticky-shell">
         <div
@@ -1332,6 +1333,19 @@ defineExpose({
         </template>
       </div>
     </div>
+      <button
+        v-if="!tab.followTail.value && !atBottom"
+        type="button"
+        class="jump-bottom-floating"
+        title="Jump to bottom and re-enable follow"
+        aria-label="Jump to bottom"
+        @click="toggleFollowTail"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6 L8 10 L12 6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+        </svg>
+      </button>
+    </div>
     <div class="marker-rail" aria-hidden="false">
       <button
         v-for="m in markerVisuals"
@@ -1398,14 +1412,6 @@ defineExpose({
       @jump="jumpToLine"
       @thresholds-changed="fetchSpeedThresholds"
     />
-    <button
-      v-if="!tab.followTail.value && !atBottom"
-      type="button"
-      class="jump-bottom-floating"
-      title="Jump to bottom and re-enable follow"
-      aria-label="Jump to bottom"
-      @click="toggleFollowTail"
-    >&darr;</button>
   </div>
 </template>
 
@@ -1417,10 +1423,21 @@ defineExpose({
   min-height: 0;
   position: relative;
   overflow: hidden;
+}
 
-  .jump-bottom-floating {
+.log-pane {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+
+  & .viewport { flex: 1 1 auto; }
+
+  & .jump-bottom-floating {
     position: absolute;
-    right: 32px;
+    right: 16px;
     bottom: 16px;
     width: 32px;
     height: 32px;
@@ -1428,16 +1445,17 @@ defineExpose({
     border: 1px solid var(--border-button);
     background: var(--bg-elevated);
     color: var(--fg-default);
-    font-size: 1.1rem;
-    line-height: 1;
     cursor: pointer;
-    opacity: 0.25;
+    opacity: 0.35;
     transition: opacity 120ms ease-out, background 120ms ease-out;
     z-index: 10;
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    padding: 0;
+
+    & svg { width: 16px; height: 16px; display: block; }
 
     &:hover, &:focus-visible {
       opacity: 1;

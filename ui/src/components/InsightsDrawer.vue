@@ -324,8 +324,16 @@ function jumpTo(line: number) {
     />
     <header class="drawer-head">
       <span class="title">Slow requests</span>
-      <button type="button" class="close-btn" aria-label="Close" @click="emit('close')">
-        x
+      <button
+        type="button"
+        class="btn-dismiss drawer-close"
+        title="Close insights drawer"
+        aria-label="Close insights drawer"
+        @click="emit('close')"
+      >
+        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        </svg>
       </button>
     </header>
     <div class="drawer-totals">{{ totals }}</div>
@@ -513,19 +521,6 @@ function jumpTo(line: number) {
     font-weight: 600;
   }
 
-  & .close-btn {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--fg-default);
-    cursor: pointer;
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-
-    &:hover {
-      background: var(--bg-button-hover);
-      border-color: var(--border-button);
-    }
-  }
 }
 
 .drawer-totals {
