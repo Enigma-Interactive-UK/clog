@@ -1,0 +1,10 @@
+# Sample log fixtures - kept locally only
+research/
+
+# OpenWolf ephemeral state
+.wolf/memory.md
+.wolf/daemon.log
+.wolf/cron-state.json
+.wolf/token-ledger.json
+.wolf/suggestions.json
+.wolf/designqc-report.json
