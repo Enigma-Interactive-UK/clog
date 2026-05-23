@@ -121,6 +121,11 @@
   --hl-search-bg: var(--amber-500);
   --hl-search-fg: var(--slate-950);
 
+  /* Significant-event markers (rendered as triangles in the marker rail
+     and as a coloured top-border + label on the marker row). One token
+     per `MarkerKind` variant on the Rust side. */
+  --marker-restart: var(--green-500);
+
   /* User-rule palette (P8: editable highlight rules pick from these slots) */
   --h-user-red: #f87171;
   --h-user-amber: #fbbf24;
@@ -211,6 +216,8 @@
   --hl-url-fg: #1d4ed8;
   --hl-search-bg: #fde68a;
   --hl-search-fg: #14181f;
+
+  --marker-restart: #15803d;
 
   --h-user-red: #b91c1c;
   --h-user-amber: #b45309;

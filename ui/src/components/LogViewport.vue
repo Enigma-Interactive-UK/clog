@@ -27,6 +27,7 @@ import {
   type HitRef,
   type LevelMinimapPayload,
   type LineRow,
+  type MarkerRef,
   type RecordRef,
 } from '../types'
 import type { Tab } from '../tab'
@@ -52,6 +53,14 @@ let lastMinimapLineCount = -1
 let lastMinimapHeight = -1
 let lastMaxErrorWarnSum = 0
 const MINIMAP_WIDTH = 20
+
+// Significant event markers (e.g. site restarts) rendered as small
+// coloured triangles in a gutter to the left of the minimap canvas. The
+// list is refreshed alongside the minimap on file open / pattern apply /
+// tail growth / rotation. Always indexed by physical line; the gutter
+// projects through `filteredLineIndices` when filter mode is active.
+const markers = ref<MarkerRef[]>([])
+let lastMarkerLineCount = -1
 
 // Filter-mode source records: respect either the level mask (allowedRecords)
 // or the active search hit set.
@@ -358,7 +367,22 @@ function scheduleMinimapFetch(force = false) {
   requestAnimationFrame(() => {
     minimapFetchPending = false
     void fetchMinimap(force)
+    void fetchMarkers(force)
   })
+}
+
+async function fetchMarkers(force: boolean) {
+  const lc = props.tab.file.value.line_count
+  if (!force && lc === lastMarkerLineCount) return
+  try {
+    const payload = await invoke<MarkerRef[]>('get_markers', {
+      fileId: props.tab.file.value.file_id,
+    })
+    markers.value = payload
+    lastMarkerLineCount = lc
+  } catch {
+    // non-fatal
+  }
 }
 
 async function fetchMinimap(force: boolean) {
@@ -470,6 +494,72 @@ function buildFilteredMinimap(
 interface BookmarkVisual {
   lineIdx: number
   virtualIdx: number
+}
+
+interface MarkerVisual {
+  lineIdx: number
+  virtualIdx: number
+  kind: string
+}
+
+// Project physical-line markers to the virtual index space so the rail
+// lines up with the minimap regardless of filter mode. Filter-mode
+// markers whose line is hidden by the active mask / hit set are skipped.
+const markerVisuals = computed<MarkerVisual[]>(() => {
+  const list = markers.value
+  if (list.length === 0) return []
+  const filt = filteredLineIndices.value
+  const out: MarkerVisual[] = []
+  if (filt) {
+    const lookup = new Map<number, number>()
+    for (let v = 0; v < filt.length; v++) lookup.set(filt[v], v)
+    for (const m of list) {
+      const v = lookup.get(m.line_index)
+      if (v !== undefined) out.push({ lineIdx: m.line_index, virtualIdx: v, kind: m.kind })
+    }
+  } else {
+    const lc = props.tab.file.value.line_count
+    for (const m of list) {
+      if (m.line_index >= 0 && m.line_index < lc) {
+        out.push({ lineIdx: m.line_index, virtualIdx: m.line_index, kind: m.kind })
+      }
+    }
+  }
+  out.sort((a, b) => a.virtualIdx - b.virtualIdx)
+  return out
+})
+
+// Physical-line -> marker lookup so renderRow can apply a row-level
+// highlight class when a row is itself a marker.
+const markerLineLookup = computed<Map<number, string>>(() => {
+  const out = new Map<number, string>()
+  for (const m of markers.value) out.set(m.line_index, m.kind)
+  return out
+})
+
+const MARKER_LABEL: Record<string, string> = {
+  restart: 'Site restart',
+}
+
+function markerLabel(kind: string): string {
+  return MARKER_LABEL[kind] ?? kind
+}
+
+function markerColourVar(kind: string): string {
+  return `var(--marker-${kind}, var(--accent))`
+}
+
+function jumpToLine(lineIdx: number) {
+  const v = virtualizer.value
+  if (!v) return
+  const filt = filteredLineIndices.value
+  if (filt) {
+    const virtIdx = filt.indexOf(lineIdx)
+    if (virtIdx === -1) return
+    v.scrollToIndex(virtIdx, { align: 'center' })
+  } else {
+    v.scrollToIndex(lineIdx, { align: 'center' })
+  }
 }
 
 const bookmarkVisuals = computed<BookmarkVisual[]>(() => {
@@ -1015,14 +1105,24 @@ defineExpose({
                 'is-continuation': (lineRowVirtual(vrow.index)?.line_within_record ?? 0) > 0,
                 'is-current-hit': isCurrentHitRow(lineRowVirtual(vrow.index)),
                 'is-bookmarked': tab.isBookmarked(actualLineIndex(vrow.index)),
+                'is-marker': markerLineLookup.get(actualLineIndex(vrow.index)) !== undefined,
               },
               'level-row-' + (lineRowVirtual(vrow.index)?.level ?? 'unknown'),
+              markerLineLookup.get(actualLineIndex(vrow.index))
+                ? `marker-row-${markerLineLookup.get(actualLineIndex(vrow.index))}`
+                : '',
             ]"
             :style="{
               transform: `translateY(${vrow.start}px)`,
               height: `${vrow.size}px`,
               '--gutter-color': levelGutterVar(lineRowVirtual(vrow.index)?.level ?? 'unknown'),
+              '--marker-row-colour': markerLineLookup.get(actualLineIndex(vrow.index))
+                ? markerColourVar(markerLineLookup.get(actualLineIndex(vrow.index))!)
+                : 'transparent',
             }"
+            :data-marker-label="markerLineLookup.get(actualLineIndex(vrow.index))
+              ? markerLabel(markerLineLookup.get(actualLineIndex(vrow.index))!)
+              : null"
           >
             <span class="gutter" />
             <span
@@ -1045,6 +1145,21 @@ defineExpose({
           </div>
         </template>
       </div>
+    </div>
+    <div class="marker-rail" aria-hidden="false">
+      <button
+        v-for="m in markerVisuals"
+        :key="`${m.kind}-${m.lineIdx}`"
+        type="button"
+        class="marker-triangle"
+        :class="`marker-${m.kind}`"
+        :style="{
+          top: `${effectiveCount > 0 ? (m.virtualIdx / effectiveCount) * viewportHeightPx : 0}px`,
+          borderLeftColor: markerColourVar(m.kind),
+        }"
+        :title="`${markerLabel(m.kind)} - line ${m.lineIdx + 1}`"
+        @click="jumpToLine(m.lineIdx)"
+      />
     </div>
     <div
       class="minimap"
@@ -1121,6 +1236,43 @@ defineExpose({
       background: var(--bg-button-hover);
       outline: none;
     }
+  }
+}
+
+.marker-rail {
+  flex: 0 0 auto;
+  width: 10px;
+  position: relative;
+  background: var(--bg-viewport);
+  pointer-events: auto;
+
+  .marker-triangle {
+    position: absolute;
+    left: 0;
+    /* Right-pointing triangle: a zero-width box with a coloured left
+       border and transparent top/bottom borders. The tip sits on the
+       right edge so it aims at the minimap canvas. */
+    width: 0;
+    height: 0;
+    padding: 0;
+    background: transparent;
+    border-style: solid;
+    border-width: 4px 0 4px 6px;
+    border-top-color: transparent;
+    border-bottom-color: transparent;
+    border-right-color: transparent;
+    /* border-left-color is set inline per marker kind. */
+    transform: translateY(-4px);
+    cursor: pointer;
+    opacity: 0.85;
+    transition: opacity 120ms ease-out, filter 120ms ease-out;
+  }
+
+  .marker-triangle:hover,
+  .marker-triangle:focus-visible {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
+    outline: none;
   }
 }
 
@@ -1450,6 +1602,40 @@ defineExpose({
         color-mix(in srgb, var(--accent) 12%, transparent),
         transparent 60%
       );
+    }
+
+    /* Marker rows: a thin coloured top border plus a faint horizontal
+       wash + an inline label tag floated against the right edge. Doesn't
+       displace any text since marker rows are themselves the record's
+       first line. --marker-row-colour is set inline via :style. */
+    &.is-marker {
+      border-top: 1px solid var(--marker-row-colour);
+      box-shadow: inset 0 1px 0 var(--marker-row-colour);
+      background-image: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--marker-row-colour) 14%, transparent),
+        color-mix(in srgb, var(--marker-row-colour) 4%, transparent) 60%,
+        transparent
+      );
+    }
+
+    &.is-marker::after {
+      content: attr(data-marker-label);
+      position: sticky;
+      right: 0.4rem;
+      margin-left: auto;
+      padding: 0 0.4rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--marker-row-colour);
+      background: color-mix(in srgb, var(--bg-viewport) 85%, transparent);
+      border: 1px solid color-mix(in srgb, var(--marker-row-colour) 45%, transparent);
+      border-radius: 3px;
+      align-self: center;
+      pointer-events: none;
+      flex: 0 0 auto;
     }
   }
 

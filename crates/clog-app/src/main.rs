@@ -755,6 +755,105 @@ fn get_level_minimap(
     ))
 }
 
+/// Kind of significant event marker overlaid on the viewport's left rail.
+/// New kinds are added by appending here and to `BUILTIN_MARKER_RULES`; the
+/// UI picks up the new variant through the serialised tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MarkerKind {
+    /// Site restart, currently detected via "Core Plugin Load" appearing
+    /// in a record's first physical line.
+    Restart,
+}
+
+/// Rule used to flag records as markers. `needle` is a case-sensitive
+/// literal substring matched against the first physical line of a record.
+/// The substring form is intentional - the patterns we care about for v1
+/// (site restart banners, lifecycle events) are stable strings; the
+/// machinery can promote to regex later without changing the wire shape.
+struct MarkerRule {
+    kind: MarkerKind,
+    needle: &'static str,
+}
+
+const BUILTIN_MARKER_RULES: &[MarkerRule] = &[MarkerRule {
+    kind: MarkerKind::Restart,
+    needle: "Core Plugin Load",
+}];
+
+#[derive(Debug, Clone, Serialize)]
+struct MarkerRef {
+    kind: MarkerKind,
+    /// Physical line index of the marker (== the record's first line).
+    line_index: u64,
+    /// Index into `OpenedFile.records`.
+    record_idx: u32,
+}
+
+/// Walk every record's first physical line and emit one `MarkerRef` per
+/// (record, matching rule) pair. Records are scanned once; the first
+/// matching rule wins, so a record never produces two markers. Linear in
+/// `records.len() * sum(needle_len)`; the call is cheap relative to the
+/// minimap rollup.
+fn scan_markers(
+    records: &[RecordHeader],
+    bytes: &[u8],
+    line_offsets: &[u64],
+    rules: &[MarkerRule],
+) -> Vec<MarkerRef> {
+    let mut out = Vec::new();
+    if rules.is_empty() {
+        return out;
+    }
+    let total_lines = line_offsets.len();
+    for (rec_idx, rec) in records.iter().enumerate() {
+        let line_idx = rec.line_offset as usize;
+        if line_idx >= total_lines {
+            continue;
+        }
+        let line_start = usize::try_from(line_offsets[line_idx]).unwrap_or(usize::MAX);
+        // Bound the line by the next line offset (excluding the trailing
+        // newline) or, for the last line, by the record's byte end.
+        let line_end_raw = if line_idx + 1 < total_lines {
+            let next = usize::try_from(line_offsets[line_idx + 1]).unwrap_or(usize::MAX);
+            next.saturating_sub(1)
+        } else {
+            usize::try_from(rec.byte_offset + u64::from(rec.byte_len)).unwrap_or(usize::MAX)
+        };
+        let line_end = line_end_raw.min(bytes.len()).max(line_start);
+        let line = &bytes[line_start..line_end];
+        for rule in rules {
+            let needle = rule.needle.as_bytes();
+            if needle.is_empty() || needle.len() > line.len() {
+                continue;
+            }
+            if line.windows(needle.len()).any(|w| w == needle) {
+                out.push(MarkerRef {
+                    kind: rule.kind,
+                    line_index: u64::from(rec.line_offset),
+                    record_idx: u32::try_from(rec_idx).unwrap_or(u32::MAX),
+                });
+                break;
+            }
+        }
+    }
+    out
+}
+
+#[tauri::command]
+fn get_markers(state: State<'_, AppState>, file_id: u64) -> Result<Vec<MarkerRef>, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    Ok(scan_markers(
+        &file.records,
+        &file.bytes,
+        &file.line_offsets,
+        BUILTIN_MARKER_RULES,
+    ))
+}
+
 /// Lightweight projection of a record. Used by the UI's level-mask + filter
 /// path so it can build the visible-line set without going through the
 /// full search engine.
@@ -1658,6 +1757,7 @@ fn main() {
             start_tail,
             stop_tail,
             get_level_minimap,
+            get_markers,
             start_search,
             cancel_search,
             list_records_by_level,
@@ -2780,5 +2880,86 @@ mod tests {
         let single_byte_splits: Vec<u32> =
             (1..u32::try_from(bytes.len()).unwrap_or(u32::MAX)).collect();
         run_split_property(4, single_byte_splits);
+    }
+
+    #[test]
+    fn markers_flag_core_plugin_load_records() {
+        let (mut file, scanner) = fresh_file();
+        let body = concat!(
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - boot\n",
+            "[INFO ] 2026-05-22 16:28:59.247 [main] play - Core Plugin Load: starting\n",
+            "[INFO ] 2026-05-22 16:28:59.248 [main] play - serving\n",
+            "[INFO ] 2026-05-22 16:30:01.000 [main] play - Core Plugin Load (round 2)\n",
+        );
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 4);
+
+        let markers = scan_markers(
+            &file.records,
+            &file.bytes,
+            &file.line_offsets,
+            BUILTIN_MARKER_RULES,
+        );
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].kind, MarkerKind::Restart);
+        assert_eq!(markers[0].line_index, 1);
+        assert_eq!(markers[0].record_idx, 1);
+        assert_eq!(markers[1].kind, MarkerKind::Restart);
+        assert_eq!(markers[1].line_index, 3);
+        assert_eq!(markers[1].record_idx, 3);
+    }
+
+    #[test]
+    fn markers_ignore_continuation_lines_carrying_the_needle() {
+        // A stack trace continuation mentioning the needle must NOT be
+        // counted - markers attach to the record's first physical line only.
+        let (mut file, scanner) = fresh_file();
+        let body = concat!(
+            "[ERROR] 2026-05-22 16:28:59.246 [main] play - boom\n",
+            "    at com.example.Core Plugin Load.foo(X.java:1)\n",
+        );
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.records.len(), 1);
+        let markers = scan_markers(
+            &file.records,
+            &file.bytes,
+            &file.line_offsets,
+            BUILTIN_MARKER_RULES,
+        );
+        assert!(markers.is_empty(), "continuation match must not flag");
+    }
+
+    #[test]
+    fn markers_handle_empty_inputs() {
+        let (file, _scanner) = fresh_file();
+        let markers = scan_markers(
+            &file.records,
+            &file.bytes,
+            &file.line_offsets,
+            BUILTIN_MARKER_RULES,
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn markers_one_marker_per_record_even_with_multiple_matching_rules() {
+        // Synthetic rule set where two rules match the same line. The
+        // record should still produce exactly one MarkerRef (the first
+        // rule wins).
+        let (mut file, scanner) = fresh_file();
+        let body = "[INFO ] 2026-05-22 16:28:59.246 [main] play - Core Plugin Load and friends\n";
+        extend(&mut file, &scanner, body.as_bytes());
+        let rules = &[
+            MarkerRule {
+                kind: MarkerKind::Restart,
+                needle: "Core Plugin Load",
+            },
+            MarkerRule {
+                kind: MarkerKind::Restart,
+                needle: "Plugin Load",
+            },
+        ];
+        let markers = scan_markers(&file.records, &file.bytes, &file.line_offsets, rules);
+        assert_eq!(markers.len(), 1);
     }
 }

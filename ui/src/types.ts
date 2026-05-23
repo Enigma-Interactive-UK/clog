@@ -156,6 +156,17 @@ export interface LevelMinimapPayload {
   max_total: number
 }
 
+/** Significant event marker (e.g. site restart) extracted by the backend.
+ *  New kinds may appear as `BUILTIN_MARKER_RULES` grows on the Rust side -
+ *  treat `kind` as an open string so the UI degrades gracefully (unknown
+ *  kinds simply paint with the fallback colour). */
+export interface MarkerRef {
+  kind: 'restart' | (string & {})
+  /** Physical line index of the marker (first line of the matching record). */
+  line_index: number
+  record_idx: number
+}
+
 export interface TailDelta {
   new_record_count: number
   line_count: number
