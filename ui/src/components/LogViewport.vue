@@ -1177,7 +1177,11 @@ defineExpose({
 
 .viewport {
   flex: 1 1 auto;
-  overflow: auto;
+  /* Horizontal track always reserved so a long line scrolling into view
+     doesn't squash the viewport by 10px, which would resize the minimap
+     canvas and make it jump mid-scroll. */
+  overflow-x: scroll;
+  overflow-y: auto;
   /* Do not set `scrollbar-width` / `scrollbar-color` here -- they would
      override the ::-webkit-scrollbar rules in Chromium (Webview2) and
      drop the accent hover state. The per-axis hide below suppresses the
