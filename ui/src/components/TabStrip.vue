@@ -211,7 +211,6 @@ onBeforeUnmount(() => {
   gap: 0.2rem;
   min-height: 2rem;
   overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .tabs {

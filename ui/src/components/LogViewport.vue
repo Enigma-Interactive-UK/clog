@@ -258,15 +258,13 @@ function bringCurrentHitMatchIntoView(): boolean {
   if (!el) return false
   const match = el.querySelector('.row.is-current-hit .h-search-match') as HTMLElement | null
   if (!match) return false
-  const txt = match.closest('.txt') as HTMLElement | null
-  if (!txt) return false
-  if (txt.scrollWidth <= txt.clientWidth) return true
+  if (el.scrollWidth <= el.clientWidth) return true
   const matchRect = match.getBoundingClientRect()
-  const txtRect = txt.getBoundingClientRect()
-  const matchLeftInContent = matchRect.left - txtRect.left + txt.scrollLeft
-  const targetScrollLeft = matchLeftInContent - txt.clientWidth / 2 + match.offsetWidth / 2
-  const maxScrollLeft = txt.scrollWidth - txt.clientWidth
-  txt.scrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft))
+  const elRect = el.getBoundingClientRect()
+  const matchLeftInContent = matchRect.left - elRect.left + el.scrollLeft
+  const targetScrollLeft = matchLeftInContent - el.clientWidth / 2 + match.offsetWidth / 2
+  const maxScrollLeft = el.scrollWidth - el.clientWidth
+  el.scrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft))
   return true
 }
 
@@ -1082,13 +1080,18 @@ defineExpose({
 .viewport {
   flex: 1 1 auto;
   overflow: auto;
-  scrollbar-width: none;
+  /* Do not set `scrollbar-width` / `scrollbar-color` here -- they would
+     override the ::-webkit-scrollbar rules in Chromium (Webview2) and
+     drop the accent hover state. The per-axis hide below suppresses the
+     vertical track; the minimap is the vertical affordance. */
   font-family: var(--font-mono);
   font-size: var(--font-size-base);
   line-height: var(--row-height);
   background-color: var(--bg-viewport);
 
-  &::-webkit-scrollbar { display: none; }
+  /* width = vertical scrollbar width (0 -> hidden, replaced by minimap);
+     height = horizontal scrollbar height (inherits the app-wide look). */
+  &::-webkit-scrollbar { width: 0; height: 10px; }
 
   .total {
     position: relative;
@@ -1138,10 +1141,14 @@ defineExpose({
     position: absolute;
     top: 0;
     left: 0;
-    right: 0;
+    /* Width is driven by content so the viewport's horizontal scrollbar
+       reflects the widest currently-rendered line. min-width keeps short
+       rows full-bleed for the level-row gradient backgrounds. */
+    min-width: 100%;
+    width: max-content;
     z-index: 1;
     display: grid;
-    grid-template-columns: var(--gutter-width) var(--line-num-width) 1fr;
+    grid-template-columns: var(--gutter-width) var(--line-num-width) max-content;
     align-items: center;
     white-space: pre;
     color: var(--fg-row);
@@ -1187,11 +1194,6 @@ defineExpose({
 
     .txt {
       padding-right: 0.6rem;
-      overflow-x: auto;
-      overflow-y: hidden;
-      scrollbar-width: none;
-
-      &::-webkit-scrollbar { display: none; }
     }
 
     &.is-continuation .txt {
@@ -1313,7 +1315,8 @@ defineExpose({
       position: absolute;
       top: 0;
       left: 0;
-      right: 0;
+      min-width: 100%;
+      width: max-content;
       height: var(--row-height);
       background: var(--bg-sticky);
       backdrop-filter: blur(2px);
