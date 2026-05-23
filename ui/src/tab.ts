@@ -16,13 +16,14 @@
  * whenever the active tab's state changes.
  */
 
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import {
   LEVEL_BIT,
   LEVEL_KEYS,
   PAGE_SIZE,
   type ApplyPatternPayload,
+  type EffectiveThresholds,
   type HitRef,
   type IpcError,
   type LineRow,
@@ -35,6 +36,8 @@ import {
   type RestoredFile,
   type SearchDelta,
   type SearchMode,
+  type SlowRequestPathMode,
+  type SlowRequestSummary,
   type TailDelta,
 } from './types'
 
@@ -144,6 +147,17 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   // --- Scroll persistence + tab-strip unread indicator ---
   const scrollTop = ref(0)
   const unread = ref(false)
+
+  // --- Slow request insights drawer ---
+  const insightsOpen = ref<boolean>(false)
+  const slowRequestMode = ref<SlowRequestPathMode>('normalised')
+  const slowRequestSort = ref<{
+    field: 'total' | 'count' | 'max' | 'p95' | 'avg' | 'path'
+    dir: 'asc' | 'desc'
+  }>({ field: 'total', dir: 'desc' })
+  const slowRequestFilter = ref<string>('')
+  const slowRequestSummary = shallowRef<SlowRequestSummary | null>(null)
+  const slowRequestThresholds = ref<EffectiveThresholds | null>(null)
 
   // --- Bookmarks (physical line indices) ---
   // Sorted-on-write via snapshot(); kept as a Set for O(1) toggle/lookup.
@@ -550,6 +564,12 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     scrollTop,
     unread,
     bookmarks,
+    insightsOpen,
+    slowRequestMode,
+    slowRequestSort,
+    slowRequestFilter,
+    slowRequestSummary,
+    slowRequestThresholds,
     // methods
     isBookmarked,
     toggleBookmark,

@@ -175,6 +175,66 @@ export interface TailDelta {
   rotated: boolean
 }
 
+// --- Slow request insights --------------------------------------------------
+
+export type SlowRequestPathMode = 'normalised' | 'raw'
+
+export interface SlowRequestThresholds {
+  fast_ms: number
+  slow_ms: number
+}
+
+export type ThresholdSource = 'auto' | 'global' | 'per_file'
+
+export interface EffectiveThresholds {
+  source: ThresholdSource
+  effective: SlowRequestThresholds
+  per_file: SlowRequestThresholds | null
+  global: SlowRequestThresholds | null
+}
+
+export interface SpeedBucket {
+  count: number
+  avg_ms: number
+  max_ms: number
+}
+
+export interface SpeedGrid {
+  buckets: SpeedBucket[]
+  min_avg_ms: number
+  max_avg_ms: number
+}
+
+export interface SlowRequestOccurrence {
+  timestamp_ms: number | null
+  duration_ms: number
+  line_index: number
+  record_idx: number
+  dup_count: number
+  class_method: string
+  raw_path: string
+}
+
+export interface SlowRequestEntry {
+  path: string
+  raw_paths: string[]
+  count: number
+  total_ms: number
+  min_ms: number
+  max_ms: number
+  avg_ms: number
+  p95_ms: number
+  longest_line: number
+  occurrences: SlowRequestOccurrence[]
+}
+
+export interface SlowRequestSummary {
+  entries: SlowRequestEntry[]
+  total_hits: number
+  deduped: number
+  total_ms: number
+}
+
 /**
  * User-editable highlight rule, persisted to `highlight-rules.json` (global)
  * or `per-file-rules/<hash>.json` (per-file). Carries the user-facing knobs
