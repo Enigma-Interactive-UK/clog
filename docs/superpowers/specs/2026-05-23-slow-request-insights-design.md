@@ -27,7 +27,9 @@ Clicking a group jumps the viewport to that endpoint's longest hit.
 ## Non-goals
 
 - **Time-series sparkline** per endpoint group (future-ideas
-  "Error-rate sparkline" sibling - revisit after this lands).
+  "Error-rate sparkline" sibling - revisit after this lands). The
+  file-wide speed stripe described below is in scope; per-group
+  sparklines are not.
 - **Configurable detection patterns**. v1 ships a hardcoded matcher;
   surface in Settings later if other Play apps emit different phrasing.
 - **Cross-tab aggregation**. Insights are per-file; merging across tabs
@@ -221,9 +223,60 @@ struct DedupKey {
 }
 ```
 
+### Speed heatmap rollup
+
+Alongside the entry aggregator, the engine emits a bucketed
+**file-wide speed grid** so the UI can paint a thin green-to-red stripe
+next to the level minimap (see "Speed heatmap stripe" below). The grid
+shares the level minimap's bucket geometry so the two visualisations
+read vertically aligned.
+
+```rust
+pub struct SpeedBucket {
+    /// Hit count in this bucket after dedup. Zero means "no slow
+    /// requests touched this bucket" - the UI paints these transparent
+    /// so the level minimap shows through.
+    pub count: u32,
+    /// Average duration in milliseconds across the deduped hits in
+    /// this bucket. Zero when `count == 0`.
+    pub avg_ms: u32,
+    /// Worst single duration in this bucket. Reserved for a future
+    /// "max-on-hover" tooltip; emitted now so the UI doesn't need a
+    /// second round trip.
+    pub max_ms: u32,
+}
+
+pub struct SpeedGrid {
+    pub buckets: Vec<SpeedBucket>,
+    /// Smallest non-zero `avg_ms` across all buckets. Normalises the
+    /// green end of the gradient. Zero when no slow requests exist.
+    pub min_avg_ms: u32,
+    /// Largest `avg_ms` across all buckets. Normalises the red end.
+    pub max_avg_ms: u32,
+}
+
+pub fn build_speed_grid(
+    occurrences: &[SlowRequestOccurrence],
+    line_count: u64,
+    bucket_count: usize,
+) -> SpeedGrid;
+```
+
+Bucketing rules mirror `build_level_minimap_payload`:
+
+- An occurrence at line `L` lands in bucket `floor(L * bucket_count / line_count)`,
+  clamped to `bucket_count - 1`.
+- Average is per-bucket: `sum(duration_ms) / count` over the
+  occurrences that landed there. Single-occurrence buckets are valid
+  (their average equals that one duration).
+- Empty file or no slow requests: `buckets` is filled with zeroed
+  `SpeedBucket`s, `min_avg_ms == max_avg_ms == 0`.
+
 ### `clog-app` IPC
 
-New command in [crates/clog-app/src/main.rs](../../../crates/clog-app/src/main.rs):
+Two new commands in [crates/clog-app/src/main.rs](../../../crates/clog-app/src/main.rs),
+both backed by the same `extract_slow_requests` walk so they never
+diverge in dedup or parsing:
 
 ```rust
 #[tauri::command]
@@ -232,20 +285,50 @@ fn get_slow_requests(
     file_id: u64,
     mode: PathMode,
 ) -> Result<SlowRequestSummary, IpcError>;
+
+#[tauri::command]
+fn get_slow_request_speeds(
+    state: State<'_, AppState>,
+    file_id: u64,
+    bucket_count: u32,
+) -> Result<SpeedGrid, IpcError>;
 ```
 
-Reads the file's records under the existing mutex and calls
-`extract_slow_requests`. No caching - the walk is O(records); on a
-75k-record file the regex pass is well under a frame budget. If it turns
-out to be slow under tail mode, cache the parsed-but-unaggregated
-`Vec<RawOccurrence>` on `OpenedFile` and re-aggregate on mode flip; defer
-the optimisation until measurement shows a problem.
+`get_slow_requests` is fired only when the drawer is open;
+`get_slow_request_speeds` is fired whenever the minimap is refreshed
+regardless of drawer state (the stripe paints either way). Both share a
+short-lived in-memory cache on `OpenedFile`:
+
+```rust
+struct SlowRequestCache {
+    /// Snapshot signature: `(records.len(), bytes.len(), pattern_hash)`.
+    /// Invalidated automatically on any record-count or pattern change.
+    signature: (u64, u64, u64),
+    occurrences: Vec<RawSlowRequest>,
+}
+```
+
+Both IPCs build the cache lazily on first call after a signature change
+and reuse it on subsequent calls. The speeds IPC rebuilds the
+`SpeedGrid` from the cached occurrences on every call (cheap - linear
+in occurrence count, which is small). The entries IPC re-aggregates +
+re-normalises paths from the cache on each call too, so flipping
+`PathMode` does not re-scan the file. This keeps tail-mode cost
+proportional to the *new* records only via the existing
+`OpenedFile.records` extension - the cache rebuild touches all
+occurrences but those parse once per record.
+
+No persistence - the cache lives only as long as the file is open.
 
 ### Tail behaviour
 
 Same triggers as the minimap and markers: file open, pattern apply, tail
-delta, rotation. The UI re-invokes `get_slow_requests` on each trigger
-when the drawer is open. When the drawer is closed, no fetch fires.
+delta, rotation. The UI re-invokes:
+
+- `get_slow_request_speeds` on every minimap refresh trigger (the
+  stripe always paints when there are slow requests in the file).
+- `get_slow_requests` only when `tab.insightsOpen` is true (the drawer
+  body is what consumes the entry list).
 
 ### Tests
 
@@ -265,6 +348,14 @@ Cover:
    duration and the headline `count` stays 200.
 10. **Empty file** / **no slow records**: returns empty summary, zeroed
     totals, valid struct.
+11. **Speed grid bucketing**: occurrences split across two buckets; each
+    bucket's `avg_ms` matches the local sum/count; `min_avg_ms` and
+    `max_avg_ms` reflect the grid's extremes.
+12. **Speed grid empty case**: no slow requests in the file yields
+    `bucket_count` zeroed `SpeedBucket`s and `min_avg_ms == max_avg_ms == 0`.
+13. **Speed grid degenerate spread**: all occurrences identical duration
+    -> `min_avg_ms == max_avg_ms`; UI fallback rule must paint a
+    consistent mid-gradient colour (assertion at the UI layer).
 
 Plus a smoke test against `research/solopress-prod.log` asserting at
 least one `SLOW REQUEST` entry parses cleanly (regression guard against
@@ -278,6 +369,18 @@ regex drift).
 
 ```ts
 export type SlowRequestPathMode = 'normalised' | 'raw'
+
+export interface SpeedBucket {
+  count: number
+  avg_ms: number
+  max_ms: number
+}
+
+export interface SpeedGrid {
+  buckets: SpeedBucket[]
+  min_avg_ms: number
+  max_avg_ms: number
+}
 
 export interface SlowRequestOccurrence {
   timestamp_ms: number | null
@@ -309,6 +412,64 @@ export interface SlowRequestSummary {
   total_ms: number
 }
 ```
+
+### Speed heatmap stripe
+
+A new 4px-wide vertical rail painted **immediately to the right of the
+existing 20px minimap canvas**, inside the same `.viewport-shell` row,
+sharing the minimap's bucket grid 1:1. The rail does not move when the
+drawer opens or closes; it is always visible whenever the file has at
+least one slow request.
+
+Layout, left to right:
+
+```
+[viewport | marker-rail (10px) | minimap (20px) | speed-rail (4px) | insights-drawer (0-360px)]
+```
+
+The 4px width is wide enough to read as a colour band without competing
+with the minimap for attention. Below 2px buckets risk dropping below
+single-pixel rounding on non-HiDPI displays; above 4px it starts to feel
+like a second minimap.
+
+Paint rules:
+
+1. Fetch the `SpeedGrid` on every `scheduleMinimapFetch` trigger
+   alongside the existing `get_level_minimap` call. Cache the result on
+   the component the same way `minimapBuckets` is cached.
+2. Paint into a dedicated `<canvas ref="speedRailEl">` at the same dpr +
+   height as the minimap canvas so the buckets align row-for-row.
+3. For each bucket:
+   - `count === 0`: leave transparent so the viewport background shows
+     through (the minimap is opaque to its left).
+   - `count > 0`: map `avg_ms` to a colour. Default scale interpolates
+     across three HSL stops:
+     - Green `hsl(140, 70%, 45%)` at `min_avg_ms` (or anywhere when
+       `min_avg_ms === max_avg_ms`).
+     - Amber `hsl(40, 85%, 50%)` at the midpoint.
+     - Red `hsl(0, 75%, 50%)` at `max_avg_ms`.
+     Interpolation is on the normalised position
+     `t = (avg - min) / max(max - min, 1)`, computed in linear (not log)
+     space. Both stop palettes and the green/amber/red anchor positions
+     are lifted into CSS variables (`--speed-fast`, `--speed-mid`,
+     `--speed-slow`) so the light theme can swap them for AA-contrast
+     variants.
+4. Run-coalesce identical adjacent colours into one `fillRect` exactly
+   like the minimap's wash pass.
+5. When `max_avg_ms === 0` (no slow requests in the file) the canvas is
+   cleared and the rail becomes a 4px transparent strip - it stays in
+   the layout (so the drawer doesn't shift when the first slow request
+   tails in) but reads as background.
+
+Tooltip integration: hovering the speed rail (which today has no
+tooltip) shows the same line / timestamp tooltip as the minimap, plus a
+third "Slow requests in this bucket" line when `count > 0` ("3 hits,
+avg 4.2s, peak 7.1s"). The existing minimap tooltip's hover-target
+logic already projects Y -> bucket index; the speed rail reuses that
+projection rather than reimplementing it. The rail's pointer events
+are otherwise a passthrough - clicking it scrolls the viewport via the
+same `scrollToMinimapY` helper, so the speed stripe and minimap behave
+as one combined scrubber.
 
 ### Drawer component
 
@@ -403,10 +564,10 @@ do not refetch.
 ### Visual layout impact
 
 The current `.viewport-shell` flex row is `[viewport | marker-rail |
-minimap]`. The drawer slots in as a new rightmost child:
+minimap]`. Two new rightmost children are added:
 
 ```
-[viewport | marker-rail | minimap | insights-drawer]
+[viewport | marker-rail | minimap | speed-rail | insights-drawer]
 ```
 
 Width transitions are on `flex-basis` so the viewport text reflows
@@ -430,24 +591,32 @@ None in v1. The detection regex and normalisation rules are baked in.
 ## Files changed
 
 - **New** `crates/clog-core/src/slow_requests.rs` - detector, aggregator,
-  `PathMode`, `SlowRequest*` structs, unit tests.
+  speed-grid builder, `PathMode`, `SlowRequest*` and `Speed*` structs,
+  unit tests.
 - `crates/clog-core/src/lib.rs` - re-export the public surface.
-- `crates/clog-app/src/main.rs` - `get_slow_requests` IPC command, add
-  to `invoke_handler!`.
-- `ui/src/types.ts` - `SlowRequest*` interfaces, `SlowRequestPathMode`.
+- `crates/clog-app/src/main.rs` - `get_slow_requests` and
+  `get_slow_request_speeds` IPC commands, `SlowRequestCache` on
+  `OpenedFile`, both registered in `invoke_handler!`.
+- `ui/src/types.ts` - `SlowRequest*`, `Speed*` interfaces,
+  `SlowRequestPathMode`.
 - `ui/src/tab.ts` - per-tab insights state.
 - **New** `ui/src/components/InsightsDrawer.vue`.
 - `ui/src/components/LogViewport.vue` - drawer slot in the viewport
   shell (passive - the drawer renders itself), expose `jumpToLine` if
-  not already public.
+  not already public, add the speed-rail `<canvas>` element + paint
+  pass next to the minimap, fold speed-rail hover into the existing
+  minimap tooltip.
 - `ui/src/components/AppHeader.vue` - insights toggle button.
 - `ui/src/App.vue` - wire the toggle to the active tab's
   `insightsOpen` ref.
 - `ui/src/style.css` - drawer width / transition tokens, insights toggle
-  active-state colour reusing existing palette tokens (no new tokens
-  expected).
-- `.wolf/anatomy.md` - new `get_slow_requests` IPC entry, new
-  `slow_requests` module summary, new component entries.
+  active-state colour reusing existing palette tokens, three new
+  speed-rail palette tokens `--speed-fast` / `--speed-mid` /
+  `--speed-slow` in both dark and light themes.
+- `.wolf/anatomy.md` - new `get_slow_requests` and
+  `get_slow_request_speeds` IPC entries, new `slow_requests` module
+  summary, new component entries, speed-rail mention in the
+  LogViewport notes.
 
 ## Verification
 
@@ -464,6 +633,13 @@ None in v1. The detection regex and normalisation rules are baked in.
   change as expected; click a row and confirm the viewport jumps to the
   slowest hit; trigger a tail append (`fake_tailer`) and confirm new
   hits land in the table.
+- Speed-rail smoke: confirm the 4px stripe paints next to the minimap
+  on the same fixture, with visibly red bands in the regions that hold
+  the highest-duration hits and greener bands elsewhere; confirm the
+  rail stays in the layout but reads as transparent on a fixture with
+  zero slow requests (e.g. `research/solopress-wsl-oink.out`); hover a
+  red bucket and confirm the third tooltip line shows "N hits, avg
+  ..., peak ...".
 
 ## Open questions
 
@@ -488,3 +664,19 @@ review if any should flip.
 - **OQ-5. Click-to-search.** Alternative to OQ-4: have the row click
   populate the search bar with a `SLOW REQUEST.*<path>` regex so the
   existing hit-list machinery takes over.
+- **OQ-6. Speed-rail normalisation.** Currently per-file: the file's
+  own fastest avg-bucket sets green, its own slowest sets red. This
+  surfaces "which parts of *this* file are slower than the rest" -
+  great for spotting regressions in a single session. The alternative
+  is a fixed absolute scale (e.g. green at 1s, red at 10s) which would
+  let users compare hot regions across two open files visually. Per-file
+  is the easier read for "where in this log is the site struggling";
+  flip if cross-file comparison turns out to matter.
+- **OQ-7. Speed-rail scale.** Linear interpolation today. A log scale
+  would compress the high end so a single 60-second outlier doesn't
+  flatten the rest of the file to green. Worth revisiting once we see
+  real distributions on prod fixtures.
+- **OQ-8. Speed-rail width.** 4px chosen as the smallest width that
+  reads cleanly on both 1x and HiDPI without competing with the
+  minimap. Could go 2-3px if the layout feels crowded once the drawer
+  is in the picture.
