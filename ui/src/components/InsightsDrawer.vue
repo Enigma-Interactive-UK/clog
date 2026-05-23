@@ -5,7 +5,7 @@
  * and a sortable entry list with click-to-jump + expandable occurrence
  * rows. Threshold editor and speed grid land in later tasks.
  */
-import { computed, inject, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { Tab } from '../tab'
 import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds } from '../types'
@@ -148,10 +148,31 @@ if (settingsVersion) {
 }
 
 watch(() => props.tab.slowRequestMode.value, refresh)
+
+// Tail-driven refreshes are debounced. A tailing file emits a line_count
+// change roughly every 250 ms; refreshing the drawer on each tick means
+// four full get_slow_requests IPCs per second plus four full
+// re-renders of the entry table. The aggregator is also one of the
+// heaviest IPCs we expose because it walks every occurrence. 500 ms
+// coalesces those bursts without making the data feel stale.
+let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleRefresh() {
+  if (refreshDebounceTimer !== null) return
+  refreshDebounceTimer = setTimeout(() => {
+    refreshDebounceTimer = null
+    if (props.tab.insightsOpen.value) void refresh()
+  }, 500)
+}
+onBeforeUnmount(() => {
+  if (refreshDebounceTimer !== null) {
+    clearTimeout(refreshDebounceTimer)
+    refreshDebounceTimer = null
+  }
+})
 watch(
   () => props.tab.file.value.line_count,
   () => {
-    if (props.tab.insightsOpen.value) void refresh()
+    if (props.tab.insightsOpen.value) scheduleRefresh()
   },
 )
 
@@ -583,8 +604,8 @@ function jumpTo(line: number) {
       inset: 0;
       background: linear-gradient(
         to right,
-        color-mix(in srgb, var(--speed-mid) 14%, transparent),
-        color-mix(in srgb, var(--speed-slow) 22%, transparent)
+        transparent,
+        color-mix(in srgb, var(--speed-mid) 22%, transparent)
       );
       opacity: 0.5;
       transform: scaleX(var(--score));
