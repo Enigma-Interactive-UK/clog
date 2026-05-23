@@ -357,7 +357,13 @@ fn get_lines(
     let file = guard
         .get(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
+    build_lines_payload(file, start, end)
+}
 
+/// Pure helper that builds the page payload from an `OpenedFile`. Split out
+/// so tests can exercise the line/record/byte invariants without going
+/// through Tauri state.
+fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesPayload, IpcError> {
     let total = file.line_count;
     if start >= total || end > total || start >= end {
         return Err(IpcError::OutOfRange);
@@ -754,6 +760,7 @@ fn main() {
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             open_file,
             get_records,
@@ -766,4 +773,207 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clog_core::builtin_pattern;
+
+    /// Build a fresh `OpenedFile` with no content, wired up with the
+    /// wsl-oink pattern so a stream of header lines can be appended via
+    /// `extend_with_appended`.
+    fn fresh_file() -> (OpenedFile, CompiledScanner) {
+        let pattern_src = builtin_pattern("wsl-oink").expect("wsl-oink builtin");
+        let scanner_kind = ScannerKind::Pattern(pattern_src.to_string());
+        let scanner = scanner_kind.compile().expect("compile wsl-oink");
+        let file = OpenedFile {
+            path: PathBuf::from("test.log"),
+            records: Vec::new(),
+            record_first_line: Vec::new(),
+            line_count: 0,
+            bytes: Vec::new(),
+            line_offsets: Vec::new(),
+            pattern_source: pattern_src.to_string(),
+            pattern_name: Some("wsl-oink".to_string()),
+            scanner_kind,
+            tail_shutdown: None,
+            tail_join: None,
+        };
+        (file, scanner)
+    }
+
+    fn extend(file: &mut OpenedFile, scanner: &CompiledScanner, payload: &[u8]) {
+        let from = file.bytes.len() as u64;
+        match scanner {
+            CompiledScanner::Pattern(p) => extend_with_appended(file, p, from, payload),
+            CompiledScanner::Regex(r) => extend_with_appended(file, r, from, payload),
+        }
+    }
+
+    /// Reproduces the symptom the user reported: each tail tick adds one
+    /// new line and `get_lines(0, line_count)` must always report content
+    /// matching exactly what's been appended -- no empty rows, no stale
+    /// "previous tick's content lagging" effect.
+    #[test]
+    fn appending_lines_one_at_a_time_keeps_get_lines_consistent() {
+        let (mut file, scanner) = fresh_file();
+        let body = [
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n",
+            "[INFO ] 2026-05-22 16:28:59.390 [main] play - Module crud is available\n",
+            "[INFO ] 2026-05-22 16:28:59.391 [main] play - Module secure is available\n",
+            "[INFO ] 2026-05-22 16:28:59.392 [main] play - Module crud is available\n",
+        ];
+        let expected_text: Vec<String> = body.iter().map(|l| l.trim_end().to_string()).collect();
+
+        for (tick, payload) in body.iter().enumerate() {
+            extend(&mut file, &scanner, payload.as_bytes());
+            assert_eq!(
+                file.line_count,
+                (tick + 1) as u64,
+                "line_count after tick {tick}"
+            );
+            assert_eq!(file.records.len(), tick + 1, "records after tick {tick}");
+            assert_eq!(file.record_first_line.len(), tick + 1);
+            // Every line that has ever been appended must read back exactly,
+            // not just the freshly-appended one. This is the property the
+            // UI race violated -- intermediate ticks left stale page data.
+            let lines =
+                build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+            assert_eq!(lines.lines.len(), tick + 1);
+            for (i, got) in lines.lines.iter().enumerate() {
+                assert_eq!(got.text, expected_text[i], "tick {tick}, line {i}");
+                assert_eq!(got.line_within_record, 0, "tick {tick}, line {i}");
+                assert!(
+                    got.fields.is_some(),
+                    "tick {tick}, line {i} should have axis-1 fields"
+                );
+            }
+        }
+    }
+
+    /// Appending two lines in one tail batch (the realistic case when the
+    /// writer flushes several records between polls) must still produce
+    /// one record per header line, in order, with the byte offsets
+    /// chained without gaps.
+    #[test]
+    fn appending_two_lines_in_one_batch_lands_them_both() {
+        let (mut file, scanner) = fresh_file();
+        let first = "[INFO ] 2026-05-22 16:28:59.246 [main] play - one\n";
+        let second = "[INFO ] 2026-05-22 16:28:59.247 [main] play - two\n";
+        let combined = format!("{first}{second}");
+        extend(&mut file, &scanner, combined.as_bytes());
+
+        assert_eq!(file.line_count, 2);
+        assert_eq!(file.records.len(), 2);
+        // The two records must abut: end of record 0 == start of record 1.
+        let r0 = &file.records[0];
+        let r1 = &file.records[1];
+        assert_eq!(r0.byte_offset + u64::from(r0.byte_len), r1.byte_offset);
+
+        let lines = build_lines_payload(&file, 0, 2).expect("build_lines_payload");
+        assert!(lines.lines[0].text.ends_with("- one"));
+        assert!(lines.lines[1].text.ends_with("- two"));
+    }
+
+    /// Stack-trace continuation lines (no header pattern) must extend the
+    /// preceding record's `line_count` rather than create new records. The
+    /// physical-line count still grows -- one virtual row per line.
+    #[test]
+    fn continuation_lines_extend_the_preceding_record() {
+        let (mut file, scanner) = fresh_file();
+        let header = "[ERROR] 2026-05-22 16:28:59.246 [main] play - boom\n";
+        extend(&mut file, &scanner, header.as_bytes());
+        assert_eq!(file.records.len(), 1);
+        assert_eq!(file.records[0].line_count, 1);
+
+        // Two stack-trace lines arriving in the next tail tick.
+        let stack =
+            "\tat com.example.Foo.bar(Foo.java:42)\n\tat com.example.Foo.baz(Foo.java:17)\n";
+        extend(&mut file, &scanner, stack.as_bytes());
+
+        assert_eq!(file.line_count, 3);
+        assert_eq!(
+            file.records.len(),
+            1,
+            "stack lines must not create new records"
+        );
+        assert_eq!(file.records[0].line_count, 3);
+
+        let lines = build_lines_payload(&file, 0, 3).expect("build_lines_payload");
+        assert_eq!(lines.lines[0].line_within_record, 0);
+        assert!(lines.lines[0].fields.is_some());
+        assert_eq!(lines.lines[1].line_within_record, 1);
+        assert!(lines.lines[1].fields.is_none());
+        assert!(lines.lines[1].text.contains("Foo.java:42"));
+        assert_eq!(lines.lines[2].line_within_record, 2);
+        assert!(lines.lines[2].text.contains("Foo.java:17"));
+    }
+
+    /// Simulates rotation: the file is truncated and a different shape of
+    /// content is re-read from disk. After `rebuild_line_caches` (which
+    /// `apply_rotation` calls), the `OpenedFile` must be fully consistent
+    /// AND a subsequent tail-style append must keep working without
+    /// leaking the pre-rotation state.
+    #[test]
+    fn rotation_then_append_starts_clean() {
+        let (mut file, scanner) = fresh_file();
+        // Seed pre-rotation content.
+        extend(
+            &mut file,
+            &scanner,
+            b"[INFO ] 2026-05-22 16:28:59.246 [main] play - old\n",
+        );
+        assert_eq!(file.line_count, 1);
+
+        // Rotation: byte content shrinks back to empty, then a fresh first
+        // line is written. `apply_rotation` would re-read this from disk
+        // via index_file; here we mimic it by hand-resetting the in-memory
+        // state to the post-rotation file shape.
+        file.bytes.clear();
+        file.records.clear();
+        file.line_offsets.clear();
+        let post = b"[WARN ] 2026-05-22 16:29:01.000 [main] play - rotated\n";
+        // Build line_offsets the same way `index_file` would for the new
+        // content: one entry at offset 0.
+        let new_line_offsets = vec![0u64];
+        // Manually push the post-rotation record.
+        file.bytes.extend_from_slice(post);
+        let parsed = match &scanner {
+            CompiledScanner::Pattern(p) => p
+                .try_parse_header(post.strip_suffix(b"\n").unwrap_or(post))
+                .expect("parse post-rotation header"),
+            CompiledScanner::Regex(_) => unreachable!(),
+        };
+        file.records.push(RecordHeader {
+            byte_offset: 0,
+            byte_len: u32::try_from(post.len()).expect("post fits in u32"),
+            line_offset: 0,
+            line_count: 1,
+            level: parsed.level,
+            fields: parsed.fields,
+        });
+        file.rebuild_line_caches(1, new_line_offsets);
+
+        assert_eq!(file.line_count, 1);
+        let lines = build_lines_payload(&file, 0, 1).expect("build_lines_payload after rotation");
+        assert!(lines.lines[0].text.ends_with("- rotated"));
+        assert_eq!(lines.lines[0].level, Level::Warn);
+
+        // Now a fresh tail tick on the rotated file. Must append cleanly
+        // alongside the post-rotation record without re-introducing any
+        // pre-rotation content.
+        extend(
+            &mut file,
+            &scanner,
+            b"[INFO ] 2026-05-22 16:29:02.000 [main] play - next\n",
+        );
+        assert_eq!(file.line_count, 2);
+        let lines =
+            build_lines_payload(&file, 0, 2).expect("build_lines_payload after rotated append");
+        assert!(lines.lines[0].text.ends_with("- rotated"));
+        assert!(lines.lines[1].text.ends_with("- next"));
+        assert!(!lines.lines[0].text.contains("- old"));
+        assert!(!lines.lines[1].text.contains("- old"));
+    }
 }

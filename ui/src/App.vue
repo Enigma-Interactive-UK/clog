@@ -2,7 +2,20 @@
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { useVirtualizer } from '@tanstack/vue-virtual'
+import defaultRulesFile from './highlight/default-rules.json'
+import {
+  highlightsFor,
+  overlay,
+  setRules,
+  type HighlightRulesFile,
+  type LeafSpan,
+} from './highlight/engine'
+
+// Load the bundled default rule set once at module-eval time. P8 will swap
+// this for a user-editable set; P5 keeps it static and baked-in.
+setRules((defaultRulesFile as HighlightRulesFile).rules)
 
 interface IpcError {
   kind: string
@@ -70,7 +83,13 @@ const busy = ref(false)
 
 // page_index -> array of LineRow (length up to PAGE_SIZE).
 const pages = ref(new Map<number, LineRow[]>())
-const inflight = new Set<number>()
+// page_index -> generation stamp of the most-recent fetch for that page.
+// Each call to fetchPage bumps `nextGen` and writes its myGen here; when a
+// response lands it only applies if its myGen still matches -- so when two
+// force-refetches stack up during fast tailing, the older (smaller-end)
+// response is silently dropped instead of overwriting the newer one.
+const inflight = new Map<number, number>()
+let nextGen = 0
 
 // Pattern-paste bar state.
 const patternInput = ref<string>('')
@@ -89,6 +108,12 @@ let rotationToastTimer: number | null = null
 let lastTailLineCount = 0
 
 const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
+
+// The raw scrollTop drives sticky-header lookup (and any other "what is
+// actually at the top of the viewport" calculation). It must NOT be
+// inferred from virtualRows[0] because the virtualizer's first item lives
+// up to OVERSCAN rows above the visible area.
+const viewportScrollTop = ref(0)
 
 const virtualizer = useVirtualizer(
   computed(() => ({
@@ -121,18 +146,28 @@ function lineRow(index: number): LineRow | null {
 async function fetchPage(pageIdx: number, force = false) {
   if (!file.value) return
   if (!force && pages.value.has(pageIdx)) return
-  if (inflight.has(pageIdx)) return
+  // Non-force callers (the virtualizer watcher) skip in-flight pages so
+  // overlapping scrolls don't dogpile the backend. Force callers (tail
+  // deltas) MUST keep going even if a prior fetch is in flight -- they
+  // need the latest `line_count` to be honoured.
+  if (!force && inflight.has(pageIdx)) return
   const start = pageIdx * PAGE_SIZE
   const total = file.value.line_count
   if (start >= total) return
   const end = Math.min(start + PAGE_SIZE, total)
-  inflight.add(pageIdx)
+  const myGen = ++nextGen
+  inflight.set(pageIdx, myGen)
   try {
     const payload = await invoke<LinesPayload>('get_lines', {
       fileId: file.value.file_id,
       start,
       end,
     })
+    // Only apply if no newer fetch has taken over this page since we
+    // started. Older responses with a smaller `end` would otherwise
+    // overwrite a freshly-fetched page with stale (too-short) data, which
+    // is exactly the off-by-one symptom seen during tailing.
+    if (inflight.get(pageIdx) !== myGen) return
     // Swap atomically. The old entry stays in the Map until this line runs,
     // so visible rows on this page keep rendering their cached data instead
     // of flickering to blank during the round trip.
@@ -142,7 +177,7 @@ async function fetchPage(pageIdx: number, force = false) {
     const err = e as IpcError | string
     error.value = typeof err === 'string' ? err : err.message
   } finally {
-    inflight.delete(pageIdx)
+    if (inflight.get(pageIdx) === myGen) inflight.delete(pageIdx)
   }
 }
 
@@ -158,19 +193,23 @@ watch(virtualRows, (rows) => {
 // floats above the scroll content.
 interface StickyHeader {
   row: LineRow
+  lineIndex: number
 }
 
 const stickyHeader = computed<StickyHeader | null>(() => {
   if (!file.value) return null
-  const rows = virtualRows.value
-  if (rows.length === 0) return null
-  const first = rows[0]
-  const data = lineRow(first.index)
+  // The topmost visible row index is derived from scrollTop directly --
+  // NOT from virtualRows[0] (which sits up to OVERSCAN rows above the
+  // viewport edge and would make the sticky lag the actual content).
+  const total = file.value.line_count
+  if (total === 0) return null
+  const topIdx = Math.min(total - 1, Math.floor(viewportScrollTop.value / ROW_HEIGHT))
+  const data = lineRow(topIdx)
   if (!data) return null
   if (data.line_within_record === 0) return null
-  // Need to look up the header row (line_within_record == 0) of the same
-  // record. Walk backward from the first visible row.
-  for (let i = first.index - 1; i >= 0; i--) {
+  // Walk backward to the header row (line_within_record == 0) of the
+  // same record. Bounded by the record's first line, so this is cheap.
+  for (let i = topIdx - 1; i >= 0; i--) {
     const candidate = lineRow(i)
     if (!candidate) {
       // Force-fetch the page so the header becomes available next frame.
@@ -178,10 +217,21 @@ const stickyHeader = computed<StickyHeader | null>(() => {
       return null
     }
     if (candidate.record_idx !== data.record_idx) return null
-    if (candidate.line_within_record === 0) return { row: candidate }
+    if (candidate.line_within_record === 0) return { row: candidate, lineIndex: i }
   }
   return null
 })
+
+function jumpToStickyStart() {
+  const sticky = stickyHeader.value
+  const el = scrollEl.value
+  if (!sticky || !el) return
+  // Set scrollTop directly so the resulting position is exactly the
+  // record's header row. `scrollToIndex` route went via the virtualizer
+  // and consistently overshot by one row -- likely a sub-pixel offset
+  // that my row-snap handler then rounded forward.
+  el.scrollTop = sticky.lineIndex * ROW_HEIGHT
+}
 
 async function pickFile() {
   error.value = null
@@ -340,10 +390,29 @@ function toggleFollowTail() {
 }
 
 function onViewportScroll() {
+  const el = scrollEl.value
+  if (!el) return
+  // Snap scrollTop to a multiple of ROW_HEIGHT so the topmost visible row
+  // is always flush with the viewport edge -- no half-line ever hangs
+  // above the list area. We round (not floor) so a tiny upward nudge
+  // settles cleanly without dragging the user backward, and we avoid
+  // touching the bottom snap-point so follow-tail can park exactly there.
+  const raw = el.scrollTop
+  const maxScroll = el.scrollHeight - el.clientHeight
+  const rem = raw % ROW_HEIGHT
+  if (rem !== 0 && raw < maxScroll - 0.5) {
+    const snapped = Math.round(raw / ROW_HEIGHT) * ROW_HEIGHT
+    if (snapped !== raw) {
+      el.scrollTop = snapped
+      // The assignment fires another scroll event; bail and let that
+      // pass do the bookkeeping below with the snapped value.
+      return
+    }
+  }
+  viewportScrollTop.value = el.scrollTop
   // If the user scrolls away from the bottom, disable follow-tail. We
   // compare against a small slack so single-row jitter doesn't disengage.
-  const el = scrollEl.value
-  if (!el || !followTail.value) return
+  if (!followTail.value) return
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   if (distance > ROW_HEIGHT * 4) {
     followTail.value = false
@@ -420,18 +489,18 @@ onBeforeUnmount(() => {
   }
 })
 
-// --- Header-line span slicing (axis-1). ---
-interface Span {
-  cls: string
-  text: string
-}
+// --- Header-line span slicing (axis-1) + axis-2 highlight overlay. ---
 
 /**
- * Slice `text` into ordered, non-overlapping spans driven by `fields`. Any
- * gap between known fields is emitted as a `sep` span (the literal text
- * between two structural fields, e.g. brackets, dashes, spaces).
+ * Slice `text` into axis-1 base spans driven by `fields`. Any gap between
+ * known fields is emitted as a `sep` span (the literal text between two
+ * structural fields, e.g. brackets, dashes, spaces). The result is then
+ * overlaid with the current axis-2 highlight rule set in {@link renderLine}.
  */
-function sliceHeader(text: string, fields: HeaderFields): Span[] {
+function headerBaseSpans(
+  text: string,
+  fields: HeaderFields,
+): Array<{ start: number; end: number; cls: string }> {
   type Mark = { start: number; end: number; cls: string }
   const marks: Mark[] = []
   if (fields.level) marks.push({ start: fields.level[0], end: fields.level[1], cls: 'level' })
@@ -442,15 +511,55 @@ function sliceHeader(text: string, fields: HeaderFields): Span[] {
   if (fields.message)
     marks.push({ start: fields.message[0], end: fields.message[1], cls: 'message' })
   marks.sort((a, b) => a.start - b.start)
-  const out: Span[] = []
+  const out: Mark[] = []
   let cursor = 0
   for (const m of marks) {
-    if (m.start > cursor) out.push({ cls: 'sep', text: text.slice(cursor, m.start) })
-    out.push({ cls: m.cls, text: text.slice(m.start, m.end) })
+    if (m.start > cursor) out.push({ start: cursor, end: m.start, cls: 'sep' })
+    out.push(m)
     cursor = m.end
   }
-  if (cursor < text.length) out.push({ cls: 'sep', text: text.slice(cursor) })
+  if (cursor < text.length) out.push({ start: cursor, end: text.length, cls: 'sep' })
   return out
+}
+
+/**
+ * Produce the final leaf spans for a row, blending axis-1 (structural) and
+ * axis-2 (highlight rules). For a header row we slice by fields; for a
+ * continuation row we treat the whole text as a single `message` base span
+ * so the gutter / indentation styling continues to apply.
+ */
+function renderLine(row: LineRow): LeafSpan[] {
+  if (row.fields) {
+    const base = headerBaseSpans(row.text, row.fields)
+    const axis2 = highlightsFor(row.text)
+    const leaves = overlay(row.text, base, axis2)
+    return decorateLevels(leaves, row.level)
+  }
+  const base = [{ start: 0, end: row.text.length, cls: 'message' }]
+  const axis2 = highlightsFor(row.text)
+  return overlay(row.text, base, axis2)
+}
+
+// The level-colour class is keyed by the row's level, not by the cls itself,
+// so we tack it on after overlay. Only the s-level base span carries it.
+function decorateLevels(leaves: LeafSpan[], level: string): LeafSpan[] {
+  if (!leaves.some((l) => l.cls.includes('s-level'))) return leaves
+  return leaves.map((l) =>
+    l.cls.includes('s-level') ? { ...l, cls: l.cls + ' level-' + level } : l,
+  )
+}
+
+async function onSpanClick(span: LeafSpan, ev: MouseEvent) {
+  if (!span.url) return
+  ev.preventDefault()
+  try {
+    await openUrl(span.url)
+  } catch (e) {
+    // Surface the failure but do not interrupt rendering. The opener can
+    // legitimately refuse mailto:/javascript: targets, and a broken URL on
+    // one line should not break the viewer.
+    error.value = (e as Error).message
+  }
 }
 
 function levelGutterVar(level: string): string {
@@ -554,34 +663,42 @@ function levelGutterVar(level: string): string {
     <div v-if="rotationToast" class="rotation-toast">{{ rotationToast }}</div>
 
     <div v-if="file" ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
-      <div
-        v-if="stickyHeader"
-        class="sticky-shell"
-      >
+      <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
+          :class="'level-row-' + stickyHeader.row.level"
           :style="{ '--gutter-color': levelGutterVar(stickyHeader.row.level) }"
         >
           <span class="gutter" />
-          <span class="idx muted-idx"></span>
+          <button
+            type="button"
+            class="idx jump-up"
+            :title="`Jump to start of record ${stickyHeader.row.record_idx + 1}`"
+            @click="jumpToStickyStart"
+          >&uarr;</button>
           <span class="txt">
             <span
-              v-for="(span, si) in sliceHeader(stickyHeader.row.text, stickyHeader.row.fields!)"
+              v-for="(span, si) in renderLine(stickyHeader.row)"
               :key="si"
-              :class="['s-' + span.cls, span.cls === 'level' ? 'level-' + stickyHeader.row.level : '']"
+              :class="span.cls"
+              :data-url="span.url || null"
+              @click="span.url && onSpanClick(span, $event)"
             >{{ span.text }}</span>
           </span>
         </div>
       </div>
       <div class="total" :style="{ height: `${totalSize}px` }">
+        <template v-for="vrow in virtualRows" :key="String(vrow.key)">
         <div
-          v-for="vrow in virtualRows"
-          :key="String(vrow.key)"
+          v-if="lineRow(vrow.index)"
           class="row"
-          :class="{
-            'is-header': lineRow(vrow.index)?.line_within_record === 0,
-            'is-continuation': (lineRow(vrow.index)?.line_within_record ?? 0) > 0,
-          }"
+          :class="[
+            {
+              'is-header': lineRow(vrow.index)?.line_within_record === 0,
+              'is-continuation': (lineRow(vrow.index)?.line_within_record ?? 0) > 0,
+            },
+            'level-row-' + (lineRow(vrow.index)?.level ?? 'unknown'),
+          ]"
           :style="{
             transform: `translateY(${vrow.start}px)`,
             height: `${vrow.size}px`,
@@ -591,21 +708,16 @@ function levelGutterVar(level: string): string {
           <span class="gutter" />
           <span class="idx">{{ vrow.index + 1 }}</span>
           <span class="txt">
-            <template v-if="lineRow(vrow.index)?.fields">
               <span
-                v-for="(span, si) in sliceHeader(
-                  lineRow(vrow.index)!.text,
-                  lineRow(vrow.index)!.fields!,
-                )"
+                v-for="(span, si) in renderLine(lineRow(vrow.index)!)"
                 :key="si"
-                :class="['s-' + span.cls, span.cls === 'level' ? 'level-' + (lineRow(vrow.index)?.level ?? 'unknown') : '']"
+                :class="span.cls"
+                :data-url="span.url || null"
+                @click="span.url && onSpanClick(span, $event)"
               >{{ span.text }}</span>
-            </template>
-            <template v-else>
-              <span class="continuation">{{ lineRow(vrow.index)?.text ?? '' }}</span>
-            </template>
           </span>
         </div>
+        </template>
       </div>
     </div>
     <p v-else class="placeholder">No file open. Click <em>Open file...</em> to pick one.</p>
@@ -809,11 +921,65 @@ function levelGutterVar(level: string): string {
   font-family: var(--font-mono);
   font-size: var(--font-size-base);
   line-height: var(--row-height);
-  background: var(--bg-viewport);
+  background-color: var(--bg-viewport);
 
+  /* Skeleton backdrop lives on `.total` (the scroll content), NOT
+     `.viewport`. Anchoring it to .total bounds it to the actual log
+     length: when the file is shorter than the viewport, the empty
+     space below the last row stays clean (plain --bg-viewport). With
+     row-snap forcing scrollTop to multiples of ROW_HEIGHT, every
+     stripe in the repeating pattern lines up with where a real row
+     would be, so visually the backdrop reads as fixed even though it
+     scrolls with .total. Four layered gradients sketch the shape of a
+     row: gutter strip, line-number bar, message bar, and a faint
+     full-row band -- all muted greys since the real row level is
+     unknown until data loads. */
   .total {
     position: relative;
     width: 100%;
+    background-image:
+      /* 1. Gutter strip: full row height, --gutter-width wide. */
+      linear-gradient(
+        to bottom,
+        var(--bg-skeleton-gutter) 0,
+        var(--bg-skeleton-gutter) 100%
+      ),
+      /* 2. Line-number bar: 8px tall (y=5..13), centered vertically. */
+      linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 5px,
+        var(--bg-skeleton-num) 5px,
+        var(--bg-skeleton-num) 13px,
+        transparent 13px
+      ),
+      /* 3. Message bar: 8px tall (y=5..13), centered vertically. */
+      linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 5px,
+        var(--bg-skeleton) 5px,
+        var(--bg-skeleton) 13px,
+        transparent 13px
+      ),
+      /* 4. Faint full-row band so the eye reads the area as one row. */
+      linear-gradient(
+        to bottom,
+        var(--bg-skeleton-row) 0,
+        var(--bg-skeleton-row) calc(var(--row-height) - 1px),
+        transparent calc(var(--row-height) - 1px)
+      );
+    background-position:
+      0 0,
+      calc(var(--gutter-width) + 0.6rem) 0,
+      calc(var(--gutter-width) + var(--line-num-width)) 0,
+      0 0;
+    background-size:
+      var(--gutter-width) var(--row-height),
+      calc(var(--line-num-width) - 1.2rem) var(--row-height),
+      100% var(--row-height),
+      100% var(--row-height);
+    background-repeat: repeat-y;
   }
 
   .row {
@@ -821,11 +987,15 @@ function levelGutterVar(level: string): string {
     top: 0;
     left: 0;
     right: 0;
+    z-index: 1;
     display: grid;
     grid-template-columns: var(--gutter-width) var(--line-num-width) 1fr;
     align-items: center;
     white-space: pre;
     color: var(--fg-row);
+    /* Opaque base so the row paints over the skeleton backdrop. Level
+       tints (below) layer on top via background-image + this colour. */
+    background-color: var(--bg-viewport);
 
     .gutter {
       background: var(--gutter-color, var(--level-unknown));
@@ -870,25 +1040,109 @@ function levelGutterVar(level: string): string {
     .s-sep { color: var(--fg-separator-dash); }
 
     .continuation { color: var(--fg-message); }
+
+    /* Axis-2 highlight overlays. These ride on top of axis-1 spans, so they
+       only set colour / weight / decoration -- never background, so the row
+       hover state stays uniform. */
+    .h-exception {
+      color: var(--hl-exception-fg);
+      font-weight: 700;
+    }
+    .h-caused-by {
+      color: var(--hl-caused-by-fg);
+      font-weight: 700;
+    }
+    .h-stack-frame { color: var(--fg-message); }
+    .h-stack-fqn {
+      color: var(--hl-stack-fqn-fg);
+      font-weight: 600;
+    }
+    .h-stack-file {
+      color: var(--hl-stack-file-fg);
+      text-decoration: underline;
+      text-decoration-style: dotted;
+    }
+    .h-stack-line { color: var(--hl-stack-line-fg); }
+    .h-path {
+      color: var(--hl-path-fg);
+      text-decoration: underline;
+      text-decoration-style: dotted;
+    }
+    .h-url {
+      color: var(--hl-url-fg);
+      text-decoration: underline;
+      cursor: pointer;
+
+      &:hover { text-decoration-thickness: 2px; }
+    }
+
+    /* Subtle row tint for the louder severities. We layer a flat colour
+       image over the opaque `background-color: var(--bg-viewport)` so the
+       row stays fully opaque (the skeleton must NOT bleed through) while
+       still showing the severity tint. */
+    &.level-row-warn {
+      background-image: linear-gradient(
+        color-mix(in srgb, var(--level-warn) 10%, transparent),
+        color-mix(in srgb, var(--level-warn) 10%, transparent)
+      );
+    }
+    &.level-row-error {
+      background-image: linear-gradient(
+        color-mix(in srgb, var(--level-error) 10%, transparent),
+        color-mix(in srgb, var(--level-error) 10%, transparent)
+      );
+    }
+    &.level-row-fatal {
+      background-image: linear-gradient(
+        color-mix(in srgb, var(--level-fatal) 10%, transparent),
+        color-mix(in srgb, var(--level-fatal) 10%, transparent)
+      );
+    }
   }
 
+  /* Zero-height sticky anchor: keeps the sticky header pinned to the
+     viewport's top edge without ever displacing `.total`. The visible
+     row inside is absolutely positioned relative to this anchor, so
+     toggling stickiness on/off costs nothing in layout terms -- no
+     flicker between adjacent multi-line records AND no empty band
+     above row 1 when the file is scrolled to the very top. */
   .sticky-shell {
     position: sticky;
-    top: 0;
+    top: 1px;
     z-index: 2;
-    background: var(--bg-sticky);
-    backdrop-filter: blur(2px);
-    border-bottom: 1px solid var(--border-sticky);
-    height: var(--row-height);
+    height: 0;
+    overflow: visible;
 
     .row {
-      position: relative;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
       height: var(--row-height);
+      background: var(--bg-sticky);
+      backdrop-filter: blur(2px);
+      border-bottom: 1px solid var(--border-sticky);
     }
 
-    .muted-idx {
-      visibility: hidden;
+    .jump-up {
+      background: transparent;
+      border: none;
+      color: var(--fg-muted);
+      font-family: var(--font-mono);
+      font-size: 0.95em;
+      padding: 0 0.6rem 0 0;
+      cursor: pointer;
+      text-align: right;
+      line-height: 1;
+
+      &:hover { color: var(--fg-default); }
+      &:focus-visible { outline: 1px solid var(--level-info); outline-offset: -1px; }
     }
   }
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.85; }
 }
 </style>

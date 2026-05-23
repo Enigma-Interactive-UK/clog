@@ -1,7 +1,7 @@
 # anatomy.md
 
 > Auto-maintained by OpenWolf. Last scanned: 2026-05-23
-> P4 vertical slice landed (polling tail loop + rotation detection + UI follow-tail).
+> P5 vertical slice landed (axis-2 highlight rules + clickable URLs).
 
 ## ./
 
@@ -31,7 +31,7 @@
 
 ## crates/clog-app/
 
-- `Cargo.toml` - Tauri v2 binary `clog`, depends on clog-core + plugin-dialog + tokio (sync/time/macros)
+- `Cargo.toml` - Tauri v2 binary `clog`, depends on clog-core + plugin-dialog + plugin-opener + tokio (sync/time/macros)
 - `build.rs` - calls `tauri_build::build()`
 - `tauri.conf.json` - app config, `frontendDist: ../../ui/dist`
 - `src/main.rs` - `AppState` (Mutex file registry), `OpenedFile { path, records, record_first_line, line_count, bytes, line_offsets, pattern_source, pattern_name, scanner_kind, tail_shutdown, tail_join }`. `ScannerKind { Pattern(String) | Regex(String) }` + `CompiledScanner { Pattern(CompiledPattern) | Regex(RegexScanner) }` sum so runtime-selected scanners stay sized for `index_file`/`scan_records`. IPC commands:
@@ -45,16 +45,21 @@
   - `close_file(file_id)` - also tears down any tail task.
   - `TailDelta { new_record_count, line_count, record_count, last_offset, rotated }` is the channel payload.
 - `src/channels.rs` - `TailEmitter<T>` pass-through wrapper over `tauri::ipc::Channel`. Reserved seam for the 60Hz coalescer that activates with search streaming in P6; tail's 250ms cadence is already below the budget.
-- `capabilities/default.json` - grants dialog open to main window
+- `capabilities/default.json` - grants dialog open + opener (allow-open-url) to main window
 - `icons/` - 32/128/128@2x/icon.png + icon.ico
 
 ## ui/
 
 - Vue 3 + TypeScript + Vite scaffold
-- `package.json` - deps: @tauri-apps/api, @tauri-apps/plugin-dialog, @tanstack/vue-virtual; dev: @tauri-apps/cli
+- `package.json` - deps: @tauri-apps/api, @tauri-apps/plugin-dialog, @tauri-apps/plugin-opener, @tanstack/vue-virtual; dev: @tauri-apps/cli, vitest
 - `vite.config.ts` - port 1420, ignores crates/ and target/ from HMR watch
-- `src/App.vue` - per-physical-line virtualised viewer. PAGE_SIZE=256 paged `get_lines` fetch with `LineRow { record_idx, line_within_record, level, fields, text }`. Axis-1 spans (level/timestamp/thread/logger/message/separator), 4px level-coloured left gutter, sticky record-header overlay when scrolled mid-record, indented continuation lines. Pattern paste bar with PatternLayout/Regex toggle, Test (live match score), Apply (set_pattern). Tail controls cluster in the header bar: tailing indicator (idle/active dot + pulse-on-delivery), follow-tail toggle, jump-to-bottom button (visible when detached). Channel<TailDelta> opened on open_file via `invoke('start_tail', { onDelta: channel })`. Scroll handler disengages follow-tail when user scrolls > 4 rows from bottom. Rotation toast (~2.5s) when delta.rotated.
-- `src/main.ts`, `src/style.css` - two-layer CSS tokens. P3 added level palette (--level-{trace..unknown}), axis-1 fg tokens (--fg-{timestamp,thread,logger,message,separator-dash}), sticky bg + border, continuation-indent + gutter-width primitives. Dark theme only (light deferred to P7).
+- `vitest.config.ts` - node env, `src/**/*.test.ts` included
+- `tsconfig.app.json` - excludes `src/**/*.test.ts` so vue-tsc doesn't pull vitest's node types into the App.vue compilation (would otherwise break setTimeout return-type assumptions)
+- `src/App.vue` - per-physical-line virtualised viewer. PAGE_SIZE=256 paged `get_lines` fetch with `LineRow { record_idx, line_within_record, level, fields, text }`. `renderLine(row)` produces flat leaf spans by slicing axis-1 fields (`headerBaseSpans`) and overlaying axis-2 highlight matches (`highlightsFor` + `overlay`); continuation rows use a full-line `message` base span. 4px level-coloured left gutter, sticky record-header overlay when scrolled mid-record, indented continuation lines. Spans with `url` (axis-2 URL rule) click through to `openUrl` from @tauri-apps/plugin-opener. Pattern paste bar with PatternLayout/Regex toggle, Test (live match score), Apply (set_pattern). Tail controls cluster in the header bar: tailing indicator (idle/active dot + pulse-on-delivery), follow-tail toggle, jump-to-bottom button (visible when detached). Channel<TailDelta> opened on open_file via `invoke('start_tail', { onDelta: channel })`. Scroll handler disengages follow-tail when user scrolls > 4 rows from bottom. Rotation toast (~2.5s) when delta.rotated.
+- `src/highlight/engine.ts` - axis-2 highlight engine. `setRules(rules)` compiles once with gd flags; `computeHighlights(text)` paints a per-char (cls, priority, url) array (higher priority overwrites, zero-width matches skipped, 256-iter per-rule guard) and collapses runs into ordered non-overlapping `HighlightSpan { start, end, cls, url? }`. Sub-groups expand from named captures at default priority `parent+1`. `highlightsFor(text)` is a size-capped cache (4000 entries, oldest-quarter eviction) keyed by `version + text`. `overlay(text, base, axis2)` blends axis-1 base spans with axis-2 spans into ordered `LeafSpan { text, cls (space-joined), url? }`. `rulesVersion()` returns the monotonic version stamp for cache invalidation.
+- `src/highlight/default-rules.json` - 6 baked-in rules: caused-by (prio 30), stack-frame with fqn/file/line sub-groups (prio 40), java-exception (prio 20), url with self-href (prio 50), windows path (prio 10), unix path (prio 10).
+- `src/highlight/engine.test.ts` - 14 vitest cases covering default rules, overlay merging, span non-overlap, cache stability, version bumping, url propagation, empty-input safety, no-rules behaviour.
+- `src/main.ts`, `src/style.css` - two-layer CSS tokens. P3 added level palette (--level-{trace..unknown}), axis-1 fg tokens (--fg-{timestamp,thread,logger,message,separator-dash}), sticky bg + border, continuation-indent + gutter-width primitives. P5 added --hl-{exception,caused-by,stack-fqn,stack-file,stack-line,path,url}-fg axis-2 highlight tokens; `.h-*` classes attached to viewport .row apply colour/weight/decoration only (no backgrounds). Dark theme only (light deferred to P7).
 
 ## docs/
 

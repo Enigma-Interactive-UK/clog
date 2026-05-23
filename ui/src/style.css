@@ -42,6 +42,10 @@
   --bg-button: var(--slate-800);
   --bg-button-hover: var(--slate-700);
   --bg-error: var(--red-900);
+  --bg-skeleton: var(--slate-700);
+  --bg-skeleton-row: var(--slate-850);
+  --bg-skeleton-gutter: var(--slate-500);
+  --bg-skeleton-num: var(--slate-650);
 
   /* Semantic foregrounds */
   --fg-default: var(--slate-100);
@@ -69,6 +73,15 @@
   --level-off: var(--slate-500);
   --level-all: var(--green-500);
   --level-unknown: var(--slate-700);
+
+  /* Axis-2 highlight roles (default rule pack) */
+  --hl-exception-fg: var(--red-200);
+  --hl-caused-by-fg: var(--amber-200);
+  --hl-stack-fqn-fg: var(--blue-300);
+  --hl-stack-file-fg: var(--green-500);
+  --hl-stack-line-fg: var(--amber-500);
+  --hl-path-fg: var(--green-500);
+  --hl-url-fg: var(--blue-500);
 
   /* Semantic borders */
   --border-default: var(--slate-800);

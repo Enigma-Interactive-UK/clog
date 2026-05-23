@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "rules": [
+    {
+      "name": "caused-by",
+      "pattern": "Caused by:",
+      "priority": 30,
+      "cls": "h-caused-by"
+    },
+    {
+      "name": "stack-frame",
+      "pattern": "\\bat\\s+(?<fqn>[A-Za-z_$][\\w$.]*)\\(((?<file>[^:()\\s]+):(?<line>\\d+)|Native Method|Unknown Source)\\)",
+      "priority": 40,
+      "cls": "h-stack-frame",
+      "subgroups": {
+        "fqn": { "cls": "h-stack-fqn" },
+        "file": { "cls": "h-stack-file" },
+        "line": { "cls": "h-stack-line" }
+      }
+    },
+    {
+      "name": "java-exception",
+      "pattern": "\\b[A-Z][A-Za-z0-9_]*(?:Exception|Error)\\b",
+      "priority": 20,
+      "cls": "h-exception"
+    },
+    {
+      "name": "url",
+      "pattern": "\\bhttps?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%\\-]+",
+      "priority": 50,
+      "cls": "h-url",
+      "url": "self"
+    },
+    {
+      "name": "path-windows",
+      "pattern": "(?<path>[A-Za-z]:\\\\[A-Za-z0-9_.\\\\\\-]+)",
+      "priority": 10,
+      "subgroups": { "path": { "cls": "h-path" } }
+    },
+    {
+      "name": "path-unix",
+      "pattern": "(?:(?<=\\s)|(?<=^)|(?<=[=:'\"\\(]))(?<path>/[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)+)",
+      "priority": 10,
+      "subgroups": { "path": { "cls": "h-path" } }
+    }
+  ]
+}
