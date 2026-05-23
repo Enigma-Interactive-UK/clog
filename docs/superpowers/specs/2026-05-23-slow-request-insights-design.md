@@ -354,8 +354,9 @@ Cover:
 12. **Speed grid empty case**: no slow requests in the file yields
     `bucket_count` zeroed `SpeedBucket`s and `min_avg_ms == max_avg_ms == 0`.
 13. **Speed grid degenerate spread**: all occurrences identical duration
-    -> `min_avg_ms == max_avg_ms`; UI fallback rule must paint a
-    consistent mid-gradient colour (assertion at the UI layer).
+    -> `min_avg_ms == max_avg_ms`. UI fallback rule must paint a
+    uniform `--speed-fast` (green) strip rather than dividing by zero
+    or jumping to red - assert at the UI layer.
 
 Plus a smoke test against `research/solopress-prod.log` asserting at
 least one `SLOW REQUEST` entry parses cleanly (regression guard against
@@ -439,27 +440,41 @@ Paint rules:
    the component the same way `minimapBuckets` is cached.
 2. Paint into a dedicated `<canvas ref="speedRailEl">` at the same dpr +
    height as the minimap canvas so the buckets align row-for-row.
-3. For each bucket:
-   - `count === 0`: leave transparent so the viewport background shows
-     through (the minimap is opaque to its left).
-   - `count > 0`: map `avg_ms` to a colour. Default scale interpolates
-     across three HSL stops:
-     - Green `hsl(140, 70%, 45%)` at `min_avg_ms` (or anywhere when
-       `min_avg_ms === max_avg_ms`).
-     - Amber `hsl(40, 85%, 50%)` at the midpoint.
-     - Red `hsl(0, 75%, 50%)` at `max_avg_ms`.
-     Interpolation is on the normalised position
-     `t = (avg - min) / max(max - min, 1)`, computed in linear (not log)
-     space. Both stop palettes and the green/amber/red anchor positions
-     are lifted into CSS variables (`--speed-fast`, `--speed-mid`,
-     `--speed-slow`) so the light theme can swap them for AA-contrast
-     variants.
-4. Run-coalesce identical adjacent colours into one `fillRect` exactly
-   like the minimap's wash pass.
-5. When `max_avg_ms === 0` (no slow requests in the file) the canvas is
-   cleared and the rail becomes a 4px transparent strip - it stays in
-   the layout (so the drawer doesn't shift when the first slow request
-   tails in) but reads as background.
+3. Compute a per-bucket colour:
+   - `count === 0`: the bucket inherits the "fast" colour
+     (`--speed-fast`). Green is the resting default whenever no slow
+     requests have landed in that region of the file - quiet stretches
+     read as healthy rather than absent.
+   - `count > 0`: map `avg_ms` to a colour by interpolating along the
+     three-stop palette (`--speed-fast` -> `--speed-mid` ->
+     `--speed-slow`) at `t = (avg - min_avg_ms) / max(max_avg_ms - min_avg_ms, 1)`.
+4. Paint the whole rail as a single `CanvasRenderingContext2D.createLinearGradient(0, 0, 0, height)`
+   with **one colour stop per bucket** placed at the bucket's vertical
+   midpoint. The 2D renderer interpolates between stops in linear RGB
+   space, so adjacent buckets fade smoothly into each other instead of
+   reading as hard-edged cells. Anchor stops at the very top (offset 0)
+   and very bottom (offset 1) match their nearest bucket's colour so
+   the gradient does not collapse toward black at the edges. One
+   `fillRect(0, 0, width, height)` paints the whole strip.
+5. The "fast" anchor colour is the same `--speed-fast` whether a bucket
+   is genuinely fast (`avg_ms` near `min_avg_ms`) or has no data at all.
+   This is a deliberate flattening: the visual question the user asks
+   the stripe is "where is the site slow right now?" - the answer
+   should not depend on whether a region happened to log a slow request
+   at all. Buckets with no data simply contribute green pull to the
+   gradient around them.
+6. When `max_avg_ms === 0` (no slow requests anywhere in the file) the
+   rail is a uniform `--speed-fast` strip. The rail always paints; it
+   never reads as a transparent / missing element.
+7. The three stop palettes are lifted into CSS variables so the light
+   theme can swap them for AA-contrast variants. The midpoint hue is
+   chosen for green-to-red continuity through orange; HSL anchors:
+   - Dark: `--speed-fast: hsl(140, 70%, 45%)`,
+     `--speed-mid: hsl(40, 85%, 50%)`,
+     `--speed-slow: hsl(0, 75%, 50%)`.
+   - Light: tuned for AA contrast on the lighter canvas background;
+     concrete values picked at implementation time alongside the
+     existing light-theme palette tweaks.
 
 Tooltip integration: hovering the speed rail (which today has no
 tooltip) shows the same line / timestamp tooltip as the minimap, plus a
@@ -634,12 +649,13 @@ None in v1. The detection regex and normalisation rules are baked in.
   slowest hit; trigger a tail append (`fake_tailer`) and confirm new
   hits land in the table.
 - Speed-rail smoke: confirm the 4px stripe paints next to the minimap
-  on the same fixture, with visibly red bands in the regions that hold
-  the highest-duration hits and greener bands elsewhere; confirm the
-  rail stays in the layout but reads as transparent on a fixture with
-  zero slow requests (e.g. `research/solopress-wsl-oink.out`); hover a
-  red bucket and confirm the third tooltip line shows "N hits, avg
-  ..., peak ...".
+  as a continuous green-to-red gradient on the prod fixture, with the
+  red end clearly anchored to the regions holding the highest-duration
+  hits and smooth fades between adjacent buckets (no visible cell
+  edges); confirm the rail paints as a uniform green strip on a
+  fixture with zero slow requests (e.g. `research/solopress-wsl-oink.out`);
+  hover a red region and confirm the third tooltip line shows "N hits,
+  avg ..., peak ...".
 
 ## Open questions
 
