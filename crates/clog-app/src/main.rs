@@ -22,7 +22,9 @@ use clog_core::{
     SearchError, SearchMode, SearchOptions, StreamedFile, TailEvent, TailState, BUILTIN_PATTERNS,
     DEFAULT_POLL_INTERVAL_MS,
 };
-use persistence::{PatternOverride, PatternsFile, Session, Settings};
+use persistence::{
+    HighlightRulesFile, PatternOverride, PatternsFile, PerFileRulesFile, Session, Settings,
+};
 use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -1454,6 +1456,44 @@ fn forget_pattern_override(path: String) -> Result<(), IpcError> {
     })
 }
 
+// --- Highlight rules IPC --------------------------------------------------
+
+#[tauri::command]
+fn get_highlight_rules() -> HighlightRulesFile {
+    HighlightRulesFile::load()
+}
+
+#[tauri::command]
+fn save_highlight_rules(rules: HighlightRulesFile) -> Result<(), IpcError> {
+    rules.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::highlight_rules_path().display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn get_per_file_rules(path: String) -> PerFileRulesFile {
+    PerFileRulesFile::load(Path::new(&path))
+}
+
+#[tauri::command]
+fn save_per_file_rules(path: String, rules: PerFileRulesFile) -> Result<(), IpcError> {
+    let source = PathBuf::from(&path);
+    rules.save(&source).map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::per_file_rules_path(&source).display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn forget_per_file_rules(path: String) -> Result<(), IpcError> {
+    let source = PathBuf::from(&path);
+    PerFileRulesFile::forget(&source).map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::per_file_rules_path(&source).display().to_string(),
+    })
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct ResetRequest {
     /// `"settings"` | `"session"` | `"patterns"` | `"index"` | `"all"`.
@@ -1468,11 +1508,14 @@ fn reset_data(req: ResetRequest) -> Result<(), IpcError> {
         "session" => vec![paths::session_path()],
         "patterns" => vec![paths::patterns_path()],
         "index" => vec![paths::index_dir()],
+        "highlight" => vec![paths::highlight_rules_path(), paths::per_file_rules_dir()],
         "all" => vec![
             paths::settings_path(),
             paths::session_path(),
             paths::patterns_path(),
             paths::index_dir(),
+            paths::highlight_rules_path(),
+            paths::per_file_rules_dir(),
         ],
         other => {
             return Err(IpcError::BadPattern {
@@ -1563,6 +1606,11 @@ fn main() {
             save_session,
             get_pattern_override,
             forget_pattern_override,
+            get_highlight_rules,
+            save_highlight_rules,
+            get_per_file_rules,
+            save_per_file_rules,
+            forget_per_file_rules,
             reset_data,
             take_startup_paths,
         ])

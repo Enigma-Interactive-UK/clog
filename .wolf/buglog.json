@@ -70,6 +70,19 @@
         "virtualizer",
         "P6"
       ]
+    },
+    {
+      "date": "2026-05-23",
+      "phase": "P8",
+      "error_message": "Dragging from inside a modal input out onto the backdrop and releasing (a normal text-selection gesture) closes the modal.",
+      "root_cause": "BaseModal used @click.self on the backdrop. The synthesised click event fires when both mousedown and mouseup happen on the same element OR on certain drag/release sequences; in particular, the click target resolves to the lowest common ancestor of mousedown and mouseup, which is the backdrop when the press starts in a child input and releases on the backdrop. @click.self then matched and closed.",
+      "fix": "Replaced backdrop @click.self with paired @mousedown / @mouseup handlers that close only when BOTH events targeted the backdrop element itself. A drag that begins inside any modal child no longer counts as a backdrop click.",
+      "tags": [
+        "ui",
+        "modal",
+        "click-vs-drag",
+        "ux"
+      ]
     }
   ]
 }

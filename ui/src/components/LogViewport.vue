@@ -17,7 +17,7 @@ import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useVirtualizer } from '@tanstack/vue-virtual'
-import { highlightsFor, overlay, type LeafSpan } from '../highlight/engine'
+import { highlightsFor, overlay, rulesVersionRef, type LeafSpan } from '../highlight/engine'
 import {
   OVERSCAN,
   PAGE_SIZE,
@@ -770,6 +770,10 @@ function searchSpansForLine(row: LineRow): { start: number; end: number; cls: st
 }
 
 function renderLine(row: LineRow): LeafSpan[] {
+  // Register reactive dep on the engine's rule version so saved rule edits
+  // re-render the viewport without needing a scroll or tab switch.
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  rulesVersionRef.value
   const search = searchSpansForLine(row)
   if (row.fields) {
     const base = headerBaseSpans(row.text, row.fields)

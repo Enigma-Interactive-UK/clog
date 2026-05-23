@@ -121,6 +121,16 @@
   --hl-search-bg: var(--amber-500);
   --hl-search-fg: var(--slate-950);
 
+  /* User-rule palette (P8: editable highlight rules pick from these slots) */
+  --h-user-red: #f87171;
+  --h-user-amber: #fbbf24;
+  --h-user-yellow: #facc15;
+  --h-user-green: #4ade80;
+  --h-user-cyan: #22d3ee;
+  --h-user-blue: #60a5fa;
+  --h-user-magenta: #c084fc;
+  --h-user-pink: #f472b6;
+
   /* Semantic borders */
   --border-default: var(--slate-800);
   --border-button: var(--slate-650);
@@ -140,6 +150,11 @@
 
   /* Radii / spacing primitives */
   --radius-sm: 6px;
+
+  /* Native form controls (checkboxes, radios, range, progress) pick up the
+     brand accent via the `accent-color` CSS property. Inherits everywhere
+     so individual components don't need to opt in. */
+  accent-color: var(--accent);
 }
 
 /* --- Light theme override ---------------------------------------------
@@ -196,6 +211,15 @@
   --hl-url-fg: #1d4ed8;
   --hl-search-bg: #fde68a;
   --hl-search-fg: #14181f;
+
+  --h-user-red: #b91c1c;
+  --h-user-amber: #b45309;
+  --h-user-yellow: #a16207;
+  --h-user-green: #15803d;
+  --h-user-cyan: #0e7490;
+  --h-user-blue: #1d4ed8;
+  --h-user-magenta: #7e22ce;
+  --h-user-pink: #be185d;
 
   --border-default: #d4d4d4;
   --border-button: #b9b9b9;
@@ -298,3 +322,34 @@ html, body, #app {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* --- User-defined highlight rule classes (P8) ----------------------------
+   Mapped from UserHighlightRule.colour palette key. Global so they apply
+   both inside LogViewport's scoped row container and in the editor's
+   live-preview pane. Bold/italic/underline are composable; the colour
+   class supplies the foreground only. */
+/* !important because Vue-scoped axis-1 selectors nest as
+   `.viewport[data-v] .row[data-v] .s-message[data-v]` (specificity 0,6,0)
+   which can't be reached by ordinary class chaining. A user-chosen colour
+   is an explicit override of the structural default by intent, so
+   !important matches the semantic - this is the rare case where the
+   blunt tool is the right one. */
+.h-user-red { color: var(--h-user-red) !important; }
+.h-user-amber { color: var(--h-user-amber) !important; }
+.h-user-yellow { color: var(--h-user-yellow) !important; }
+.h-user-green { color: var(--h-user-green) !important; }
+.h-user-cyan { color: var(--h-user-cyan) !important; }
+.h-user-blue { color: var(--h-user-blue) !important; }
+.h-user-magenta { color: var(--h-user-magenta) !important; }
+.h-user-pink { color: var(--h-user-pink) !important; }
+.h-user-bg-red { background-color: color-mix(in srgb, var(--h-user-red) 35%, transparent) !important; }
+.h-user-bg-amber { background-color: color-mix(in srgb, var(--h-user-amber) 35%, transparent) !important; }
+.h-user-bg-yellow { background-color: color-mix(in srgb, var(--h-user-yellow) 35%, transparent) !important; }
+.h-user-bg-green { background-color: color-mix(in srgb, var(--h-user-green) 35%, transparent) !important; }
+.h-user-bg-cyan { background-color: color-mix(in srgb, var(--h-user-cyan) 35%, transparent) !important; }
+.h-user-bg-blue { background-color: color-mix(in srgb, var(--h-user-blue) 35%, transparent) !important; }
+.h-user-bg-magenta { background-color: color-mix(in srgb, var(--h-user-magenta) 35%, transparent) !important; }
+.h-user-bg-pink { background-color: color-mix(in srgb, var(--h-user-pink) 35%, transparent) !important; }
+.h-user-bold { font-weight: 700 !important; }
+.h-user-italic { font-style: italic !important; }
+.h-user-underline { text-decoration: underline !important; }

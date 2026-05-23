@@ -6,12 +6,12 @@
  * objects (see ./tab.ts) -- the viewport, search bar, tail and search
  * channels all flow through those.
  */
-import { onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 
-import defaultRulesFile from './highlight/default-rules.json'
-import { setRules, type HighlightRulesFile } from './highlight/engine'
+import type { UserHighlightRule } from './types'
 
 import AboutModal from './components/AboutModal.vue'
 import AppHeader from './components/AppHeader.vue'
@@ -24,12 +24,11 @@ import StatusBar from './components/StatusBar.vue'
 import TabStrip from './components/TabStrip.vue'
 
 import { useAppShortcuts } from './composables/useAppShortcuts'
+import { useHighlightRules } from './composables/useHighlightRules'
 import { useSession } from './composables/useSession'
 import { useSettings } from './composables/useSettings'
 import { useStartupPaths } from './composables/useStartupPaths'
 import { useTabs } from './composables/useTabs'
-
-setRules((defaultRulesFile as HighlightRulesFile).rules)
 
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
@@ -72,6 +71,40 @@ const {
   settings,
   onError: (msg) => { error.value = msg },
 })
+
+const activePath = computed<string | null>(() => currentTab.value?.file.value.path ?? null)
+
+const {
+  globalRules,
+  activePerFileRules,
+  loadGlobal: loadGlobalRules,
+  saveGlobal: saveGlobalRules,
+  savePerFile: savePerFileRules,
+  forgetPerFile: forgetPerFileRules,
+} = useHighlightRules({ activePath })
+
+async function onSaveGlobalRules(rules: UserHighlightRule[]) {
+  try { await saveGlobalRules(rules) } catch (e) { error.value = String(e) }
+}
+
+async function onSavePerFileRules(path: string, rules: UserHighlightRule[]) {
+  try { await savePerFileRules(path, rules) } catch (e) { error.value = String(e) }
+}
+
+async function onForgetPerFileRules(path: string) {
+  try { await forgetPerFileRules(path) } catch (e) { error.value = String(e) }
+}
+
+async function onForgetPattern() {
+  if (!currentTab.value) return
+  const path = currentTab.value.file.value.path
+  try {
+    await invoke('forget_pattern_override', { path })
+    patternOpen.value = false
+  } catch (e) {
+    error.value = String(e)
+  }
+}
 
 const { restoreSession } = useSession({
   tabs,
@@ -123,7 +156,7 @@ async function onOpenDataFolder() {
   if (err) error.value = err
 }
 
-async function onResetData(scope: 'settings' | 'session' | 'patterns' | 'index' | 'all') {
+async function onResetData(scope: 'settings' | 'session' | 'patterns' | 'index' | 'highlight' | 'all') {
   const err = await resetData(scope)
   if (err) error.value = err
 }
@@ -158,6 +191,7 @@ let unlistenDragDrop: UnlistenFn | null = null
 onMounted(() => {
   void (async () => {
     await loadSettings()
+    await loadGlobalRules()
     try {
       unlistenDragDrop = await appWebview.onDragDropEvent(onDragDropEvent)
     } catch {
@@ -245,13 +279,18 @@ onBeforeUnmount(() => {
     <PatternModal
       v-if="patternOpen && currentTab"
       :tab="currentTab"
+      :per-file-rules="activePerFileRules"
       @close="patternOpen = false"
+      @forget-pattern="onForgetPattern"
+      @save-per-file-rules="onSavePerFileRules"
+      @forget-per-file-rules="onForgetPerFileRules"
     />
 
     <SettingsModal
       v-if="settingsOpen"
       :settings="settings"
       :data-dir="dataDir"
+      :global-rules="globalRules"
       @close="settingsOpen = false"
       @update="onUpdateSettings"
       @bump-font="bumpFontSize"
@@ -260,6 +299,7 @@ onBeforeUnmount(() => {
       @forget-recent="onForgetRecent"
       @open-data-folder="onOpenDataFolder"
       @reset-data="onResetData"
+      @save-global-rules="onSaveGlobalRules"
     />
 
     <AboutModal

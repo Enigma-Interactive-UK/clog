@@ -148,6 +148,57 @@ export interface TailDelta {
   rotated: boolean
 }
 
+/**
+ * User-editable highlight rule, persisted to `highlight-rules.json` (global)
+ * or `per-file-rules/<hash>.json` (per-file). Carries the user-facing knobs
+ * (colour, bold, italic, underline, enabled) which the UI translates into
+ * engine-facing class names at engine-feed time.
+ */
+export interface UserHighlightRule {
+  name: string
+  pattern: string
+  flags: string
+  priority: number
+  /** Palette key (`'red'`, `'amber'`, `'yellow'`, `'green'`, `'cyan'`, `'blue'`, `'magenta'`, `'pink'`) or empty. */
+  colour: string
+  /** Background palette key (same alphabet as `colour`) or empty. */
+  background: string
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  enabled: boolean
+}
+
+export interface HighlightRulesFile {
+  schema: number
+  rules: UserHighlightRule[]
+}
+
+export interface PerFileRulesFile {
+  schema: number
+  path: string
+  rules: UserHighlightRule[]
+}
+
+export const USER_RULE_PALETTE = [
+  'red', 'amber', 'yellow', 'green', 'cyan', 'blue', 'magenta', 'pink',
+] as const
+
+export function newUserRule(name = 'new-rule'): UserHighlightRule {
+  return {
+    name,
+    pattern: '',
+    flags: '',
+    priority: 100,
+    colour: 'amber',
+    background: '',
+    bold: false,
+    italic: false,
+    underline: false,
+    enabled: true,
+  }
+}
+
 export const PAGE_SIZE = 256
 export const ROW_HEIGHT = 18
 export const OVERSCAN = 32

@@ -106,3 +106,17 @@ pub fn path_hash(path: &std::path::Path) -> String {
 pub fn index_cache_path(source_path: &std::path::Path) -> PathBuf {
     index_dir().join(format!("{}.idx", path_hash(source_path)))
 }
+
+pub fn highlight_rules_path() -> PathBuf {
+    data_dir().join("highlight-rules.json")
+}
+
+pub fn per_file_rules_dir() -> PathBuf {
+    let dir = data_dir().join("per-file-rules");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+pub fn per_file_rules_path(source_path: &std::path::Path) -> PathBuf {
+    per_file_rules_dir().join(format!("{}.json", path_hash(source_path)))
+}

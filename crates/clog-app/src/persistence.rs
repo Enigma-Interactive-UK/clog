@@ -215,6 +215,110 @@ impl PatternsFile {
     }
 }
 
+// --- highlight-rules.json (global) ----------------------------------------
+//
+// The UI carries every user-editable knob (colour, bold, italic, underline,
+// priority, enabled, scope-name). The persistence layer is intentionally
+// permissive: every field is `#[serde(default)]` so a future addition stays
+// load-compatible, and unknown fields are dropped on the floor.
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)] // four bools is the user-facing knob set
+pub struct UserHighlightRule {
+    pub name: String,
+    pub pattern: String,
+    #[serde(default)]
+    pub flags: String,
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    /// Palette key (`"red"`, `"blue"`, ...) or empty for "use class only".
+    #[serde(default)]
+    pub colour: String,
+    /// Background palette key (same alphabet as `colour`) or empty for no
+    /// background. Layered on top of axis-1 row backgrounds via !important.
+    #[serde(default)]
+    pub background: String,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub underline: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_priority() -> i32 {
+    100
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HighlightRulesFile {
+    #[serde(default = "default_schema")]
+    pub schema: u32,
+    #[serde(default)]
+    pub rules: Vec<UserHighlightRule>,
+}
+
+impl HighlightRulesFile {
+    pub fn load() -> Self {
+        load_or_default(&paths::highlight_rules_path())
+    }
+
+    /// # Errors
+    /// Bubbles up filesystem errors.
+    pub fn save(&self) -> io::Result<()> {
+        write_atomic(&paths::highlight_rules_path(), self)
+    }
+}
+
+// --- per-file-rules/<hash>.json -------------------------------------------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PerFileRulesFile {
+    #[serde(default = "default_schema")]
+    pub schema: u32,
+    /// The absolute source path the rules apply to. Recorded inside the file
+    /// so a hash collision (vanishingly rare in practice) can be detected by
+    /// the loader and treated as a miss.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub rules: Vec<UserHighlightRule>,
+}
+
+impl PerFileRulesFile {
+    pub fn load(source_path: &Path) -> Self {
+        let file_path = paths::per_file_rules_path(source_path);
+        let mut f: Self = load_or_default(&file_path);
+        // If a hash collision parked someone else's rules here, treat the
+        // miss as empty rather than handing the wrong file's rules over.
+        let key = source_path.to_string_lossy().to_string();
+        if !f.path.is_empty() && f.path != key {
+            f = Self::default();
+        }
+        f
+    }
+
+    /// # Errors
+    /// Bubbles up filesystem errors.
+    pub fn save(&self, source_path: &Path) -> io::Result<()> {
+        let mut to_write = self.clone();
+        to_write.path = source_path.to_string_lossy().to_string();
+        write_atomic(&paths::per_file_rules_path(source_path), &to_write)
+    }
+
+    /// Delete the per-file rules file for `source_path`. Idempotent.
+    pub fn forget(source_path: &Path) -> io::Result<()> {
+        let p = paths::per_file_rules_path(source_path);
+        match fs::remove_file(&p) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 // --- shared I/O helpers ----------------------------------------------------
 
 fn load_or_default<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {

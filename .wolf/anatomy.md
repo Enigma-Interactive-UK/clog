@@ -1,7 +1,8 @@
 # anatomy.md
 
 > Auto-maintained by OpenWolf. Last scanned: 2026-05-23
-> Post-P9 sidequest: bookmarks feature added (click-to-toggle on line numbers, right-click to remove, accent stripes in minimap, persisted per tab via RestoredFile.bookmarks with silent drop of out-of-range indices). App.vue further decomposed. App.vue now a thin orchestrator (~303 lines) composing useSettings + useTabs + useSession + useStartupPaths + useAppShortcuts + useWindowChrome. Modals (Settings, About, Pattern) extracted into components with a shared BaseModal scaffold. AppHeader, StatusBar, DropOverlay extracted. P9 vertical slice landed (multi-tab UI, tauri-plugin-single-instance, CLI argv forwarding, multi-tab session restore).
+> P8 vertical slice landed (post-P9, addressing the previously skipped phase): user highlight rule editor in Settings (global) + PatternModal (per-file), live preview pane, palette colour + bold/italic/underline knobs, priority + enable toggle, regex compile error inline, overlap warning when every match is overridden. Persistence via highlight-rules.json (global) and per-file-rules/<hash>.json (per-file). New IPC: get/save_highlight_rules, get/save/forget_per_file_rules. PatternModal also gained a Forget pattern override button.
+> Post-P9 sidequest: bookmarks feature added (click-to-toggle on line numbers, right-click to remove, accent stripes in minimap, persisted per tab via RestoredFile.bookmarks with silent drop of out-of-range indices). App.vue further decomposed. App.vue now a thin orchestrator composing useSettings + useTabs + useSession + useStartupPaths + useAppShortcuts + useWindowChrome + useHighlightRules. Modals (Settings, About, Pattern) extracted into components with a shared BaseModal scaffold. AppHeader, StatusBar, DropOverlay extracted. P9 vertical slice landed (multi-tab UI, tauri-plugin-single-instance, CLI argv forwarding, multi-tab session restore).
 
 ## ./
 

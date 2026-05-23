@@ -3,6 +3,17 @@
 // produces an ordered, non-overlapping list of highlight spans which is then
 // overlaid onto the axis-1 spans by the renderer.
 
+import { ref } from 'vue'
+
+/**
+ * Reactive version counter. Bumped on every `setRules()` call so any Vue
+ * template that reads it picks up rule changes immediately (the engine's
+ * line cache is keyed on the same number, so `highlightsFor` returns fresh
+ * spans after the bump). Read `rulesVersionRef.value` inside a render
+ * function to register the dep.
+ */
+export const rulesVersionRef = ref(0)
+
 export interface HighlightSubgroup {
   cls?: string
   priority?: number
@@ -57,6 +68,7 @@ export function setRules(rules: HighlightRule[]): void {
   RULES = rules.map(compile)
   VERSION++
   CACHE.clear()
+  rulesVersionRef.value = VERSION
 }
 
 export function rulesVersion(): number {
@@ -293,6 +305,101 @@ function findAxis2(axis2: HighlightSpan[], s: number, e: number): HighlightSpan 
     if (sp.start <= s && sp.end >= e) return sp
   }
   return undefined
+}
+
+// --- Ad-hoc compile + match (used by the editor's live preview) -----------
+//
+// Lets callers compute highlights against a candidate rule set without
+// touching the global engine state or its cache. Compiles each rule fresh
+// per call; suitable for preview pane recomputes where the rule set is
+// being edited keystroke-by-keystroke. Returns either the spans or a
+// compile error so the editor can flag the offending rule inline.
+
+export interface RuleCompileError {
+  rule: string
+  message: string
+}
+
+export type ComputeWithResult =
+  | { ok: true; spans: HighlightSpan[] }
+  | { ok: false; errors: RuleCompileError[] }
+
+export function computeWith(rules: HighlightRule[], text: string): ComputeWithResult {
+  const compiled: CompiledRule[] = []
+  const errors: RuleCompileError[] = []
+  for (const r of rules) {
+    try {
+      compiled.push(compile(r))
+    } catch (e) {
+      errors.push({ rule: r.name, message: (e as Error).message })
+    }
+  }
+  if (errors.length > 0) return { ok: false, errors }
+
+  if (text.length === 0 || compiled.length === 0) return { ok: true, spans: [] }
+  const n = text.length
+  const arrs: PaintArrays = {
+    cls: new Array(n).fill(null),
+    pri: new Array(n).fill(-1),
+    url: new Array(n).fill(null),
+  }
+  for (const rule of compiled) {
+    rule.re.lastIndex = 0
+    let m: RegExpExecArray | null
+    let guard = 0
+    while ((m = rule.re.exec(text)) !== null) {
+      if (++guard > 256) break
+      const start = m.index
+      const end = m.index + m[0].length
+      if (end === start) {
+        rule.re.lastIndex = start + 1
+        continue
+      }
+      const matchUrl = matchUrlFor(rule, m[0])
+      if (rule.cls) paint(arrs, start, end, rule.cls, rule.priority, matchUrl)
+      if (rule.subgroups) {
+        const indices = (m as unknown as { indices?: { groups?: Record<string, [number, number] | undefined> } }).indices
+        const groupIdx = indices?.groups
+        if (groupIdx) {
+          for (const [name, def] of Object.entries(rule.subgroups)) {
+            const idx = groupIdx[name]
+            if (!idx) continue
+            const [s, e] = idx
+            if (s === e) continue
+            const p = def.priority ?? rule.priority + 1
+            if (def.cls) paint(arrs, s, e, def.cls, p, null)
+          }
+        }
+      }
+    }
+  }
+  const out: HighlightSpan[] = []
+  let i = 0
+  while (i < n) {
+    if (arrs.cls[i] === null) { i++; continue }
+    const c = arrs.cls[i]
+    const u = arrs.url[i]
+    let j = i + 1
+    while (j < n && arrs.cls[j] === c && arrs.url[j] === u) j++
+    const span: HighlightSpan = { start: i, end: j, cls: c as string }
+    if (u !== null) span.url = u
+    out.push(span)
+    i = j
+  }
+  return { ok: true, spans: out }
+}
+
+/**
+ * Try-compile a single rule and report the error, if any. Used by the
+ * editor to flag a row with a bad regex *before* the user attempts to save.
+ */
+export function tryCompileRule(rule: HighlightRule): string | null {
+  try {
+    compile(rule)
+    return null
+  } catch (e) {
+    return (e as Error).message
+  }
 }
 
 function mergeAdjacent(spans: LeafSpan[]): LeafSpan[] {

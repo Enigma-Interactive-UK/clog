@@ -6,11 +6,21 @@
  */
 
 import BaseModal from './BaseModal.vue'
+import HighlightRulesEditor from './HighlightRulesEditor.vue'
 import type { Tab } from '../tab'
+import type { UserHighlightRule } from '../types'
 
-defineProps<{ tab: Tab }>()
+defineProps<{
+  tab: Tab
+  perFileRules: UserHighlightRule[]
+}>()
 
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'forget-pattern'): void
+  (e: 'save-per-file-rules', path: string, rules: UserHighlightRule[]): void
+  (e: 'forget-per-file-rules', path: string): void
+}>()
 </script>
 
 <template>
@@ -45,11 +55,25 @@ const emit = defineEmits<{ (e: 'close'): void }>()
     <p class="muted">
       Apply saves the pattern as a per-file override; the next time you open this file the same pattern is used automatically.
     </p>
+    <div class="forget-row">
+      <button type="button" class="seg-btn danger" @click="emit('forget-pattern')">
+        Forget pattern override
+      </button>
+      <span class="muted">Restores auto-detection on next open.</span>
+    </div>
+
+    <h3 class="rules-head">Per-file highlight rules</h3>
+    <HighlightRulesEditor
+      :model-value="perFileRules"
+      scope="per-file"
+      @save="(rules) => emit('save-per-file-rules', tab.file.value.path, rules)"
+      @forget="emit('forget-per-file-rules', tab.file.value.path)"
+    />
   </BaseModal>
 </template>
 
 <style scoped>
-:deep(.pattern-modal) { width: min(720px, 92vw); }
+:deep(.pattern-modal) { width: min(820px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
 
 .row-grid {
   display: grid;
@@ -92,4 +116,31 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 .score, .muted, .pat-error { font-size: 0.85rem; margin: 0.3rem 0; }
 .muted { color: var(--fg-muted); }
 .pat-error { color: var(--fg-error); font-family: var(--font-mono); }
+
+.forget-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 0.6rem 0;
+}
+
+.rules-head {
+  margin: 1.2rem 0 0.4rem;
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--border-default);
+  padding-bottom: 0.25rem;
+}
+
+.seg-btn {
+  background: var(--bg-button);
+  color: var(--fg-default);
+  border: 1px solid var(--border-button);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+
+  &.danger { color: var(--level-error); border-color: var(--level-error); }
+}
+
 </style>

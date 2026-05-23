@@ -14,10 +14,30 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
+
+// Track whether the press originated on the backdrop itself. Without this,
+// a drag that starts inside an input and ends on the backdrop (a normal
+// text-selection gesture) fires `click` on the backdrop and closes the
+// modal. We only treat the gesture as a backdrop click when both ends of
+// it landed on the backdrop.
+let pressOnBackdrop = false
+
+function onBackdropMouseDown(e: MouseEvent) {
+  pressOnBackdrop = e.target === e.currentTarget
+}
+
+function onBackdropMouseUp(e: MouseEvent) {
+  if (pressOnBackdrop && e.target === e.currentTarget) emit('close')
+  pressOnBackdrop = false
+}
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')">
+  <div
+    class="modal-backdrop"
+    @mousedown="onBackdropMouseDown"
+    @mouseup="onBackdropMouseUp"
+  >
     <div class="modal" :class="modalClass" role="dialog" :aria-label="ariaLabel ?? title">
       <header class="modal-head">
         <h2>{{ title }}</h2>

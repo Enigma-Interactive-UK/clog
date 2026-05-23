@@ -158,7 +158,7 @@ export function useSettings() {
   }
 
   async function resetData(
-    scope: 'settings' | 'session' | 'patterns' | 'index' | 'all',
+    scope: 'settings' | 'session' | 'patterns' | 'index' | 'highlight' | 'all',
   ): Promise<string | null> {
     try {
       await invoke('reset_data', { req: { scope } })
