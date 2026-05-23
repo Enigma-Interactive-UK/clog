@@ -1296,6 +1296,7 @@ defineExpose({
       v-if="tab.insightsOpen.value"
       :tab="tab"
       @close="tab.insightsOpen.value = false"
+      @jump="jumpToLine"
     />
     <button
       v-if="!tab.followTail.value && !atBottom"
