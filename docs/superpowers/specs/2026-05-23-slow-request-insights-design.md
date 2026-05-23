@@ -39,7 +39,9 @@ Clicking a group jumps the viewport to that endpoint's longest hit.
   does not constrain the visible record set to that endpoint. (Open
   question OQ-4.)
 - **Persistence**. The drawer's open / closed state and current sort are
-  per-session UI; they do not survive a restart.
+  per-session UI; they do not survive a restart. The speed-rail
+  thresholds (covered below) *are* persisted; they are the only piece
+  of slow-request state that crosses sessions.
 - **Generalising into a "rules engine" for arbitrary aggregations**.
   Slow requests are the only kind for v1. The marker system is a separate
   primitive and stays separate.
@@ -232,6 +234,15 @@ shares the level minimap's bucket geometry so the two visualisations
 read vertically aligned.
 
 ```rust
+/// Configurable gradient anchors. When `None` at every persistence
+/// tier, the speed rail falls back to per-file auto-normalisation.
+/// When `Some`, both fields are present and `fast_ms < slow_ms`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SlowRequestThresholds {
+    pub fast_ms: u32,
+    pub slow_ms: u32,
+}
+
 pub struct SpeedBucket {
     /// Hit count in this bucket after dedup. Zero means "no slow
     /// requests touched this bucket" - the UI paints these transparent
@@ -274,9 +285,10 @@ Bucketing rules mirror `build_level_minimap_payload`:
 
 ### `clog-app` IPC
 
-Two new commands in [crates/clog-app/src/main.rs](../../../crates/clog-app/src/main.rs),
-both backed by the same `extract_slow_requests` walk so they never
-diverge in dedup or parsing:
+Four new commands in [crates/clog-app/src/main.rs](../../../crates/clog-app/src/main.rs).
+The two read commands are backed by the same `extract_slow_requests`
+walk so they never diverge in dedup or parsing; the two threshold
+commands route through `persistence.rs`:
 
 ```rust
 #[tauri::command]
@@ -292,7 +304,46 @@ fn get_slow_request_speeds(
     file_id: u64,
     bucket_count: u32,
 ) -> Result<SpeedGrid, IpcError>;
+
+/// Read the effective thresholds for `file_id` plus the source tier
+/// that produced them. The UI uses this to populate the per-file editor
+/// (showing the user what they're inheriting) and the "Auto / Global /
+/// Per-file" chip in the drawer header.
+#[tauri::command]
+fn get_slow_request_thresholds(
+    state: State<'_, AppState>,
+    file_id: u64,
+) -> Result<EffectiveThresholds, IpcError>;
+
+/// Save a per-file override, or pass `None` to forget the override and
+/// fall back to global / auto.
+#[tauri::command]
+fn save_slow_request_thresholds(
+    state: State<'_, AppState>,
+    file_id: u64,
+    thresholds: Option<SlowRequestThresholds>,
+) -> Result<(), IpcError>;
 ```
+
+```rust
+#[derive(Debug, Clone, Serialize)]
+struct EffectiveThresholds {
+    /// "auto" | "global" | "per_file". UI-facing tag.
+    source: &'static str,
+    /// The anchors actually in use. For "auto", populated from the
+    /// file's current `SpeedGrid::min_avg_ms` / `max_avg_ms` so the UI
+    /// can render the same numbers it would compute itself.
+    effective: SlowRequestThresholds,
+    /// Whatever the per-file file currently holds (may be None).
+    per_file: Option<SlowRequestThresholds>,
+    /// Whatever the global Settings currently holds (may be None).
+    global: Option<SlowRequestThresholds>,
+}
+```
+
+The global default is mutated through the existing `update_settings`
+command - extending its patch payload with an optional
+`slow_request_thresholds` field is cheaper than a fifth dedicated IPC.
 
 `get_slow_requests` is fired only when the drawer is open;
 `get_slow_request_speeds` is fired whenever the minimap is refreshed
@@ -357,6 +408,20 @@ Cover:
     -> `min_avg_ms == max_avg_ms`. UI fallback rule must paint a
     uniform `--speed-fast` (green) strip rather than dividing by zero
     or jumping to red - assert at the UI layer.
+14. **Threshold resolution precedence**: per-file override beats global
+    beats auto. Cover: per-file set + global set -> per-file wins;
+    per-file unset + global set -> global wins; both unset -> auto with
+    anchors taken from the file's own min/max.
+15. **Threshold validation**: `fast_ms >= slow_ms`, or values above
+    600_000, are rejected by `save_slow_request_thresholds` with a
+    `BadInput`-style `IpcError` rather than persisted.
+16. **Persistence back-compat**: a v1 `settings.json` or
+    `per-file-rules/<hash>.json` written before this feature loads
+    cleanly with `slow_request_thresholds == None`. Add a fixture per
+    file under the persistence tests.
+17. **Auto-delete of empty per-file file**: a `PerFileRulesFile` with no
+    rules and `thresholds: None` is deleted from disk by the save IPC
+    rather than persisted as a stub.
 
 Plus a smoke test against `research/solopress-prod.log` asserting at
 least one `SLOW REQUEST` entry parses cleanly (regression guard against
@@ -440,15 +505,22 @@ Paint rules:
    the component the same way `minimapBuckets` is cached.
 2. Paint into a dedicated `<canvas ref="speedRailEl">` at the same dpr +
    height as the minimap canvas so the buckets align row-for-row.
-3. Compute a per-bucket colour:
+3. Resolve the gradient anchors (`fast_anchor_ms`, `slow_anchor_ms`)
+   for the current file - see "Threshold resolution" below. Both anchors
+   are in milliseconds; the gradient maps `fast_anchor_ms` to
+   `--speed-fast` (green) and `slow_anchor_ms` to `--speed-slow` (red)
+   with `--speed-mid` (amber) at the midpoint.
+4. Compute a per-bucket colour:
    - `count === 0`: the bucket inherits the "fast" colour
      (`--speed-fast`). Green is the resting default whenever no slow
      requests have landed in that region of the file - quiet stretches
      read as healthy rather than absent.
    - `count > 0`: map `avg_ms` to a colour by interpolating along the
      three-stop palette (`--speed-fast` -> `--speed-mid` ->
-     `--speed-slow`) at `t = (avg - min_avg_ms) / max(max_avg_ms - min_avg_ms, 1)`.
-4. Paint the whole rail as a single `CanvasRenderingContext2D.createLinearGradient(0, 0, 0, height)`
+     `--speed-slow`) at `t = clamp((avg - fast_anchor_ms) / max(slow_anchor_ms - fast_anchor_ms, 1), 0, 1)`.
+     Durations below `fast_anchor_ms` clamp to green; durations above
+     `slow_anchor_ms` clamp to red.
+5. Paint the whole rail as a single `CanvasRenderingContext2D.createLinearGradient(0, 0, 0, height)`
    with **one colour stop per bucket** placed at the bucket's vertical
    midpoint. The 2D renderer interpolates between stops in linear RGB
    space, so adjacent buckets fade smoothly into each other instead of
@@ -456,17 +528,20 @@ Paint rules:
    and very bottom (offset 1) match their nearest bucket's colour so
    the gradient does not collapse toward black at the edges. One
    `fillRect(0, 0, width, height)` paints the whole strip.
-5. The "fast" anchor colour is the same `--speed-fast` whether a bucket
-   is genuinely fast (`avg_ms` near `min_avg_ms`) or has no data at all.
-   This is a deliberate flattening: the visual question the user asks
-   the stripe is "where is the site slow right now?" - the answer
+6. The "fast" anchor colour is the same `--speed-fast` whether a bucket
+   is genuinely fast (`avg_ms` near `fast_anchor_ms`) or has no data at
+   all. This is a deliberate flattening: the visual question the user
+   asks the stripe is "where is the site slow right now?" - the answer
    should not depend on whether a region happened to log a slow request
    at all. Buckets with no data simply contribute green pull to the
    gradient around them.
-6. When `max_avg_ms === 0` (no slow requests anywhere in the file) the
-   rail is a uniform `--speed-fast` strip. The rail always paints; it
-   never reads as a transparent / missing element.
-7. The three stop palettes are lifted into CSS variables so the light
+7. When auto-normalisation is in force and `max_avg_ms === 0` (no slow
+   requests anywhere in the file) the rail is a uniform `--speed-fast`
+   strip. When fixed thresholds are configured, the rail still uses
+   them; an empty file still paints uniform green because every bucket
+   has `count === 0`. The rail always paints; it never reads as a
+   transparent / missing element.
+8. The three stop palettes are lifted into CSS variables so the light
    theme can swap them for AA-contrast variants. The midpoint hue is
    chosen for green-to-red continuity through orange; HSL anchors:
    - Dark: `--speed-fast: hsl(140, 70%, 45%)`,
@@ -485,6 +560,48 @@ projection rather than reimplementing it. The rail's pointer events
 are otherwise a passthrough - clicking it scrolls the viewport via the
 same `scrollToMinimapY` helper, so the speed stripe and minimap behave
 as one combined scrubber.
+
+### Threshold resolution
+
+The default normalisation is **per-file auto** - the file's own
+`min_avg_ms` and `max_avg_ms` set the gradient anchors. This surfaces
+"where is the site slow *in this log*" without forcing the user to
+think in absolute terms first.
+
+The user can pin the anchors to absolute millisecond values at two
+levels:
+
+- **Global default** - lives in `Settings`. Applies to every file that
+  does not have a per-file override. Edited from a new "Slow request
+  thresholds" section in the Settings modal.
+- **Per-file override** - lives in the existing per-file rules file.
+  Edited inline from the speed-rail edge of the drawer (a small
+  expander next to the rail). Setting a per-file override decouples
+  the file from any later global edit.
+
+Resolution rule, highest precedence first:
+
+1. Per-file override (when both `fast_ms` and `slow_ms` are present in
+   `PerFileRulesFile.slow_request_thresholds`).
+2. Global default (when both fields are present in
+   `Settings.slow_request_thresholds`).
+3. Per-file auto: `fast_anchor_ms = min_avg_ms`,
+   `slow_anchor_ms = max_avg_ms`.
+
+Validation:
+
+- A configured threshold must have **both** fields set, with
+  `fast_ms < slow_ms` and both in `[0, 600_000]` (10 minutes). Either
+  field missing, or a degenerate range, falls through to the next
+  precedence level rather than producing an unusable gradient. Stored
+  as `Option<SlowRequestThresholds>` on disk so "unset" is distinct
+  from "set but empty".
+- The UI's input controls clamp to the same bounds and surface an
+  inline error when the user types `fast >= slow`.
+
+A small status chip in the drawer header reads "Auto", "Global", or
+"Per-file" so the user can see at a glance which tier is driving the
+current rail.
 
 ### Drawer component
 
@@ -564,7 +681,19 @@ slowRequestSort: ref<{ field: 'total' | 'count' | 'max' | 'p95' | 'avg' | 'path'
 })
 slowRequestFilter: ref<string>('')
 slowRequestSummary: shallowRef<SlowRequestSummary | null>(null)
+/** Mirrors what `get_slow_request_thresholds` returned for this file.
+ *  Drives the "Auto / Global / Per-file" chip and the inline editor. */
+slowRequestThresholds: ref<EffectiveThresholds | null>(null)
 ```
+
+`EffectiveThresholds` is the TS mirror of the Rust struct. The drawer
+refreshes it whenever:
+
+- The tab is first opened.
+- The user edits the per-file override (after save IPC succeeds).
+- The user edits the global default in Settings (Settings modal
+  broadcasts a change so any open insights drawer picks it up
+  immediately).
 
 The drawer reads from `tab.slowRequestSummary` and invokes
 `get_slow_requests` when:
@@ -593,15 +722,70 @@ narrow-window behaviour of the search bar - keeps the rules consistent.)
 
 ## Persistence
 
-None in v1. Open / closed, mode, sort, and filter are session-only.
-Reconsider after dogfooding - if users consistently reopen the drawer
-on every tab they touch, lift `insightsOpen` and `slowRequestMode`
-into the per-tab `RestoredFile` schema and bump its `schema` version
-with `#[serde(default)]` cover for back-compat.
+The slow-request thresholds are the only piece of slow-request state
+that crosses sessions. They use the existing schema-versioned JSON
+machinery in [crates/clog-app/src/persistence.rs](../../../crates/clog-app/src/persistence.rs).
+
+### Global default - `settings.json`
+
+`Settings` gains an optional field:
+
+```rust
+#[serde(default)]
+pub slow_request_thresholds: Option<SlowRequestThresholds>,
+```
+
+`#[serde(default)]` keeps existing v1 settings files loadable without
+a schema bump - a missing field decodes to `None`. `Settings::default()`
+returns `None` so first-run users get auto-normalisation.
+
+### Per-file override - `per-file-rules/<hash>.json`
+
+`PerFileRulesFile` gains the same optional field:
+
+```rust
+#[serde(default)]
+pub slow_request_thresholds: Option<SlowRequestThresholds>,
+```
+
+Same back-compat rule: a missing field decodes to `None`, meaning
+"inherit global". The file is still keyed by the absolute source path
+hash with the path string recorded inside to catch hash collisions
+(unchanged - this is how `PerFileRulesFile` already works).
+
+When the user clears the per-file override from the drawer, the IPC
+writes `None` back into the file. If the resulting file has no
+highlight rules AND no thresholds, the file is deleted via the existing
+`forget_per_file_rules` plumbing so we don't leave empty config files
+behind.
+
+### Other slow-request state
+
+Open / closed, mode, sort, and filter remain session-only - they are
+ephemeral UI knobs and do not warrant on-disk cost. Reconsider after
+dogfooding if users consistently reopen the drawer on every tab they
+touch.
 
 ## Settings
 
-None in v1. The detection regex and normalisation rules are baked in.
+Global threshold defaults are editable from the Settings modal in a
+new "Slow requests" section below the existing Behaviour section.
+Controls:
+
+- A pair of `<input type="number">` fields for "Fast threshold (ms)"
+  and "Slow threshold (ms)". Both required when either is filled; both
+  empty clears the global default (back to auto-normalisation).
+- A "Reset to default" button that clears both inputs and saves
+  `None`.
+- Inline validation: `fast < slow`, both in `[0, 600_000]`. The save
+  button is disabled until the inputs validate.
+
+A short explanatory blurb above the inputs notes that per-file
+overrides take precedence and can be cleared from the insights drawer
+on the affected file.
+
+The detection regex itself stays baked in - patterns are not a
+user-facing setting in v1.
 
 ## Files changed
 
@@ -609,13 +793,27 @@ None in v1. The detection regex and normalisation rules are baked in.
   speed-grid builder, `PathMode`, `SlowRequest*` and `Speed*` structs,
   unit tests.
 - `crates/clog-core/src/lib.rs` - re-export the public surface.
-- `crates/clog-app/src/main.rs` - `get_slow_requests` and
-  `get_slow_request_speeds` IPC commands, `SlowRequestCache` on
-  `OpenedFile`, both registered in `invoke_handler!`.
-- `ui/src/types.ts` - `SlowRequest*`, `Speed*` interfaces,
-  `SlowRequestPathMode`.
+- `crates/clog-app/src/main.rs` - `get_slow_requests`,
+  `get_slow_request_speeds`, `get_slow_request_thresholds`, and
+  `save_slow_request_thresholds` IPC commands, `EffectiveThresholds`
+  struct, `SlowRequestCache` on `OpenedFile`, extension to
+  `update_settings` patch handling for the global default, all four
+  new commands registered in `invoke_handler!`.
+- `crates/clog-app/src/persistence.rs` - `SlowRequestThresholds` struct
+  (re-exported from clog-core or duplicated; see clog-core notes
+  above), `slow_request_thresholds: Option<...>` field added to both
+  `Settings` and `PerFileRulesFile` with `#[serde(default)]`, helper
+  to delete the per-file file when both rules and thresholds end up
+  empty, new unit tests covering load-old-file-without-field,
+  round-trip with field present, and the auto-delete-when-empty path.
+- `ui/src/types.ts` - `SlowRequest*`, `Speed*`, `SlowRequestThresholds`,
+  `EffectiveThresholds` interfaces, `SlowRequestPathMode`.
 - `ui/src/tab.ts` - per-tab insights state.
-- **New** `ui/src/components/InsightsDrawer.vue`.
+- **New** `ui/src/components/InsightsDrawer.vue` - hosts the entry
+  table plus the inline per-file threshold editor + "Auto / Global /
+  Per-file" status chip.
+- `ui/src/components/SettingsModal.vue` - new "Slow requests" section
+  with the global threshold inputs + reset button + validation.
 - `ui/src/components/LogViewport.vue` - drawer slot in the viewport
   shell (passive - the drawer renders itself), expose `jumpToLine` if
   not already public, add the speed-rail `<canvas>` element + paint
@@ -656,6 +854,14 @@ None in v1. The detection regex and normalisation rules are baked in.
   fixture with zero slow requests (e.g. `research/solopress-wsl-oink.out`);
   hover a red region and confirm the third tooltip line shows "N hits,
   avg ..., peak ...".
+- Threshold smoke: in the Settings modal, set Fast 1000 / Slow 5000;
+  the prod fixture's rail should shift visibly (more of the file
+  reddens against the lower anchors); the drawer header chip should
+  read "Global". From the drawer, pin a per-file override at 500 /
+  10000 and confirm the chip switches to "Per-file" and the gradient
+  redistributes. Clear the per-file override and confirm the rail
+  returns to "Global" without a reload. Clear the global default and
+  confirm "Auto" takes over.
 
 ## Open questions
 
@@ -680,19 +886,25 @@ review if any should flip.
 - **OQ-5. Click-to-search.** Alternative to OQ-4: have the row click
   populate the search bar with a `SLOW REQUEST.*<path>` regex so the
   existing hit-list machinery takes over.
-- **OQ-6. Speed-rail normalisation.** Currently per-file: the file's
-  own fastest avg-bucket sets green, its own slowest sets red. This
-  surfaces "which parts of *this* file are slower than the rest" -
-  great for spotting regressions in a single session. The alternative
-  is a fixed absolute scale (e.g. green at 1s, red at 10s) which would
-  let users compare hot regions across two open files visually. Per-file
-  is the easier read for "where in this log is the site struggling";
-  flip if cross-file comparison turns out to matter.
+- **OQ-6. Speed-rail normalisation.** **Resolved.** Per-file auto by
+  default, with configurable thresholds via global Settings and
+  per-file overrides (see "Threshold resolution"). Per-file auto
+  surfaces "where in *this* log is the site struggling"; the explicit
+  thresholds cover the "compare hot regions across two files" need.
 - **OQ-7. Speed-rail scale.** Linear interpolation today. A log scale
   would compress the high end so a single 60-second outlier doesn't
   flatten the rest of the file to green. Worth revisiting once we see
-  real distributions on prod fixtures.
+  real distributions on prod fixtures - now that thresholds are
+  user-configurable, this is less urgent (a user with a long-tail file
+  can pin sensible anchors instead of relying on the auto end-points).
 - **OQ-8. Speed-rail width.** 4px chosen as the smallest width that
   reads cleanly on both 1x and HiDPI without competing with the
   minimap. Could go 2-3px if the layout feels crowded once the drawer
   is in the picture.
+- **OQ-9. Threshold editor placement.** Currently split: global in the
+  Settings modal, per-file inline in the drawer. The drawer placement
+  for per-file is the closer-to-the-effect option but adds chrome to
+  an already busy panel. Alternative: a per-file controls section in
+  the Settings modal that activates only when a file is open. Drawer
+  inline wins on "click here, see the change next to it"; flip if the
+  drawer ends up too dense.
