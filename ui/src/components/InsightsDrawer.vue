@@ -279,12 +279,28 @@ function jumpTo(line: number) {
           @click="tab.slowRequestMode.value = 'raw'"
         >Raw</button>
       </div>
-      <input
-        v-model="tab.slowRequestFilter.value"
-        type="text"
-        class="filter-input"
-        placeholder="Filter path..."
-      />
+      <span class="filter-input-wrap">
+        <input
+          v-model="tab.slowRequestFilter.value"
+          type="text"
+          class="filter-input"
+          placeholder="Filter path..."
+          spellcheck="false"
+          @keydown.esc.prevent="tab.slowRequestFilter.value = ''"
+        />
+        <button
+          v-if="tab.slowRequestFilter.value.length > 0"
+          type="button"
+          class="btn-dismiss clear-filter"
+          title="Clear filter (Esc)"
+          aria-label="Clear filter"
+          @click="tab.slowRequestFilter.value = ''"
+        >
+          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          </svg>
+        </button>
+      </span>
       <select class="sort-select" :value="tab.slowRequestSort.value.field" @change="onSortChange">
         <option value="total">Total time</option>
         <option value="count">Count</option>
@@ -437,14 +453,34 @@ function jumpTo(line: number) {
   }
 }
 
+.filter-input-wrap {
+  flex: 1 1 auto;
+  position: relative;
+  min-width: 60px;
+  display: flex;
+}
+
 .filter-input {
   flex: 1 1 auto;
   background: var(--bg-viewport);
   border: 1px solid var(--border-button);
   color: var(--fg-default);
-  padding: 0.15rem 0.4rem;
+  padding: 0.15rem 1.6rem 0.15rem 0.4rem;
   border-radius: 3px;
-  min-width: 60px;
+  min-width: 0;
+}
+
+.clear-filter {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  transform: translateY(-50%);
+  width: 1.2rem;
+  height: 1.2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
 }
 
 .sort-select {
