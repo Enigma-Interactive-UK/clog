@@ -978,23 +978,13 @@ fn get_slow_request_thresholds(
     } else if let Some(t) = global {
         (t, "global")
     } else {
-        let mut guard = state.files.lock().expect("files mutex poisoned");
-        let file = guard
-            .get_mut(&file_id)
-            .ok_or(IpcError::UnknownFile { file_id })?;
-        let line_count = file.line_count;
-        let _ = rebuild_slow_request_cache(file);
-        let occs = &file
-            .slow_request_cache
-            .as_ref()
-            .expect("rebuild leaves cache populated")
-            .occurrences;
-        let g = clog_core::build_speed_grid(occs, line_count, 256);
-        let fast = g.min_avg_ms;
-        let slow = g.max_avg_ms.max(fast.saturating_add(1));
+        // Auto-tier defaults. Any bucket with no slow requests reads
+        // green at 0 ms; the gradient is driven from yellow up to red
+        // at 6 s. The UI's paint logic treats `source == "auto"` as
+        // "non-empty buckets start at mid (yellow), not green" so a
+        // single hit is immediately visible regardless of its duration.
         (
-            clog_core::SlowRequestThresholds::new(fast, slow)
-                .unwrap_or_else(|| clog_core::SlowRequestThresholds::new(0, 1).expect("valid")),
+            clog_core::SlowRequestThresholds::new(0, 6000).expect("0/6000 is valid"),
             "auto",
         )
     };

@@ -384,7 +384,7 @@ function scheduleMinimapFetch(force = false) {
   })
 }
 
-const speedAnchors = ref<{ fast: number; slow: number } | null>(null)
+const speedAnchors = ref<{ fast: number; slow: number; source: 'auto' | 'global' | 'per_file' } | null>(null)
 
 async function fetchSpeedThresholds() {
   try {
@@ -394,6 +394,7 @@ async function fetchSpeedThresholds() {
     speedAnchors.value = {
       fast: payload.effective.fast_ms,
       slow: payload.effective.slow_ms,
+      source: payload.source,
     }
     props.tab.slowRequestThresholds.value = payload
     paintSpeedRail()
@@ -456,6 +457,33 @@ function bucketColour(avgMs: number, fastMs: number, slowMs: number): string {
   return lerpColour(mid, slow, (t - 0.5) * 2)
 }
 
+// Auto-mode paint: any bucket with at least one slow request starts at
+// mid (yellow) and ramps to slow (red) as the bucket's WORST hit
+// approaches slowMs. Painting against max_ms (not avg_ms) means a single
+// long request in an otherwise quiet bucket is still clearly visible -
+// averaging would let neighbours mask it. Empty buckets stay green
+// (handled by the caller).
+function autoNonEmptyColour(peakMs: number, slowMs: number): string {
+  const mid = readCssColour('--speed-mid')
+  const slow = readCssColour('--speed-slow')
+  if (slowMs <= 0 || peakMs >= slowMs) return slow
+  const t = Math.max(0, peakMs) / slowMs
+  return lerpColour(mid, slow, t)
+}
+
+function colourForBucket(
+  bucketCount: number,
+  bucketAvg: number,
+  bucketMax: number,
+  fast: number,
+  slow: number,
+  auto: boolean,
+): string {
+  if (bucketCount === 0) return readCssColour('--speed-fast')
+  if (auto) return autoNonEmptyColour(bucketMax, slow)
+  return bucketColour(bucketAvg, fast, slow)
+}
+
 function paintSpeedRail() {
   const canvas = speedRailEl.value
   const grid = speedGrid.value
@@ -470,22 +498,22 @@ function paintSpeedRail() {
   if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   const anchors = speedAnchors.value
-  const fast = anchors ? anchors.fast : grid.min_avg_ms
+  const auto = anchors ? anchors.source === 'auto' : true
+  const fast = anchors ? anchors.fast : 0
   const slow = anchors
     ? Math.max(anchors.slow, fast + 1)
-    : Math.max(grid.max_avg_ms, fast + 1)
+    : 6000
   const gradient = ctx.createLinearGradient(0, 0, 0, h)
   for (let i = 0; i < h; i++) {
     const b = grid.buckets[i]
-    const avg = b.count > 0 ? b.avg_ms : fast
-    const colour = bucketColour(avg, fast, slow)
+    const colour = colourForBucket(b.count, b.avg_ms, b.max_ms, fast, slow, auto)
     const offset = h === 1 ? 0 : (i + 0.5) / h
     gradient.addColorStop(Math.max(0, Math.min(1, offset)), colour)
   }
-  const firstAvg = grid.buckets[0].count > 0 ? grid.buckets[0].avg_ms : fast
-  const lastAvg = grid.buckets[h - 1].count > 0 ? grid.buckets[h - 1].avg_ms : fast
-  gradient.addColorStop(0, bucketColour(firstAvg, fast, slow))
-  gradient.addColorStop(1, bucketColour(lastAvg, fast, slow))
+  const first = grid.buckets[0]
+  const last = grid.buckets[h - 1]
+  gradient.addColorStop(0, colourForBucket(first.count, first.avg_ms, first.max_ms, fast, slow, auto))
+  gradient.addColorStop(1, colourForBucket(last.count, last.avg_ms, last.max_ms, fast, slow, auto))
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, SPEED_RAIL_WIDTH, h)
 }
