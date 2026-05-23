@@ -290,20 +290,25 @@ function jumpTo(line: number) {
       </div>
     </details>
     <div class="drawer-toolbar">
-      <div class="mode-toggle">
+      <fieldset class="mode-toggle">
+        <legend class="sr-only">Path aggregation mode</legend>
         <button
           type="button"
-          class="seg"
-          :class="{ active: tab.slowRequestMode.value === 'normalised' }"
+          class="mode-btn"
+          :class="{ 'is-on': tab.slowRequestMode.value === 'normalised' }"
+          :aria-pressed="tab.slowRequestMode.value === 'normalised'"
+          title="Collapse numeric / UUID / long-hex path segments to {id}"
           @click="tab.slowRequestMode.value = 'normalised'"
         >Normalised</button>
         <button
           type="button"
-          class="seg"
-          :class="{ active: tab.slowRequestMode.value === 'raw' }"
+          class="mode-btn"
+          :class="{ 'is-on': tab.slowRequestMode.value === 'raw' }"
+          :aria-pressed="tab.slowRequestMode.value === 'raw'"
+          title="Keep every observed raw path distinct"
           @click="tab.slowRequestMode.value = 'raw'"
         >Raw</button>
-      </div>
+      </fieldset>
       <span class="filter-input-wrap">
         <input
           v-model="tab.slowRequestFilter.value"
@@ -468,21 +473,49 @@ function jumpTo(line: number) {
   border-bottom: 1px solid var(--border-default);
 }
 
-.mode-toggle {
-  display: flex;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
-  & .seg {
-    background: transparent;
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  padding: 0;
+  margin: 0;
+
+  & .mode-btn {
+    background: var(--bg-button);
+    color: var(--fg-muted);
     border: 1px solid var(--border-button);
-    color: var(--fg-default);
-    padding: 0.15rem 0.5rem;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
     cursor: pointer;
 
-    &:first-child { border-radius: 3px 0 0 3px; }
-    &:last-child  { border-radius: 0 3px 3px 0; border-left: none; }
-    &.active {
-      background: var(--bg-button-hover);
-      color: var(--accent);
+    &:first-of-type {
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      border-right-width: 0;
+    }
+    &:last-of-type {
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+
+    &:hover:not(.is-on) { background: var(--bg-button-hover); }
+
+    &.is-on {
+      background: var(--accent);
+      color: var(--fg-on-accent);
+      border-color: var(--accent);
+      font-weight: 600;
     }
   }
 }
@@ -553,6 +586,7 @@ function jumpTo(line: number) {
         color-mix(in srgb, var(--speed-mid) 14%, transparent),
         color-mix(in srgb, var(--speed-slow) 22%, transparent)
       );
+      opacity: 0.5;
       transform: scaleX(var(--score));
       transform-origin: left center;
       z-index: 0;
