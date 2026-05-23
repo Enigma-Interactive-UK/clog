@@ -296,7 +296,7 @@ const LEVEL_HOT: Record<string, string | null> = {
   error: 'rgba(212, 87, 95, ALPHA)',
   fatal: 'rgba(179, 134, 232, ALPHA)',
 }
-const HOT_ALPHA_MIN = 0.55
+const HOT_ALPHA_MIN = 0.15
 const HOT_ALPHA_MAX = 1.0
 
 function currentMinimapBg(): string {
@@ -453,7 +453,9 @@ function hotColour(level: string, heat: number, max: number): string | null {
   if (heat <= 0 || max <= 0) return null
   const template = LEVEL_HOT[level]
   if (!template) return null
-  const t = Math.max(0, Math.min(1, heat / max))
+  // Log scale so a stray single error stays barely visible while big
+  // clusters dominate -- linear modulation flattens both ends.
+  const t = Math.max(0, Math.min(1, Math.log1p(heat) / Math.log1p(max)))
   const alpha = HOT_ALPHA_MIN + (HOT_ALPHA_MAX - HOT_ALPHA_MIN) * t
   return template.replace('ALPHA', alpha.toFixed(3))
 }
