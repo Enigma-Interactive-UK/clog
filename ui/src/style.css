@@ -19,12 +19,26 @@
 
   --red-900: #3a1f22;
   --red-700: #5a2b30;
+  --red-500: #d4575f;
   --red-200: #ffb6bb;
+
+  --amber-500: #e0b04a;
+  --amber-200: #ffd58a;
+
+  --blue-500: #6ea8ff;
+  --blue-300: #9ec5ff;
+
+  --green-500: #6cc787;
+
+  --purple-500: #b386e8;
+
+  --grey-500: #6f7682;
 
   /* Semantic surfaces */
   --bg-app: var(--slate-900);
   --bg-elevated: var(--slate-850);
   --bg-viewport: var(--slate-950);
+  --bg-sticky: rgba(20, 24, 31, 0.92);
   --bg-button: var(--slate-800);
   --bg-button-hover: var(--slate-700);
   --bg-error: var(--red-900);
@@ -38,16 +52,40 @@
   --fg-gutter: var(--slate-500);
   --fg-error: var(--red-200);
 
+  /* Axis-1 structural roles */
+  --fg-timestamp: var(--slate-300);
+  --fg-thread: var(--slate-200);
+  --fg-logger: var(--slate-300);
+  --fg-separator-dash: var(--slate-500);
+  --fg-message: var(--slate-100);
+
+  /* Level palette (also used for the 4 px left gutter strip). */
+  --level-trace: var(--grey-500);
+  --level-debug: var(--blue-300);
+  --level-info: var(--blue-500);
+  --level-warn: var(--amber-500);
+  --level-error: var(--red-500);
+  --level-fatal: var(--purple-500);
+  --level-off: var(--slate-500);
+  --level-all: var(--green-500);
+  --level-unknown: var(--slate-700);
+
   /* Semantic borders */
   --border-default: var(--slate-800);
   --border-button: var(--slate-650);
   --border-error: var(--red-700);
+  --border-sticky: var(--slate-700);
 
   /* Typography */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: Consolas, ui-monospace, monospace;
   --font-size-base: 13px;
   --row-height: 18px;
+
+  /* Layout primitives */
+  --gutter-width: 4px;
+  --line-num-width: 5em;
+  --continuation-indent: 1.4em;
 
   /* Radii / spacing primitives */
   --radius-sm: 6px;

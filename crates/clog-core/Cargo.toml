@@ -12,5 +12,7 @@ workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+regex = "1"
 
 [dev-dependencies]
+proptest = "1"
