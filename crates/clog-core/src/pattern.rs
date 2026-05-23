@@ -612,7 +612,7 @@ fn validate_variable_terminators(tokens: &[Token]) -> Result<(), PatternError> {
 /// anchors / extra tokens) come first so they edge out looser supersets.
 pub const BUILTIN_PATTERNS: &[(&str, &str)] = &[
     (
-        "wsl-oink",
+        "wsl-dev",
         "[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n",
     ),
     ("play-class-site", "%d %-5p [%t] %C{2} (%F:%L) - %m%n"),
@@ -674,7 +674,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compile_wsl_oink_pattern() {
+    fn compile_wsl_dev_pattern() {
         let p = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("compile");
         assert!(p
             .tokens
@@ -687,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_wsl_oink_header_yields_field_spans() {
+    fn parse_wsl_dev_header_yields_field_spans() {
         let p = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("compile");
         let line = b"[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play";
         let h = p.try_parse_header(line).expect("parses as header");
@@ -752,13 +752,13 @@ mod tests {
     }
 
     #[test]
-    fn auto_detect_picks_wsl_oink() {
+    fn auto_detect_picks_wsl_dev() {
         let lines: Vec<&[u8]> = vec![
             b"[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting" as &[u8],
             b"[INFO ] 2026-05-22 16:28:59.247 [main] play - Module x" as &[u8],
         ];
         let (name, _, score) = auto_detect(lines).expect("detects");
-        assert_eq!(name, "wsl-oink");
+        assert_eq!(name, "wsl-dev");
         assert!(score > 0.9);
     }
 

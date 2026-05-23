@@ -27,9 +27,11 @@ pub const DEFAULT_POLL_INTERVAL_MS: u64 = 250;
 pub enum TailEvent {
     /// File hasn't changed since last poll.
     NoChange,
-    /// File grew. `bytes` is the appended payload, starting at `from_offset`.
-    /// Only complete lines (ending in `\n`) are returned; a trailing partial
-    /// line stays buffered for the next poll.
+    /// File grew. `bytes` is the entire appended payload, starting at
+    /// `from_offset`. The buffer may end with a partial line (no trailing
+    /// `\n`) -- the caller's `extend_with_appended`-style sink is
+    /// expected to handle partial-line continuation and completion in a
+    /// future tick.
     Appended { from_offset: u64, bytes: Vec<u8> },
     /// Rotation detected. Caller must re-index from offset 0. The new size
     /// and head hash have already been adopted into `TailState`.
@@ -139,7 +141,17 @@ impl TailState {
             return Ok(TailEvent::NoChange);
         }
 
-        // Pure append. Read the gap.
+        // Pure append. Read the gap and ship it whole, partial trailing
+        // line and all. The sink (`extend_with_appended`) is responsible
+        // for partial-line state: a buffer that ends mid-line just
+        // means the next tick will deliver more bytes that either
+        // extend the same line or close it with a `\n`.
+        //
+        // Why we don't hold partials back: doing so makes a genuinely
+        // partial last line on disk invisible to the viewer until the
+        // writer flushes a newline, which can never come for files
+        // authored by hand or via editors that omit the trailing
+        // newline.
         let from = self.consumed;
         let len = size - from;
         let mut file = File::open(&self.path)?;
@@ -147,21 +159,7 @@ impl TailState {
         let len_usz = usize::try_from(len).unwrap_or(usize::MAX);
         let mut buf = vec![0u8; len_usz];
         file.read_exact(&mut buf)?;
-
-        // Trim to the last `\n` so we don't ship a half-line. Anything past
-        // it stays on disk and will be re-read once the writer flushes the
-        // newline.
-        let usable_end = match buf.iter().rposition(|b| *b == b'\n') {
-            Some(p) => p + 1,
-            None => 0,
-        };
-        if usable_end == 0 {
-            // Writer flushed bytes but no newline yet; nothing to deliver.
-            return Ok(TailEvent::NoChange);
-        }
-        buf.truncate(usable_end);
-        let advanced = u64::try_from(usable_end).unwrap_or(0);
-        self.consumed = from + advanced;
+        self.consumed = size;
         Ok(TailEvent::Appended {
             from_offset: from,
             bytes: buf,
@@ -316,22 +314,30 @@ mod tests {
     }
 
     #[test]
-    fn partial_trailing_line_is_held_back() {
+    fn partial_trailing_line_ships_and_then_completes() {
+        // New contract: a partial line ships immediately. A follow-up
+        // tick delivers the remainder (including the closing `\n`),
+        // never re-ships the same bytes. The sink is responsible for
+        // splicing the two halves into a single line.
         let log = TempLog::new("partial");
         log.append(b"complete\n");
         let mut tail = TailState::new(&log.path, log.size()).expect("new");
         log.append(b"in-progress without newline");
         match tail.poll().expect("poll") {
-            TailEvent::NoChange => {}
-            other => panic!("expected NoChange (no newline yet), got {other:?}"),
+            TailEvent::Appended { from_offset, bytes } => {
+                assert_eq!(from_offset, 9);
+                assert_eq!(bytes, b"in-progress without newline");
+            }
+            other => panic!("expected Appended (partial ships), got {other:?}"),
         }
         log.append(b" and done\n");
         match tail.poll().expect("poll") {
             TailEvent::Appended { from_offset, bytes } => {
-                assert_eq!(from_offset, 9);
-                assert_eq!(bytes, b"in-progress without newline and done\n");
+                // consumed advanced through the partial bytes already.
+                assert_eq!(from_offset, 9 + 27);
+                assert_eq!(bytes, b" and done\n");
             }
-            other => panic!("expected Appended after newline, got {other:?}"),
+            other => panic!("expected Appended (remainder), got {other:?}"),
         }
     }
 

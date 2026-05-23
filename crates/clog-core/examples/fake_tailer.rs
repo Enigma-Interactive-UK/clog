@@ -89,7 +89,7 @@ fn main() {
         }
         let level = levels[usize::try_from(seq).unwrap_or(usize::MAX) % levels.len()];
         let elapsed_ms = started.elapsed().as_millis();
-        // wsl-oink pattern shape so a freshly-opened clog auto-detects it.
+        // wsl-dev pattern shape so a freshly-opened clog auto-detects it.
         let line = format!(
             "[{level}] 2026-05-23 12:00:{:02}.{:03} [tail-{}] play - synthetic line #{seq}\n",
             (seq % 60),

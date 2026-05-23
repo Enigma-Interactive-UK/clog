@@ -82,6 +82,8 @@
   --hl-stack-line-fg: var(--amber-500);
   --hl-path-fg: var(--green-500);
   --hl-url-fg: var(--blue-500);
+  --hl-search-bg: var(--amber-500);
+  --hl-search-fg: var(--slate-950);
 
   /* Semantic borders */
   --border-default: var(--slate-800);

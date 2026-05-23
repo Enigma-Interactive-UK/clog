@@ -14,17 +14,20 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use clog_core::{
-    auto_detect, index_file, sample_lines, scan_records, CompiledPattern, CoreError, HeaderFields,
-    Level, LineSource, PatternError, RecordHeader, RecordScanner, RegexScanner, RegexScannerError,
+    auto_detect, index_file, sample_lines, scan_records, search_records, CompiledPattern,
+    CoreError, HeaderFields, HitRef, Level, LevelMask, LineSource, PatternError, RecordHeader,
+    RecordScanner, RegexScanner, RegexScannerError, SearchError, SearchMode, SearchOptions,
     TailEvent, TailState, BUILTIN_PATTERNS, DEFAULT_POLL_INTERVAL_MS,
 };
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::oneshot;
 
-use crate::channels::TailEmitter;
+use crate::channels::{SearchEmitter, TailEmitter};
 
 #[derive(Debug, Serialize, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -39,6 +42,17 @@ enum IpcError {
     BadPattern { message: String },
     #[error("regex compile failed: {message}")]
     BadRegex { message: String },
+    #[error("empty search query")]
+    EmptyQuery,
+}
+
+impl From<SearchError> for IpcError {
+    fn from(err: SearchError) -> Self {
+        match err {
+            SearchError::EmptyQuery => Self::EmptyQuery,
+            SearchError::BadRegex(m) => Self::BadRegex { message: m },
+        }
+    }
 }
 
 impl From<CoreError> for IpcError {
@@ -126,6 +140,16 @@ struct OpenedFile {
     /// `JoinHandle` for the running tail task, retained so we can drop it
     /// cleanly on close.
     tail_join: Option<JoinHandle<()>>,
+    /// Monotonic id assigned to the current in-flight search, if any. Each
+    /// `start_search` call bumps this so stale `SearchDelta` messages can
+    /// be discriminated by the UI.
+    current_search_id: u64,
+    /// Cancellation flag for the current search task. Set to true by
+    /// `cancel_search` or by the next `start_search` call. The search
+    /// task polls this between chunks and aborts early when it flips.
+    search_cancel: Option<Arc<AtomicBool>>,
+    /// `JoinHandle` for the running search task. Dropped on close.
+    search_join: Option<JoinHandle<()>>,
 }
 
 impl OpenedFile {
@@ -150,6 +174,18 @@ impl OpenedFile {
         // thread to wait.
         self.tail_join = None;
     }
+
+    /// Cancel the current search task, if any. The flag flips; the
+    /// running task will notice on its next chunk boundary and exit. We
+    /// don't await the join handle here -- the next `start_search` will
+    /// just allocate a fresh flag.
+    fn cancel_search(&mut self) {
+        if let Some(flag) = &self.search_cancel {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.search_cancel = None;
+        self.search_join = None;
+    }
 }
 
 #[derive(Default)]
@@ -165,7 +201,7 @@ struct OpenedFilePayload {
     size_bytes: u64,
     line_count: u64,
     record_count: u64,
-    /// Name of the auto-detected builtin pattern (`"wsl-oink"`, `"prod"`,
+    /// Name of the auto-detected builtin pattern (`"wsl-dev"`, `"prod"`,
     /// `"log4j2-default"`) or `None` if none matched and we fell back to
     /// best effort.
     pattern_name: Option<String>,
@@ -225,7 +261,7 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
     let (name, scanner, score) = if let Some(hit) = auto_detect(sample_refs.iter().copied()) {
         (Some(hit.0.to_string()), hit.1, hit.2)
     } else {
-        // Fallback: still build a wsl-oink scanner so records are at
+        // Fallback: still build a wsl-dev scanner so records are at
         // least segmented per line. User can paste the real pattern.
         let scanner = CompiledPattern::compile(BUILTIN_PATTERNS[0].1).expect("builtin valid");
         (None, scanner, 0.0)
@@ -260,6 +296,9 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
         scanner_kind: ScannerKind::Pattern(pattern_source),
         tail_shutdown: None,
         tail_join: None,
+        current_search_id: 0,
+        search_cancel: None,
+        search_join: None,
     };
     opened.rebuild_line_caches(
         line_index.line_count() as u64,
@@ -333,6 +372,12 @@ fn read_range(path: &Path, start: u64, len: usize) -> std::io::Result<Vec<u8>> {
 struct LinePayload {
     record_idx: u64,
     line_within_record: u32,
+    /// Byte offset of this physical line's first byte relative to the
+    /// owning record's `byte_offset`. The UI uses this to map search-hit
+    /// ranges (which are record-relative) onto line-relative char
+    /// offsets. ASCII is assumed; multi-byte characters in a log line
+    /// will skew the overlay -- acceptable for P6.
+    byte_offset_in_record: u32,
     level: Level,
     /// Populated only when `line_within_record == 0`. Spans are relative to
     /// the line's first byte, so the UI can slice directly out of `text`.
@@ -404,9 +449,11 @@ fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesP
         } else {
             None
         };
+        let byte_offset_in_record = u32::try_from(line_start - rec.byte_offset).unwrap_or(u32::MAX);
         lines.push(LinePayload {
             record_idx: rec_idx as u64,
             line_within_record,
+            byte_offset_in_record,
             level: rec.level,
             fields,
             text,
@@ -442,8 +489,7 @@ fn level_rank(l: Level) -> u8 {
         Level::Debug => 2,
         Level::Trace => 1,
         Level::All => 4,
-        Level::Off => 0,
-        Level::Unknown => 0,
+        Level::Off | Level::Unknown => 0,
     }
 }
 
@@ -476,8 +522,11 @@ fn get_level_minimap(
     for rec in &file.records {
         let first_line = u64::from(rec.line_offset);
         let last_line = first_line + u64::from(rec.line_count.max(1)) - 1;
-        let first_bucket = (first_line.saturating_mul(bc) / lc) as usize;
-        let last_bucket = ((last_line.saturating_mul(bc) / lc) as usize).min(bucket_count - 1);
+        let first_bucket =
+            usize::try_from(first_line.saturating_mul(bc) / lc).unwrap_or(bucket_count - 1);
+        let last_bucket = usize::try_from(last_line.saturating_mul(bc) / lc)
+            .unwrap_or(bucket_count - 1)
+            .min(bucket_count - 1);
         for b in &mut buckets[first_bucket..=last_bucket] {
             if level_rank(rec.level) > level_rank(*b) {
                 *b = rec.level;
@@ -491,12 +540,246 @@ fn get_level_minimap(
     })
 }
 
+/// Lightweight projection of a record. Used by the UI's level-mask + filter
+/// path so it can build the visible-line set without going through the
+/// full search engine.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecordRef {
+    pub record_idx: u64,
+    pub record_first_line: u64,
+    pub record_line_count: u32,
+    pub level: Level,
+}
+
+#[derive(Debug, Serialize)]
+struct RecordRefsPayload {
+    refs: Vec<RecordRef>,
+}
+
+/// Return every record's `(record_idx, first_line, line_count)` whose
+/// level passes `level_mask`. The UI uses this to build `filteredLineIndices`
+/// when the search query is empty -- the level mask alone narrows the view
+/// without needing a fake "match all" search.
+#[tauri::command]
+fn list_records_by_level(
+    state: State<'_, AppState>,
+    file_id: u64,
+    level_mask: u32,
+) -> Result<RecordRefsPayload, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    let mask = LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF));
+    let refs = file
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| mask.allows(r.level))
+        .map(|(i, r)| RecordRef {
+            record_idx: i as u64,
+            record_first_line: u64::from(r.line_offset),
+            record_line_count: r.line_count,
+            level: r.level,
+        })
+        .collect();
+    Ok(RecordRefsPayload { refs })
+}
+
 #[tauri::command]
 fn close_file(state: State<'_, AppState>, file_id: u64) {
     let mut guard = state.files.lock().expect("files mutex poisoned");
     if let Some(mut f) = guard.remove(&file_id) {
         f.stop_tail();
+        f.cancel_search();
     }
+}
+
+/// Streamed per-batch payload for `start_search`. The UI accumulates
+/// `hits` into its hit map and uses `total` for the count badge; the
+/// terminal message carries `done = true` and `hits = []` (or whatever
+/// remained in the buffer at `finish` time).
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchDelta {
+    /// Discriminator: the UI ignores messages whose id doesn't match the
+    /// search it last started. Prevents stale results from a previous
+    /// keystroke clobbering the current set.
+    pub search_id: u64,
+    pub hits: Vec<HitRef>,
+    /// Cumulative hit count delivered so far, including the hits in this
+    /// message. The UI reads this for its "N hits" badge.
+    pub total: u64,
+    /// True only on the terminal message of a given search. After this
+    /// the search task has exited.
+    pub done: bool,
+}
+
+/// Request body for `start_search`. Bundled into a struct so the IPC
+/// command stays under the `too_many_arguments` lint.
+#[derive(Debug, serde::Deserialize)]
+pub struct SearchRequest {
+    mode: String,
+    query: String,
+    #[serde(default)]
+    case_sensitive: bool,
+    /// Bitmask of allowed levels. Bit ordering matches `clog_core::search::level_bit`.
+    level_mask: u32,
+}
+
+/// Start (or restart) a search across `file_id`. Any previous in-flight
+/// search for this file is cancelled first. Hits stream back on
+/// `on_hits` in batches; the terminal message has `done = true`.
+#[tauri::command]
+fn start_search(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    file_id: u64,
+    request: SearchRequest,
+    on_hits: Channel<SearchDelta>,
+) -> Result<u64, IpcError> {
+    let SearchRequest {
+        mode,
+        query,
+        case_sensitive,
+        level_mask,
+    } = request;
+    let search_mode = match mode.as_str() {
+        "smart" => SearchMode::Smart,
+        "regex" => SearchMode::Regex,
+        _ => {
+            return Err(IpcError::BadPattern {
+                message: format!("unknown search mode {mode:?}"),
+            })
+        }
+    };
+
+    // Pre-flight: validate a regex compiles so the UI can red-underline
+    // a broken pattern without ever spawning a task. Smart mode's empty
+    // query is caught here too so the error surface is uniform.
+    let opts = SearchOptions {
+        case_sensitive,
+        level_mask: LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF)),
+    };
+    if matches!(search_mode, SearchMode::Smart) && query.split_ascii_whitespace().next().is_none() {
+        return Err(IpcError::EmptyQuery);
+    }
+    if matches!(search_mode, SearchMode::Regex) {
+        // Bytes regex; same compile path the engine uses.
+        let pattern = if case_sensitive {
+            query.clone()
+        } else {
+            format!("(?i){query}")
+        };
+        regex::bytes::Regex::new(&pattern).map_err(|e| IpcError::BadRegex {
+            message: e.to_string(),
+        })?;
+    }
+
+    // Snapshot the records + bytes under the lock so the search task can
+    // run on a clone. Cancel any previous search, allocate a fresh flag
+    // + id, and remember them on the file so cancel_search/close_file
+    // can reach them.
+    let (records_snapshot, bytes_snapshot, search_id, cancel_flag) = {
+        let mut guard = state.files.lock().expect("files mutex poisoned");
+        let file = guard
+            .get_mut(&file_id)
+            .ok_or(IpcError::UnknownFile { file_id })?;
+        file.cancel_search();
+        file.current_search_id += 1;
+        let id = file.current_search_id;
+        let flag = Arc::new(AtomicBool::new(false));
+        file.search_cancel = Some(flag.clone());
+        (file.records.clone(), file.bytes.clone(), id, flag)
+    };
+
+    let app_handle = app.clone();
+    let join = tauri::async_runtime::spawn(async move {
+        let emitter = SearchEmitter::new(on_hits, search_id);
+        // Heavy lifting on the blocking pool so we don't park the tokio
+        // worker for the duration of the rayon parallel walk.
+        let cancel_for_task = cancel_flag.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            // The rayon pass produces ALL hits at once. Cancellation
+            // takes effect at the granularity of "between hot loop and
+            // emission" rather than mid-walk, which is acceptable -- the
+            // bound is sub-second on a 75k-record file.
+            if cancel_for_task.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(Vec::new());
+            }
+            search_records(
+                &records_snapshot,
+                &bytes_snapshot,
+                search_mode,
+                &query,
+                opts,
+            )
+        })
+        .await;
+
+        let hits = match result {
+            Ok(Ok(hits)) => hits,
+            // BadRegex was caught pre-flight; this can only be EmptyQuery
+            // re-raised from the engine. Treat as "no hits" so the UI
+            // still receives a terminal done message.
+            Ok(Err(_)) | Err(_) => Vec::new(),
+        };
+
+        // Stream them out in batched messages. The emitter ships
+        // SEARCH_BATCH_SIZE per batch.
+        let _cancelled = stream_hits(emitter, hits, &cancel_flag);
+
+        // Clear the file's cancel handle iff we're still the current
+        // search. A newer start_search has already replaced it -- don't
+        // stomp.
+        clear_search_state_if_current(&app_handle, file_id, search_id);
+    });
+
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    if let Some(file) = guard.get_mut(&file_id) {
+        file.search_join = Some(join);
+    }
+    Ok(search_id)
+}
+
+fn clear_search_state_if_current(app: &AppHandle, file_id: u64, search_id: u64) {
+    let state = app.state::<AppState>();
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    if let Some(f) = guard.get_mut(&file_id) {
+        if f.current_search_id == search_id {
+            f.search_cancel = None;
+            f.search_join = None;
+        }
+    }
+}
+
+fn stream_hits(mut emitter: SearchEmitter, hits: Vec<HitRef>, cancel: &Arc<AtomicBool>) -> bool {
+    let mut cancelled = false;
+    for hit in hits {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
+        if emitter.push(hit).is_err() {
+            cancelled = true;
+            break;
+        }
+    }
+    let _ = if cancelled {
+        emitter.abort()
+    } else {
+        emitter.finish()
+    };
+    cancelled
+}
+
+#[tauri::command]
+fn cancel_search(state: State<'_, AppState>, file_id: u64) -> Result<(), IpcError> {
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get_mut(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    file.cancel_search();
+    Ok(())
 }
 
 /// Score `pattern` (`PatternLayout`) or `regex` against the file's first 64KB.
@@ -729,23 +1012,37 @@ fn extend_with_appended<S: RecordScanner>(
     appended: &[u8],
 ) {
     debug_assert_eq!(from_offset, file.bytes.len() as u64);
+    let prev_was_partial = file.bytes.last().is_some_and(|&b| b != b'\n');
     file.bytes.extend_from_slice(appended);
     let new_total = file.bytes.len() as u64;
     let first_new_record_idx = file.records.len();
 
-    // Walk the appended payload, splitting on '\n'. The tail layer only
-    // ships complete lines, so the buffer ends in '\n'.
+    // Partial-line continuation. If the file's previous tail byte was
+    // not `\n`, the previous record's last physical line is incomplete
+    // and the first bytes of `appended` belong to it. They extend its
+    // text (and possibly close it with a `\n`); they MUST NOT push a
+    // new line_offset or record. The byte_len fix-up at the bottom
+    // brings the bookkeeping back into sync.
     let mut local = 0usize;
+    if prev_was_partial && !appended.is_empty() {
+        match appended.iter().position(|&b| b == b'\n') {
+            Some(rel) => local = rel + 1,
+            None => local = appended.len(),
+        }
+    }
+
+    // Walk the rest as new physical lines. The buffer may end mid-line
+    // (no trailing `\n`); that trailing chunk becomes a new partial
+    // line with its own line_offset/record, and the next tick will
+    // extend it via the partial-line continuation branch above.
     while local < appended.len() {
-        let nl_rel = appended[local..]
-            .iter()
-            .position(|&b| b == b'\n')
-            .unwrap_or(appended.len() - local - 1);
-        let nl_abs = local + nl_rel; // position of '\n' (or last byte if no '\n')
+        let (nl_abs, has_newline) = match appended[local..].iter().position(|&b| b == b'\n') {
+            Some(rel) => (local + rel, true),
+            None => (appended.len(), false),
+        };
         let abs_line_start = from_offset + local as u64;
-        // Line content without trailing \r\n.
         let mut clean_end = nl_abs;
-        if clean_end > local && appended[clean_end - 1] == b'\r' {
+        if has_newline && clean_end > local && appended[clean_end - 1] == b'\r' {
             clean_end -= 1;
         }
         let line_slice = &appended[local..clean_end];
@@ -777,12 +1074,18 @@ fn extend_with_appended<S: RecordScanner>(
             file.record_first_line.push(line_idx as u64);
         }
 
-        local = nl_abs + 1;
+        local = if has_newline {
+            nl_abs + 1
+        } else {
+            appended.len()
+        };
     }
 
     // Fix up byte_len for any record whose end falls inside the appended
-    // range. That's the last record before the append (if it gained
-    // continuation lines) and every new record we just pushed.
+    // range. That's the last record before the append (it always gains
+    // bytes -- either via partial-line continuation or because the
+    // append closed its trailing `\n`) plus every new record we just
+    // pushed.
     let recount_start = first_new_record_idx.saturating_sub(1);
     let n = file.records.len();
     for i in recount_start..n {
@@ -843,7 +1146,10 @@ fn main() {
             set_pattern,
             start_tail,
             stop_tail,
-            get_level_minimap
+            get_level_minimap,
+            start_search,
+            cancel_search,
+            list_records_by_level
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -855,12 +1161,12 @@ mod tests {
     use clog_core::builtin_pattern;
 
     /// Build a fresh `OpenedFile` with no content, wired up with the
-    /// wsl-oink pattern so a stream of header lines can be appended via
+    /// wsl-dev pattern so a stream of header lines can be appended via
     /// `extend_with_appended`.
     fn fresh_file() -> (OpenedFile, CompiledScanner) {
-        let pattern_src = builtin_pattern("wsl-oink").expect("wsl-oink builtin");
+        let pattern_src = builtin_pattern("wsl-dev").expect("wsl-dev builtin");
         let scanner_kind = ScannerKind::Pattern(pattern_src.to_string());
-        let scanner = scanner_kind.compile().expect("compile wsl-oink");
+        let scanner = scanner_kind.compile().expect("compile wsl-dev");
         let file = OpenedFile {
             path: PathBuf::from("test.log"),
             records: Vec::new(),
@@ -869,10 +1175,13 @@ mod tests {
             bytes: Vec::new(),
             line_offsets: Vec::new(),
             pattern_source: pattern_src.to_string(),
-            pattern_name: Some("wsl-oink".to_string()),
+            pattern_name: Some("wsl-dev".to_string()),
             scanner_kind,
             tail_shutdown: None,
             tail_join: None,
+            current_search_id: 0,
+            search_cancel: None,
+            search_join: None,
         };
         (file, scanner)
     }
@@ -984,6 +1293,139 @@ mod tests {
         assert!(lines.lines[2].text.contains("Foo.java:17"));
     }
 
+    /// Exact-scenario regression: a five-line wsl-dev fixture mixing
+    /// WARN/DEBUG/TRACE/ERROR (same shape the user reported a sticky-row
+    /// bug against) is appended one line per tick. After every tick:
+    ///
+    /// * `line_count` and `records.len()` match the tick number.
+    /// * Every record so far has `line_count == 1` -- no line is
+    ///   silently absorbed as a continuation of the previous record.
+    /// * Every line's text reads back exactly.
+    /// * `byte_offset_in_record == 0` on every line (each is its own
+    ///   record's first line).
+    ///
+    /// Then the same five lines are also tested when appended in a
+    /// single tail batch -- the per-tick and batch paths must agree.
+    #[test]
+    fn five_line_mixed_levels_each_become_their_own_record() {
+        let body = [
+            "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n",
+            "[DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available\n",
+            "[TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available\n",
+            "[ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available\n",
+            "[ERROR] 2026-05-22 16:28:59.393 [main] play - Module secure is available\n",
+        ];
+        let expected_text: Vec<String> = body.iter().map(|l| l.trim_end().to_string()).collect();
+        let expected_levels = [
+            Level::Warn,
+            Level::Debug,
+            Level::Trace,
+            Level::Error,
+            Level::Error,
+        ];
+
+        // --- Per-tick path ---
+        let (mut file, scanner) = fresh_file();
+        for (tick, payload) in body.iter().enumerate() {
+            extend(&mut file, &scanner, payload.as_bytes());
+            assert_eq!(file.line_count, (tick + 1) as u64, "tick {tick}: line_count");
+            assert_eq!(file.records.len(), tick + 1, "tick {tick}: records.len");
+            for (ri, rec) in file.records.iter().enumerate() {
+                assert_eq!(
+                    rec.line_count, 1,
+                    "tick {tick}: record {ri} should be one line, got {}",
+                    rec.line_count
+                );
+                assert_eq!(
+                    rec.level, expected_levels[ri],
+                    "tick {tick}: record {ri} level"
+                );
+            }
+            let lines =
+                build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+            assert_eq!(lines.lines.len(), tick + 1);
+            for (i, got) in lines.lines.iter().enumerate() {
+                assert_eq!(got.text, expected_text[i], "tick {tick} line {i} text");
+                assert_eq!(got.line_within_record, 0, "tick {tick} line {i} l-w-r");
+                assert_eq!(
+                    got.byte_offset_in_record, 0,
+                    "tick {tick} line {i} byte_offset_in_record"
+                );
+                assert!(got.fields.is_some(), "tick {tick} line {i} fields present");
+            }
+        }
+
+        // --- Single-batch path ---
+        let (mut file, scanner) = fresh_file();
+        let combined: String = body.concat();
+        extend(&mut file, &scanner, combined.as_bytes());
+        assert_eq!(file.line_count, 5);
+        assert_eq!(file.records.len(), 5);
+        for (ri, rec) in file.records.iter().enumerate() {
+            assert_eq!(rec.line_count, 1, "batch record {ri} should be one line");
+            assert_eq!(rec.level, expected_levels[ri], "batch record {ri} level");
+        }
+        let lines = build_lines_payload(&file, 0, 5).expect("build_lines_payload");
+        for (i, got) in lines.lines.iter().enumerate() {
+            assert_eq!(got.text, expected_text[i], "batch line {i} text");
+            assert_eq!(got.line_within_record, 0, "batch line {i} l-w-r");
+            assert_eq!(got.byte_offset_in_record, 0, "batch line {i} boff");
+        }
+    }
+
+    /// Mixed scenario: a real-world log has both new header records and
+    /// stack-trace continuation lines interleaved. After several ticks:
+    ///
+    /// * Header lines produce new records.
+    /// * Continuation lines extend the previous record's `line_count`
+    ///   AND keep their `byte_offset_in_record` > 0.
+    /// * `get_lines` walks every physical line and returns the right
+    ///   (`record_idx`, `line_within_record`, `byte_offset_in_record`)
+    ///   for each, regardless of whether neighbouring lines on the same
+    ///   page were appended in different ticks.
+    #[test]
+    fn header_and_continuation_interleaved_stay_consistent_across_ticks() {
+        let (mut file, scanner) = fresh_file();
+        // Tick 1: a header, then a continuation. One record, two lines.
+        extend(
+            &mut file,
+            &scanner,
+            b"[ERROR] 2026-05-22 16:28:59.246 [main] play - boom\n\tat com.example.Foo.bar(Foo.java:42)\n",
+        );
+        assert_eq!(file.line_count, 2);
+        assert_eq!(file.records.len(), 1);
+        assert_eq!(file.records[0].line_count, 2);
+
+        // Tick 2: another continuation, then a fresh header. The
+        // continuation must attach to record 0; the header must
+        // produce record 1.
+        extend(
+            &mut file,
+            &scanner,
+            b"\tat com.example.Foo.baz(Foo.java:17)\n[INFO ] 2026-05-22 16:28:59.300 [main] play - back to normal\n",
+        );
+        assert_eq!(file.line_count, 4);
+        assert_eq!(file.records.len(), 2);
+        assert_eq!(file.records[0].line_count, 3, "stack frames attach to ERROR");
+        assert_eq!(file.records[1].line_count, 1, "INFO is its own record");
+
+        let lines = build_lines_payload(&file, 0, 4).expect("build_lines_payload");
+        // Line 0: ERROR header.
+        assert_eq!(lines.lines[0].line_within_record, 0);
+        assert_eq!(lines.lines[0].byte_offset_in_record, 0);
+        assert!(lines.lines[0].fields.is_some());
+        // Lines 1 and 2: stack continuations of record 0. Their
+        // byte_offset_in_record must be > 0 because they're past the
+        // record's first line.
+        assert_eq!(lines.lines[1].line_within_record, 1);
+        assert!(lines.lines[1].byte_offset_in_record > 0);
+        assert_eq!(lines.lines[2].line_within_record, 2);
+        assert!(lines.lines[2].byte_offset_in_record > lines.lines[1].byte_offset_in_record);
+        // Line 3: INFO header starts a new record -> back to 0.
+        assert_eq!(lines.lines[3].line_within_record, 0);
+        assert_eq!(lines.lines[3].byte_offset_in_record, 0);
+    }
+
     /// Simulates rotation: the file is truncated and a different shape of
     /// content is re-read from disk. After `rebuild_line_caches` (which
     /// `apply_rotation` calls), the `OpenedFile` must be fully consistent
@@ -1049,5 +1491,672 @@ mod tests {
         assert!(lines.lines[1].text.ends_with("- next"));
         assert!(!lines.lines[0].text.contains("- old"));
         assert!(!lines.lines[1].text.contains("- old"));
+    }
+
+    // --- Property tests --------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn level_word(i: u32) -> &'static str {
+        // Five-char-padded (matches the wsl-dev pattern's `%-5level`).
+        match i % 6 {
+            0 => "INFO ",
+            1 => "DEBUG",
+            2 => "WARN ",
+            3 => "ERROR",
+            4 => "TRACE",
+            _ => "FATAL",
+        }
+    }
+
+    fn expected_level(i: u32) -> Level {
+        match i % 6 {
+            0 => Level::Info,
+            1 => Level::Debug,
+            2 => Level::Warn,
+            3 => Level::Error,
+            4 => Level::Trace,
+            _ => Level::Fatal,
+        }
+    }
+
+    /// Build a synthetic log buffer of `n_lines` complete wsl-dev records
+    /// and return `(bytes, expected_levels)`. Each record is exactly one
+    /// line and ends in `\n`.
+    fn synth_lines(n_lines: u32) -> (Vec<u8>, Vec<Level>) {
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut levels: Vec<Level> = Vec::new();
+        for i in 0..n_lines {
+            let level = level_word(i);
+            let line = format!(
+                "[{level}] 2026-05-22 16:28:59.{:03} [main] play - synthetic line {i}\n",
+                i % 1000
+            );
+            bytes.extend_from_slice(line.as_bytes());
+            levels.push(expected_level(i));
+        }
+        (bytes, levels)
+    }
+
+    /// Apply the tail trim (drop bytes after the last newline) the way
+    /// `TailState::poll` does in clog-core. Returns the trimmed slice.
+    fn tail_trim(buf: &[u8]) -> &[u8] {
+        match buf.iter().rposition(|b| *b == b'\n') {
+            Some(p) => &buf[..=p],
+            None => &[],
+        }
+    }
+
+    /// Simulate a tail pipeline: hand the bytes to `extend_with_appended`
+    /// in N arbitrary chunks. After every chunk we trim to the last `\n`
+    /// (just like `TailState`), so a chunk that ends mid-line holds
+    /// the partial bytes until the next chunk completes it. Verifies the
+    /// final state -- records, `line_count`, every line's text and level --
+    /// is identical to the single-batch path.
+    fn run_split_property(n_lines: u32, splits: Vec<u32>) {
+        let (full_bytes, expected_levels) = synth_lines(n_lines);
+        let total = full_bytes.len();
+
+        // --- Reference: one shot. ---
+        let (mut ref_file, ref_scanner) = fresh_file();
+        extend(&mut ref_file, &ref_scanner, &full_bytes);
+
+        // --- Streamed: split + tail-trim chunks. ---
+        // Normalise + sort splits into a unique, in-range list, and tack
+        // on `total` so the trailing bytes always get flushed.
+        let mut points: Vec<usize> = splits
+            .into_iter()
+            .map(|s| (s as usize).min(total))
+            .collect();
+        points.push(total);
+        points.sort_unstable();
+        points.dedup();
+
+        let (mut streamed_file, streamed_scanner) = fresh_file();
+        // `shipped` tracks what we've handed to extend_with_appended.
+        // Each split boundary is the current writer position; bytes
+        // between shipped and the boundary that don't end in `\n` get
+        // held back until the next chunk completes the line.
+        let mut shipped = 0usize;
+        for boundary in points {
+            let pending = &full_bytes[shipped..boundary];
+            let usable = tail_trim(pending);
+            if !usable.is_empty() {
+                extend(&mut streamed_file, &streamed_scanner, usable);
+                shipped += usable.len();
+            }
+        }
+        // After the final chunk we must have shipped everything (the
+        // synthetic buffer ends in `\n`).
+        assert_eq!(shipped, total, "tail must ship every complete line");
+
+        // --- Invariants ---
+        assert_eq!(
+            streamed_file.line_count, ref_file.line_count,
+            "line_count parity"
+        );
+        assert_eq!(
+            streamed_file.records.len(),
+            ref_file.records.len(),
+            "records.len parity"
+        );
+        assert_eq!(
+            streamed_file.records.len(),
+            n_lines as usize,
+            "each synthetic line is its own record"
+        );
+        for (i, rec) in streamed_file.records.iter().enumerate() {
+            assert_eq!(rec.line_count, 1, "record {i} line_count");
+            assert_eq!(rec.level, expected_levels[i], "record {i} level");
+        }
+        // Per-line text + boff parity across the two paths.
+        let ref_lines = build_lines_payload(&ref_file, 0, ref_file.line_count).unwrap();
+        let streamed_lines =
+            build_lines_payload(&streamed_file, 0, streamed_file.line_count).unwrap();
+        for i in 0..ref_lines.lines.len() {
+            assert_eq!(
+                streamed_lines.lines[i].text, ref_lines.lines[i].text,
+                "line {i} text parity"
+            );
+            assert_eq!(
+                streamed_lines.lines[i].line_within_record, 0,
+                "line {i} l-w-r"
+            );
+            assert_eq!(
+                streamed_lines.lines[i].byte_offset_in_record, 0,
+                "line {i} byte_offset_in_record"
+            );
+        }
+    }
+
+    proptest! {
+        // Deterministic-ish: a single random seed should hit a wide range of
+        // split shapes. The shape is (n_lines, list of split points). We
+        // bound n_lines so each case stays fast.
+        #[test]
+        fn tail_chunking_preserves_record_state(
+            n_lines in 1u32..30,
+            splits in proptest::collection::vec(0u32..2048, 0..40),
+        ) {
+            run_split_property(n_lines, splits);
+        }
+    }
+
+    /// Exact reproduction of the user's bug report: open a file with
+    /// four complete wsl-dev lines (all ending in `\n`), then append a
+    /// fifth line WITHOUT a trailing `\n`, then later with the `\n`.
+    /// This drives the FULL tail+extend pipeline end-to-end (real
+    /// `TailState`, real file I/O) so we know whether the empty-row
+    /// symptom can be reproduced server-side.
+    #[test]
+    fn append_without_newline_then_with_newline_matches_user_repro() {
+        use clog_core::tail::{TailEvent, TailState};
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+
+        // Spin up a unique temp file.
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path: PathBuf = std::env::temp_dir().join(format!("clog-repro-{pid}-{ts}.log"));
+        let _guard = scopeguard_like(&path);
+
+        // Seed the four initial lines, each terminated with `\n`.
+        let seed = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+                    [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
+                    [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
+                    [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
+        std::fs::write(&path, seed.as_bytes()).expect("seed file");
+
+        // Open: index + records.
+        let (mut file, _scanner_unused) = fresh_file();
+        let scanner_kind = file.scanner_kind.clone();
+        let scanner = scanner_kind.compile().expect("compile");
+        let (mut source, _line_index, records) =
+            clog_core::index_file(&path, &scanner).expect("index_file");
+        file.path = path.clone();
+        file.records = records;
+        let bytes = source.read_all().expect("read_all");
+        let line_offsets = clog_core::LineIndex::build(std::io::Cursor::new(&bytes))
+            .expect("LineIndex")
+            .line_offsets;
+        let lc = line_offsets.len() as u64;
+        file.bytes = bytes;
+        file.rebuild_line_caches(lc, line_offsets);
+
+        assert_eq!(file.records.len(), 4, "four records at open");
+        assert_eq!(file.line_count, 4, "four lines at open");
+
+        // Start a tail state anchored at the file's current size.
+        let mut tail =
+            TailState::new(&path, file.bytes.len() as u64).expect("TailState::new");
+
+        // --- Step 3: append the fifth line WITHOUT trailing `\n`. ---
+        let line5_no_nl =
+            "[INFO ] 2026-05-22 16:28:59.393 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)";
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open append")
+            .write_all(line5_no_nl.as_bytes())
+            .expect("append no-nl");
+
+        // New contract: tail ships the partial line immediately. The
+        // sink (extend) parses the header even from the partial bytes
+        // -- the wsl-dev pattern's level/date/thread/logger fields all
+        // sit ahead of the message, so a partial message tail still
+        // allows a full header parse.
+        match tail.poll().expect("poll after no-nl append") {
+            TailEvent::Appended { from_offset, bytes } => {
+                assert_eq!(from_offset, 413, "consumed cursor");
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                assert!(
+                    text.starts_with("[INFO ]"),
+                    "shipped chunk starts with INFO header, got {text:?}"
+                );
+                assert!(
+                    !text.ends_with('\n'),
+                    "shipped chunk is partial (no trailing newline), got {text:?}"
+                );
+                extend(&mut file, &scanner, &bytes);
+            }
+            other => panic!("expected Appended (partial ships), got {other:?}"),
+        }
+        // The partial INFO line is now visible.
+        assert_eq!(file.records.len(), 5, "INFO record visible while partial");
+        assert_eq!(file.line_count, 5);
+        assert_eq!(file.records[4].level, Level::Info);
+        assert_eq!(file.records[4].line_count, 1);
+
+        // --- Step 4: append the trailing newline. ---
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open append")
+            .write_all(b"\n")
+            .expect("append nl");
+
+        match tail.poll().expect("poll after nl") {
+            TailEvent::Appended { bytes, .. } => {
+                // Just the `\n` byte -- the partial bytes were shipped
+                // last tick and consumed already moved past them.
+                assert_eq!(bytes, b"\n", "remainder is exactly the newline");
+                extend(&mut file, &scanner, &bytes);
+            }
+            other => panic!("expected Appended (remainder), got {other:?}"),
+        }
+
+        // Final post-condition unchanged: 5 records, 5 lines. The `\n`
+        // extends record 4's byte_len but does not push a new line.
+        assert_eq!(file.records.len(), 5);
+        assert_eq!(file.line_count, 5);
+        assert_eq!(file.records[4].line_count, 1);
+
+        let lines = build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+        assert!(lines.lines[4].text.starts_with("[INFO ]"));
+        assert_eq!(lines.lines[4].line_within_record, 0);
+        assert!(lines.lines[4].fields.is_some());
+    }
+
+    /// Same flow but the user's editor "saves" by writing all 5 lines in
+    /// one atomic step (truncate + write). Drives the rotation path AND
+    /// the subsequent extend path.
+    #[test]
+    fn atomic_save_with_fifth_line_lands_as_five_records() {
+        use clog_core::tail::{TailEvent, TailState};
+        use std::path::PathBuf;
+
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path: PathBuf = std::env::temp_dir().join(format!("clog-atomic-{pid}-{ts}.log"));
+        let _guard = scopeguard_like(&path);
+
+        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+                          [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
+                          [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
+                          [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
+        std::fs::write(&path, four_lines.as_bytes()).expect("seed");
+
+        let (mut file, _scanner_unused) = fresh_file();
+        let scanner_kind = file.scanner_kind.clone();
+        let scanner = scanner_kind.compile().expect("compile");
+        let (mut source, _li, records) = clog_core::index_file(&path, &scanner).expect("idx");
+        file.path = path.clone();
+        file.records = records;
+        let bytes = source.read_all().expect("read");
+        let line_offsets = clog_core::LineIndex::build(std::io::Cursor::new(&bytes))
+            .expect("li")
+            .line_offsets;
+        let lc = line_offsets.len() as u64;
+        file.bytes = bytes;
+        file.rebuild_line_caches(lc, line_offsets);
+
+        let mut tail = TailState::new(&path, file.bytes.len() as u64).expect("tail");
+
+        // Atomic-style save: write the full new content in one shot,
+        // truncating the old file. Same first-256-byte prefix so the
+        // tail's head-hash check matches and this looks like a pure
+        // append, not a rotation.
+        let full_with_fifth = format!(
+            "{four_lines}[INFO ] 2026-05-22 16:28:59.393 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n"
+        );
+        std::fs::write(&path, full_with_fifth.as_bytes()).expect("rewrite");
+
+        match tail.poll().expect("poll after rewrite") {
+            TailEvent::Appended { bytes, .. } => {
+                extend(&mut file, &scanner, &bytes);
+            }
+            other => panic!("expected Appended (head-hash matches), got {other:?}"),
+        }
+
+        assert_eq!(file.records.len(), 5, "five records after atomic save");
+        assert_eq!(file.line_count, 5);
+        for (i, expected) in [
+            Level::Warn,
+            Level::Debug,
+            Level::Trace,
+            Level::Error,
+            Level::Info,
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(file.records[i].level, *expected, "record {i} level");
+            assert_eq!(file.records[i].line_count, 1, "record {i} is one line");
+        }
+    }
+
+    /// Hypothesis A for the user's "empty row 5 with the previous
+    /// record's colour" report: the seed file has NO trailing `\n` on
+    /// line 4, so when an editor saves with the new line 5 appended,
+    /// it implicitly closes line 4 with a `\n` first. From the tail's
+    /// point of view the appended buffer starts with `\n`, which
+    /// `extend_with_appended` turns into an empty continuation of the
+    /// previous record (same colour, no text). Asserts the exact
+    /// resulting state shape so the bug -- if real -- is visible here.
+    #[test]
+    fn file_opened_without_trailing_newline_then_appended_produces_continuation_row() {
+        use clog_core::tail::{TailEvent, TailState};
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path: PathBuf = std::env::temp_dir().join(format!("clog-hypa-{pid}-{ts}.log"));
+        let _guard = scopeguard_like(&path);
+
+        // Four lines BUT no trailing `\n` on line 4.
+        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+                                [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
+                                [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
+                                [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)";
+        std::fs::write(&path, seed_no_trailing.as_bytes()).expect("seed");
+
+        // Open path.
+        let (mut file, _) = fresh_file();
+        let scanner_kind = file.scanner_kind.clone();
+        let scanner = scanner_kind.compile().expect("compile");
+        let (mut source, _li, records) = clog_core::index_file(&path, &scanner).expect("idx");
+        file.path = path.clone();
+        file.records = records;
+        let bytes = source.read_all().expect("read");
+        let line_offsets = clog_core::LineIndex::build(std::io::Cursor::new(&bytes))
+            .expect("li")
+            .line_offsets;
+        let lc = line_offsets.len() as u64;
+        file.bytes = bytes;
+        file.rebuild_line_caches(lc, line_offsets);
+
+        // Sanity: LineIndex still counts the partial 4th line.
+        assert_eq!(file.line_count, 4, "four lines visible at open");
+        assert_eq!(file.records.len(), 4);
+
+        let mut tail = TailState::new(&path, file.bytes.len() as u64).expect("tail");
+
+        // Editor's save: closes line 4 with `\n`, then appends line 5
+        // (with trailing `\n` so the editor's "always add final newline"
+        // setting matches the common case).
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open")
+            .write_all(b"\n[INFO ] 2026-05-22 16:28:59.393 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n")
+            .expect("append");
+
+        match tail.poll().expect("poll") {
+            TailEvent::Appended { bytes, .. } => {
+                extend(&mut file, &scanner, &bytes);
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+
+        // What the USER intuitively wants: 5 records, last is INFO,
+        // each is its own line. What the CODE currently does: line 4
+        // ate the stray `\n` as a continuation, so we get 4 records
+        // and a phantom empty row 5 with ERROR colour. Pin both
+        // behaviours so the diff is plain.
+        eprintln!(
+            "DEBUG: records.len={} line_count={} record[3].line_count={}",
+            file.records.len(),
+            file.line_count,
+            file.records[3].line_count,
+        );
+        let lines = build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+        for (i, l) in lines.lines.iter().enumerate() {
+            eprintln!(
+                "  line {i}: record_idx={} l_w_r={} level={:?} text={:?}",
+                l.record_idx, l.line_within_record, l.level, l.text
+            );
+        }
+
+        // Fixed state. The stray `\n` that arrived at the head of the
+        // tail buffer was consumed as completion of line 4's partial,
+        // not as the start of a new empty line. So there is no phantom
+        // row, no continuation on the ERROR record, and the INFO line
+        // is record 4 sitting at virtual line 4.
+        assert_eq!(file.line_count, 5, "no phantom row");
+        assert_eq!(file.records.len(), 5);
+        assert_eq!(
+            file.records[3].line_count, 1,
+            "ERROR record is one line (the stray `\\n` just closed it)"
+        );
+        assert_eq!(file.records[4].line_count, 1);
+        let lines = build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+        assert!(lines.lines[3].text.starts_with("[ERROR]"), "row 4 is ERROR");
+        assert!(lines.lines[4].text.starts_with("[INFO ]"), "row 5 is INFO");
+        assert_eq!(lines.lines[4].level, Level::Info);
+        // The fix's invariant: the byte_len of record 3 must include
+        // the closing `\n` even though that `\n` arrived in the tail
+        // append, not in the initial index.
+        let r3 = &file.records[3];
+        let r3_last_byte =
+            usize::try_from(r3.byte_offset + u64::from(r3.byte_len) - 1).unwrap_or(usize::MAX);
+        assert_eq!(file.bytes[r3_last_byte], b'\n', "record 3 now ends in `\\n`");
+    }
+
+    /// Latest user repro: file opened with NO trailing `\n` on line 4,
+    /// then a fifth line is added with NO trailing `\n` either.
+    /// Symptom: nothing at all updates in the UI.
+    ///
+    /// Walks the same pipeline as the live app: real file, real
+    /// `TailState`, real `extend_with_appended`. Asserts the resulting
+    /// state shape so the diff between "current" and "desired"
+    /// behaviour is plain.
+    #[test]
+    fn no_trailing_newline_at_open_then_partial_append_is_invisible() {
+        use clog_core::tail::{TailEvent, TailState};
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path: PathBuf = std::env::temp_dir().join(format!("clog-partial-{pid}-{ts}.log"));
+        let _guard = scopeguard_like(&path);
+
+        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+                                [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
+                                [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
+                                [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)";
+        std::fs::write(&path, seed_no_trailing.as_bytes()).expect("seed");
+
+        let (mut file, _) = fresh_file();
+        let scanner_kind = file.scanner_kind.clone();
+        let scanner = scanner_kind.compile().expect("compile");
+        let (mut source, _li, records) = clog_core::index_file(&path, &scanner).expect("idx");
+        file.path = path.clone();
+        file.records = records;
+        let bytes = source.read_all().expect("read");
+        let line_offsets = clog_core::LineIndex::build(std::io::Cursor::new(&bytes))
+            .expect("li")
+            .line_offsets;
+        let lc = line_offsets.len() as u64;
+        file.bytes = bytes;
+        file.rebuild_line_caches(lc, line_offsets);
+
+        assert_eq!(file.line_count, 4, "four lines visible at open");
+        assert_eq!(file.records.len(), 4);
+
+        let mut tail = TailState::new(&path, file.bytes.len() as u64).expect("tail");
+
+        // The editor's save: closes line 4's partial with `\n`, appends
+        // line 5 content WITHOUT trailing `\n`.
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open")
+            .write_all(b"\n[INFO ] 2026-05-22 16:28:59.393 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)")
+            .expect("append");
+
+        // The tail loop fires. Apply whatever it ships.
+        match tail.poll().expect("poll") {
+            TailEvent::Appended { bytes, .. } => {
+                extend(&mut file, &scanner, &bytes);
+            }
+            TailEvent::NoChange => {
+                // tail held everything back -- no UI update.
+            }
+            TailEvent::Rotated => panic!("not a rotation"),
+        }
+
+        eprintln!(
+            "DEBUG: records.len={} line_count={} record[3].line_count={}",
+            file.records.len(),
+            file.line_count,
+            file.records[3].line_count,
+        );
+        let lines = build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+        for (i, l) in lines.lines.iter().enumerate() {
+            eprintln!(
+                "  line {i}: record_idx={} l_w_r={} level={:?} text={:?}",
+                l.record_idx, l.line_within_record, l.level, l.text
+            );
+        }
+
+        // Fixed state: the partial INFO line is visible immediately,
+        // even without a trailing `\n`. Tail ships it, extend parses
+        // the header from the partial bytes and pushes a record.
+        assert_eq!(file.line_count, 5);
+        assert_eq!(file.records.len(), 5);
+        assert_eq!(file.records[4].level, Level::Info);
+        assert_eq!(file.records[4].line_count, 1);
+        assert!(lines.lines[4].text.starts_with("[INFO ]"));
+        assert!(lines.lines[4].text.ends_with("/modules/secure)"));
+    }
+
+    /// Hypothesis B for the user's report: the editor or some other tool
+    /// inserts a literal blank line between line 4 and line 5. The
+    /// appended buffer is `\n[INFO ]...\n`, which tail ships in one
+    /// shot. We pin the resulting state so the differing semantics
+    /// (continuation vs new record) are visible.
+    #[test]
+    fn blank_line_then_real_line_appended_in_one_shot() {
+        use clog_core::tail::{TailEvent, TailState};
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path: PathBuf = std::env::temp_dir().join(format!("clog-hypb-{pid}-{ts}.log"));
+        let _guard = scopeguard_like(&path);
+
+        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+                          [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
+                          [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
+                          [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
+        std::fs::write(&path, four_lines.as_bytes()).expect("seed");
+
+        let (mut file, _) = fresh_file();
+        let scanner_kind = file.scanner_kind.clone();
+        let scanner = scanner_kind.compile().expect("compile");
+        let (mut source, _li, records) = clog_core::index_file(&path, &scanner).expect("idx");
+        file.path = path.clone();
+        file.records = records;
+        let bytes = source.read_all().expect("read");
+        let line_offsets = clog_core::LineIndex::build(std::io::Cursor::new(&bytes))
+            .expect("li")
+            .line_offsets;
+        let lc = line_offsets.len() as u64;
+        file.bytes = bytes;
+        file.rebuild_line_caches(lc, line_offsets);
+
+        let mut tail = TailState::new(&path, file.bytes.len() as u64).expect("tail");
+
+        // Append a STRAY blank line first (just `\n`), then the real
+        // line 5. Done in one append so tail ships them together.
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open")
+            .write_all(b"\n[INFO ] 2026-05-22 16:28:59.393 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n")
+            .expect("append");
+
+        match tail.poll().expect("poll") {
+            TailEvent::Appended { bytes, .. } => {
+                extend(&mut file, &scanner, &bytes);
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+
+        eprintln!(
+            "DEBUG: records.len={} line_count={}",
+            file.records.len(),
+            file.line_count
+        );
+        let lines = build_lines_payload(&file, 0, file.line_count).expect("build_lines_payload");
+        for (i, l) in lines.lines.iter().enumerate() {
+            eprintln!(
+                "  line {i}: record_idx={} l_w_r={} level={:?} text={:?}",
+                l.record_idx, l.line_within_record, l.level, l.text
+            );
+        }
+
+        // line_count grows by 2 (the empty line + the INFO line). The
+        // empty line is currently absorbed as a continuation of record
+        // 3 (the previous ERROR), and the INFO line becomes record 4.
+        // That's exactly the user's "row 5 empty/red, row 6 INFO"
+        // symptom.
+        assert_eq!(file.line_count, 6, "two new lines visible");
+        assert_eq!(
+            file.records.len(),
+            5,
+            "the blank line is a continuation, so only one new record"
+        );
+        assert_eq!(file.records[3].line_count, 2, "ERROR record has a phantom blank continuation");
+        assert_eq!(file.records[4].level, Level::Info);
+    }
+
+    /// Tiny RAII helper to clean up the temp file even when the test
+    /// panics. `scopeguard` would do this; rolling our own keeps the
+    /// dep list tight.
+    fn scopeguard_like(path: &std::path::Path) -> impl Drop {
+        struct G(std::path::PathBuf);
+        impl Drop for G {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        G(path.to_path_buf())
+    }
+
+    /// Explicit corner cases the property test could in principle hit but
+    /// is hard to guarantee:
+    ///
+    /// * A chunk boundary that lands EXACTLY on a `\n` (whole-line ship).
+    /// * A chunk boundary in the middle of a line (partial-line hold).
+    /// * A chunk boundary right after a `\n` (zero new bytes after).
+    /// * A series of single-byte chunks (degenerate split case).
+    #[test]
+    fn tail_chunking_explicit_corner_cases() {
+        // Whole-line chunks.
+        run_split_property(5, vec![]);
+        // Mid-line splits: chosen to fall inside a level field, inside
+        // a date, inside the message body.
+        run_split_property(5, vec![3, 12, 40, 70]);
+        // Splits right at the `\n` boundary of each line (84 chars/line
+        // approx, but the exact value isn't sensitive).
+        run_split_property(3, vec![84, 168]);
+        // Byte-by-byte streaming: every single offset is a split.
+        let (bytes, _) = synth_lines(4);
+        let single_byte_splits: Vec<u32> =
+            (1..u32::try_from(bytes.len()).unwrap_or(u32::MAX)).collect();
+        run_split_property(4, single_byte_splits);
     }
 }

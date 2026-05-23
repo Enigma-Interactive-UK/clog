@@ -7,7 +7,12 @@
       "error_message": "TailState's head-hash rotation check flagged every append as a rotation when the file was shorter than HEAD_HASH_BYTES",
       "root_cause": "The hash was computed over min(HEAD_HASH_BYTES, current_size) on every poll. Growing the file from N to N+M bytes meant the next poll hashed N+M bytes -- a strictly longer prefix -- so the hash naturally differed and looked like a rotation.",
       "fix": "Pin head_prefix_len at construction (or after a reset_to/rotation) and rehash EXACTLY that prefix length on every subsequent poll. Growth keeps the anchored bytes unchanged so the hash is stable; only a rewrite flips it. Below-prefix-length shrinks are caught by the earlier size-shrink branch.",
-      "tags": ["clog-core", "tail", "rotation-detection", "hash"]
+      "tags": [
+        "clog-core",
+        "tail",
+        "rotation-detection",
+        "hash"
+      ]
     },
     {
       "date": "2026-05-23",
@@ -15,7 +20,13 @@
       "error_message": "E0117 (orphan rule) when adding impl RecordScanner for Box<dyn RecordScanner + Send + Sync> in clog-app",
       "root_cause": "Both the trait and the Box type live outside clog-app, so the impl is orphan-forbidden. The motivation was to let the tail task hold a runtime-selected scanner across polls without caring whether it was a PatternLayout or a regex.",
       "fix": "Introduced a sized sum type (CompiledScanner { Pattern(CompiledPattern) | Regex(RegexScanner) }) that owns the impl in clog-app. Store ScannerKind (source strings) on OpenedFile and call ScannerKind::compile() each poll to materialise a CompiledScanner. Recompilation is cheap relative to disk I/O.",
-      "tags": ["clog-app", "tail", "rust", "orphan-rule", "trait-objects"]
+      "tags": [
+        "clog-app",
+        "tail",
+        "rust",
+        "orphan-rule",
+        "trait-objects"
+      ]
     },
     {
       "date": "2026-05-23",
@@ -23,7 +34,13 @@
       "error_message": "User reported: when detached (follow-tail off), incoming tail appends caused the viewport to visually shift/scroll, so users couldn't stably read a chosen section while tailing remained active.",
       "root_cause": "Two contributing causes. (1) On every Appended delta the UI was calling pages.value.delete(lastPage) followed by an implicit re-fetch via the virtualRows watcher. The delete blanked the cached page synchronously, so visible rows on that page rendered as empty placeholders until the next IPC round trip finished -- visually reading as a shift. (2) No defensive re-anchor of scrollTop across the line_count bump, so any internal virtualizer measurement that happened to nudge scrollTop would not be corrected.",
       "fix": "Replaced delete-then-refetch with an in-place force-refetch (fetchPage gained a `force` flag; cached entries stay rendered until the new payload arrives, then swap atomically via pages.value.set + new Map()). For the detached case, capture scrollTop before the count bump and re-assert it across two requestAnimationFrame ticks (one for the synchronous count change, one for any deferred virtualizer measurement). Follow-tail path still calls jumpToBottom() as before.",
-      "tags": ["ui", "tail", "virtualizer", "scroll-anchoring", "ux"]
+      "tags": [
+        "ui",
+        "tail",
+        "virtualizer",
+        "scroll-anchoring",
+        "ux"
+      ]
     },
     {
       "date": "2026-05-23",
@@ -31,7 +48,28 @@
       "error_message": "proptest 'prod_roundtrips' began failing 'must parse as header' on every input after extending BUILTIN_PATTERNS with new entries.",
       "root_cause": "The proptest indexed BUILTIN_PATTERNS by position (BUILTIN_PATTERNS[1].1) to look up the prod pattern. When new patterns were inserted, index 1 no longer pointed at prod, so the test compiled the wrong pattern and rejected every generated prod-shaped line. Same vulnerability existed in the unit tests for `parse_prod_header_no_logger` and `parse_log4j2_default_header`.",
       "fix": "Added a `builtin_pattern(name: &str) -> Option<&'static str>` lookup helper to clog-core::pattern (re-exported from lib.rs) and switched every test (unit + proptest) from BUILTIN_PATTERNS[i] indexing to builtin_pattern(\"name\").unwrap(). The position-stable lookup makes future reordering safe.",
-      "tags": ["clog-core", "pattern", "tests", "proptest", "brittle-index"]
+      "tags": [
+        "clog-core",
+        "pattern",
+        "tests",
+        "proptest",
+        "brittle-index"
+      ]
+    },
+    {
+      "date": "2026-05-23",
+      "phase": "P6",
+      "error_message": "Uncaught ReferenceError: Cannot access 'effectiveCount' before initialization (at ComputedRefImpl.fn in App.vue) -- app opens blank",
+      "root_cause": "In <script setup>, useVirtualizer(computed(() => ({ count: effectiveCount.value, ... }))) was called BEFORE effectiveCount itself was declared. @tanstack/vue-virtual reads the supplied computed synchronously during its setup to initialise internal state, which evaluates the getter immediately. Const declarations are in the temporal dead zone before their initialiser runs, so the getter threw on first access and Vue mount failed before the template ever rendered.",
+      "fix": "Move filter-related computeds (filteredLineIndices, effectiveCount, actualLineIndex) ABOVE the useVirtualizer call so they are initialised by the time the virtualizer reads them. lineRowVirtual stays after lineRow since it is only invoked from the template (which runs post-mount). Lesson: in script setup, any computed/function whose value is read synchronously during another setup call must be declared before that call.",
+      "tags": [
+        "ui",
+        "vue",
+        "script-setup",
+        "tdz",
+        "virtualizer",
+        "P6"
+      ]
     }
   ]
 }

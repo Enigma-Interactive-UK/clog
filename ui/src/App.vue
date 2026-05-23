@@ -45,10 +45,55 @@ interface OpenedFile {
 interface LineRow {
   record_idx: number
   line_within_record: number
+  byte_offset_in_record: number
   level: string
   fields: HeaderFields | null
   text: string
 }
+
+interface HitRef {
+  record_idx: number
+  record_first_line: number
+  record_line_count: number
+  level: string
+  ranges: [number, number][]
+  score: number
+}
+
+interface SearchDelta {
+  search_id: number
+  hits: HitRef[]
+  total: number
+  done: boolean
+}
+
+interface RecordRef {
+  record_idx: number
+  record_first_line: number
+  record_line_count: number
+  level: string
+}
+
+interface RecordRefsPayload {
+  refs: RecordRef[]
+}
+
+type SearchMode = 'smart' | 'regex'
+type LevelKey = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+
+// Bit positions must match clog_core::search::level_bit.
+const LEVEL_BIT: Record<string, number> = {
+  trace: 1 << 0,
+  debug: 1 << 1,
+  info: 1 << 2,
+  warn: 1 << 3,
+  error: 1 << 4,
+  fatal: 1 << 5,
+  off: 1 << 6,
+  all: 1 << 7,
+  unknown: 1 << 8,
+}
+const LEVEL_KEYS: LevelKey[] = ['trace', 'debug', 'info', 'warn', 'error', 'fatal']
 
 interface LinesPayload {
   start_line: number
@@ -103,6 +148,57 @@ const patternScore = ref<number | null>(null)
 const patternSampleSize = ref<number>(0)
 const patternError = ref<string | null>(null)
 
+// Search + filter state. Hits are keyed by record_idx so renderLine can
+// look up the active record's ranges in O(1). The search engine returns
+// ranges record-relative; the renderer converts each to a line-local
+// range using each LineRow's `byte_offset_in_record`.
+const searchMode = ref<SearchMode>('smart')
+const searchQuery = ref('')
+const searchCaseSensitive = ref(false)
+const filterMode = ref(false)
+const searchError = ref<string | null>(null)
+const searchInflight = ref(false)
+const hits = ref(new Map<number, HitRef>())
+const hitOrder = ref<number[]>([])
+const currentHit = ref<number>(-1)
+// Synchronous generation counter, bumped at the start of every
+// runSearch. Each call closes over its own `myGen` and compares it to
+// the latest value -- any handler whose `myGen` no longer matches has
+// been superseded and drops its delta. Critically NOT the backend's
+// search_id, which arrives via the invoke response and races against
+// the channel's first deltas. Two in-flight runSearch calls also stomp
+// `currentSearchId` out of order; the generation gate doesn't.
+let runSearchGen = 0
+// Records whose level passes the current mask. Refreshed from the
+// backend whenever `levelAllow` changes or a file is opened. When the
+// mask is full (all levels allowed) this is `null` to mean "no
+// narrowing" -- the renderer then takes the fast path of just using the
+// raw line_count.
+const allowedRecords = ref<RecordRef[] | null>(null)
+let pendingSearchTimer: number | null = null
+
+// Level mask: per-level allow flags. The user toggles INFO/DEBUG/etc.
+// off to hide that level from both the search and the rendered output.
+const levelAllow = ref<Record<string, boolean>>({
+  trace: true,
+  debug: true,
+  info: true,
+  warn: true,
+  error: true,
+  fatal: true,
+  off: true,
+  all: true,
+  unknown: true,
+})
+
+function buildLevelMask(): number {
+  let mask = 0
+  for (const [k, v] of Object.entries(levelAllow.value)) {
+    if (v) mask |= LEVEL_BIT[k] ?? 0
+  }
+  return mask
+}
+
 // Tail state.
 const tailing = ref(false)
 const followTail = ref(true)
@@ -114,6 +210,7 @@ let lastTailLineCount = 0
 
 const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
 const minimapEl = useTemplateRef<HTMLCanvasElement>('minimapEl')
+const searchInputEl = useTemplateRef<HTMLInputElement>('searchInputEl')
 
 // Minimap state. Buckets is a Level-per-pixel array; we re-request when
 // the viewport height changes or the file grows. The fetch is debounced
@@ -131,9 +228,72 @@ const MINIMAP_WIDTH = 20
 // up to OVERSCAN rows above the visible area.
 const viewportScrollTop = ref(0)
 
+// Filter mode: build a flat ascending list of physical-line indices the
+// virtualizer should expose. Without filter, that's just [0..line_count).
+// With filter, it's the concatenation of each matching record's line
+// span, in order. Declared above `useVirtualizer` because the virtualizer
+// reads `effectiveCount` synchronously at setup time -- forward-references
+// trip Vue's const-TDZ.
+// Source records driving the filtered view. Returns null when no
+// narrowing applies (full level mask + filter mode off). Composition:
+//
+// * level mask: an `allowedRecords` list (null = all levels allowed)
+// * search query: a `hits` map of matching records
+//
+// When filter mode is on AND a search is active, the hits set wins
+// (the backend already applied the level mask to it). Without a query
+// (filter mode on or off), the level mask governs.
+const filteredSourceRecords = computed<RecordRef[] | null>(() => {
+  if (!file.value) return null
+  const allowed = allowedRecords.value
+  const isFiltering = filterMode.value
+  const hasQuery = searchQuery.value.trim().length > 0
+
+  if (!isFiltering && !allowed) return null
+
+  if (isFiltering && hasQuery) {
+    const source: RecordRef[] = []
+    for (const recIdx of hitOrder.value) {
+      const hit = hits.value.get(recIdx)
+      if (hit) source.push(hit)
+    }
+    return source
+  }
+  return allowed
+})
+
+// Flat concatenation of every visible record's line span, in record
+// order. Used by the virtualizer count + `actualLineIndex`. Null means
+// "no narrowing" -- the virtualizer just uses the file's full line
+// count.
+const filteredLineIndices = computed<number[] | null>(() => {
+  const source = filteredSourceRecords.value
+  if (source === null) return null
+  const out: number[] = []
+  for (const rec of source) {
+    const start = rec.record_first_line
+    const end = start + rec.record_line_count
+    for (let i = start; i < end; i++) out.push(i)
+  }
+  return out
+})
+
+const effectiveCount = computed(() => {
+  if (!file.value) return 0
+  const filt = filteredLineIndices.value
+  if (filt) return filt.length
+  return file.value.line_count
+})
+
+function actualLineIndex(virtualIdx: number): number {
+  const filt = filteredLineIndices.value
+  if (!filt) return virtualIdx
+  return filt[virtualIdx] ?? 0
+}
+
 const virtualizer = useVirtualizer(
   computed(() => ({
-    count: file.value?.line_count ?? 0,
+    count: effectiveCount.value,
     getScrollElement: () => scrollEl.value ?? null,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
@@ -157,6 +317,10 @@ function lineRow(index: number): LineRow | null {
   const page = pages.value.get(pageIdx)
   if (!page) return null
   return page[index % PAGE_SIZE] ?? null
+}
+
+function lineRowVirtual(virtualIdx: number): LineRow | null {
+  return lineRow(actualLineIndex(virtualIdx))
 }
 
 async function fetchPage(pageIdx: number, force = false) {
@@ -200,7 +364,10 @@ async function fetchPage(pageIdx: number, force = false) {
 watch(virtualRows, (rows) => {
   if (!file.value) return
   const wanted = new Set<number>()
-  for (const r of rows) wanted.add(Math.floor(r.index / PAGE_SIZE))
+  for (const r of rows) {
+    const actual = actualLineIndex(r.index)
+    wanted.add(Math.floor(actual / PAGE_SIZE))
+  }
   for (const p of wanted) fetchPage(p)
 })
 
@@ -217,18 +384,21 @@ const stickyHeader = computed<StickyHeader | null>(() => {
   // The topmost visible row index is derived from scrollTop directly --
   // NOT from virtualRows[0] (which sits up to OVERSCAN rows above the
   // viewport edge and would make the sticky lag the actual content).
-  const total = file.value.line_count
+  const total = effectiveCount.value
   if (total === 0) return null
-  const topIdx = Math.min(total - 1, Math.floor(viewportScrollTop.value / ROW_HEIGHT))
+  const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / ROW_HEIGHT))
+  const topIdx = actualLineIndex(topVirtual)
   const data = lineRow(topIdx)
   if (!data) return null
   if (data.line_within_record === 0) return null
   // Walk backward to the header row (line_within_record == 0) of the
   // same record. Bounded by the record's first line, so this is cheap.
+  // In filter mode, the previous virtual row may belong to a different
+  // record entirely -- still find this record's header in the file
+  // because the gutter/colour of the sticky cell mirrors the topmost row.
   for (let i = topIdx - 1; i >= 0; i--) {
     const candidate = lineRow(i)
     if (!candidate) {
-      // Force-fetch the page so the header becomes available next frame.
       fetchPage(Math.floor(i / PAGE_SIZE))
       return null
     }
@@ -242,11 +412,23 @@ function jumpToStickyStart() {
   const sticky = stickyHeader.value
   const el = scrollEl.value
   if (!sticky || !el) return
+  // `sticky.lineIndex` is a FILE line index. In filter mode the virtual
+  // index space is `filteredLineIndices`; we need to find the virtual
+  // slot whose actual is the sticky header's file line. If the header
+  // happens to be filtered out (no virtual slot), bail.
+  const filt = filteredLineIndices.value
+  let virtualIdx: number
+  if (filt) {
+    virtualIdx = filt.indexOf(sticky.lineIndex)
+    if (virtualIdx < 0) return
+  } else {
+    virtualIdx = sticky.lineIndex
+  }
   // Set scrollTop directly so the resulting position is exactly the
   // record's header row. `scrollToIndex` route went via the virtualizer
   // and consistently overshot by one row -- likely a sub-pixel offset
   // that my row-snap handler then rounded forward.
-  el.scrollTop = sticky.lineIndex * ROW_HEIGHT
+  el.scrollTop = virtualIdx * ROW_HEIGHT
 }
 
 async function pickFile() {
@@ -267,6 +449,15 @@ async function pickFile() {
       file.value = null
       pages.value = new Map()
       tailing.value = false
+      hits.value = new Map()
+      hitOrder.value = []
+      currentHit.value = -1
+      // Bump the gen so any in-flight runSearch from the previous file
+      // is disowned -- its onmessage closure will see myGen !== latest
+      // and drop everything.
+      runSearchGen++
+      allowedRecords.value = null
+      await invoke('cancel_search', { fileId: prev }).catch(() => {})
       await invoke('stop_tail', { fileId: prev }).catch(() => {})
       await invoke('close_file', { fileId: prev }).catch(() => {})
     }
@@ -289,6 +480,14 @@ async function pickFile() {
     }
     await startTail()
     scheduleMinimapFetch(true)
+    await refreshAllowedRecords()
+    // Search query, mode, case flag, filter state, and level mask
+    // persist across file opens (the user's "find this every time"
+    // expectations). Re-run the active search against the new file so
+    // hits + filteredLineIndices reflect the new content.
+    if (searchQuery.value.trim().length > 0) {
+      scheduleSearch()
+    }
   } catch (e) {
     const err = e as IpcError | string
     error.value = typeof err === 'string' ? err : err.message
@@ -338,6 +537,10 @@ function handleTailDelta(delta: TailDelta) {
     // Re-fetch the first page so the viewport doesn't sit empty.
     fetchPage(0)
     scheduleMinimapFetch(true)
+    if (!isFullLevelMask()) void refreshAllowedRecords()
+    // Re-run any active search so the new file shape (rotated content)
+    // produces a fresh hit set. Debounced via scheduleSearch.
+    if (searchQuery.value.trim().length > 0) scheduleSearch()
     return
   }
 
@@ -354,17 +557,40 @@ function handleTailDelta(delta: TailDelta) {
     size_bytes: delta.last_offset,
   }
 
-  // The previously-cached final page (which may have been partial because
-  // line_count grew past its end) needs a force-refetch to pick up the new
-  // entries. Force is used so the in-place swap keeps the visible rows
-  // rendered with the old data until the new payload arrives -- no blank
-  // flash during the round trip.
-  if (lastTailLineCount > 0) {
-    const lastPage = Math.floor((lastTailLineCount - 1) / PAGE_SIZE)
-    fetchPage(lastPage, true)
+  // Force-refetch every page the appended range touches, not just the
+  // old last page. Two reasons:
+  //
+  // 1. The old last page may have been partial (line_count grew past
+  //    its end) -- a refetch picks up the new entries below.
+  // 2. The growth can cross into a *fresh* page that an earlier tail
+  //    tick already populated as a partial page. The non-force path
+  //    from the virtualizer watcher would skip it because it's
+  //    cached, leaving the new line invisible until the page falls
+  //    out of cache. That was the "empty row then the previous line
+  //    appears on the next tick" symptom.
+  if (lastTailLineCount > 0 && delta.line_count > lastTailLineCount) {
+    const oldLastPage = Math.floor((lastTailLineCount - 1) / PAGE_SIZE)
+    const newLastPage = Math.floor((delta.line_count - 1) / PAGE_SIZE)
+    for (let p = oldLastPage; p <= newLastPage; p++) {
+      fetchPage(p, true)
+    }
   }
   lastTailLineCount = delta.line_count
   scheduleMinimapFetch()
+  // If the user has a non-default level mask, refresh the allowed list
+  // so newly-appended records get included. With the default (full)
+  // mask, refreshAllowedRecords short-circuits to null without IPC.
+  if (!isFullLevelMask()) void refreshAllowedRecords()
+  // Re-run any active search against the newly-appended content so new
+  // matching records (or continuation lines that turn an existing record
+  // into a match) appear in the highlight + filter set. The
+  // `new_record_count > 0` guard would skip stack-trace continuations
+  // that extend a previous record's text -- those can introduce a hit
+  // too. scheduleSearch debounces (50 ms) so a 250 ms tail tick doesn't
+  // flood the backend.
+  if (searchQuery.value.trim().length > 0) {
+    scheduleSearch()
+  }
 
   if (followTail.value) {
     jumpToBottom()
@@ -430,9 +656,21 @@ async function fetchMinimap(force: boolean) {
   if (!file.value) return
   const height = viewportHeightPx.value
   if (height <= 0) return
-  // When the file is shorter than the viewport, cap buckets at the actual
-  // content pixel height (one bucket per row) so the minimap aligns to the
-  // top instead of stretching a handful of records across the full column.
+  // When filtering, compute the minimap client-side over the filtered
+  // record set so the stripes map onto the actually-visible content
+  // (effectiveCount lines, not file.line_count). Otherwise fetch the
+  // backend's full-file minimap as before.
+  const source = filteredSourceRecords.value
+  if (source !== null) {
+    const eff = effectiveCount.value
+    const contentPx = eff * ROW_HEIGHT
+    const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
+    minimapBuckets.value = buildFilteredMinimap(source, eff, bucketCount)
+    lastMinimapHeight = bucketCount
+    lastMinimapLineCount = eff
+    paintMinimap()
+    return
+  }
   const contentPx = file.value.line_count * ROW_HEIGHT
   const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
   if (
@@ -454,6 +692,62 @@ async function fetchMinimap(force: boolean) {
   } catch {
     // Non-fatal: minimap is purely decorative. Leave previous buckets in place.
   }
+}
+
+// Worst-severity-wins level ranking. Mirrors clog-app::main::level_rank
+// so the client-side filtered-minimap projection matches what the
+// backend would produce for the full file.
+function minimapLevelRank(l: string): number {
+  switch (l) {
+    case 'fatal':
+      return 7
+    case 'error':
+      return 6
+    case 'warn':
+      return 5
+    case 'all':
+      return 4
+    case 'info':
+      return 3
+    case 'debug':
+      return 2
+    case 'trace':
+      return 1
+    default:
+      return 0
+  }
+}
+
+// Walk the filtered record list in virtual-line order and bump each
+// bucket to the worst level it covers. `virtualLineCount` is the
+// effectiveCount the virtualizer is using; the records' lines map onto
+// virtual indices in encounter order.
+function buildFilteredMinimap(
+  source: RecordRef[],
+  virtualLineCount: number,
+  bucketCount: number,
+): string[] {
+  const buckets: string[] = new Array(bucketCount).fill('unknown')
+  if (virtualLineCount === 0 || bucketCount === 0) return buckets
+  let virtualCursor = 0
+  for (const rec of source) {
+    const firstLine = virtualCursor
+    const lastLine = virtualCursor + Math.max(rec.record_line_count, 1) - 1
+    const firstBucket = Math.min(
+      bucketCount - 1,
+      Math.floor((firstLine * bucketCount) / virtualLineCount),
+    )
+    const lastBucket = Math.min(
+      bucketCount - 1,
+      Math.floor((lastLine * bucketCount) / virtualLineCount),
+    )
+    const rank = minimapLevelRank(rec.level)
+    for (let b = firstBucket; b <= lastBucket; b++) {
+      if (rank > minimapLevelRank(buckets[b])) buckets[b] = rec.level
+    }
+    virtualCursor += rec.record_line_count
+  }
+  return buckets
 }
 
 function paintMinimap() {
@@ -544,12 +838,18 @@ const minimapTooltip = ref<MinimapTooltip>({
 
 function tooltipLineFromY(clientY: number): number | null {
   const canvas = minimapEl.value
-  if (!canvas || !file.value || file.value.line_count === 0) return null
+  if (!canvas || !file.value || effectiveCount.value === 0) return null
   const rect = canvas.getBoundingClientRect()
   if (rect.height <= 0) return null
   const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
-  const idx = Math.min(file.value.line_count - 1, Math.floor(ratio * file.value.line_count))
-  return idx
+  // Virtual line index within the current (filtered or not) view.
+  const virtualIdx = Math.min(
+    effectiveCount.value - 1,
+    Math.floor(ratio * effectiveCount.value),
+  )
+  // Convert to actual file line so lineRow lookups (and the displayed
+  // line number) point at the right record.
+  return actualLineIndex(virtualIdx)
 }
 
 function timestampForLine(lineIndex: number): string | null {
@@ -599,6 +899,13 @@ function updateMinimapTooltip(ev: PointerEvent) {
   }
 }
 
+// Re-paint the minimap whenever the filtered source set changes so the
+// stripes (and effective bucket count) follow the filter live -- no
+// stale full-file projection sitting under a narrow view.
+watch(filteredSourceRecords, () => {
+  scheduleMinimapFetch(true)
+})
+
 // Re-resolve the timestamp text whenever a new page lands, so the tooltip
 // fills in shortly after a cache miss without the user having to wiggle.
 watch(
@@ -646,12 +953,18 @@ function onMinimapPointerUp(ev: PointerEvent) {
 let resizeObserver: ResizeObserver | null = null
 
 function jumpToBottom() {
-  if (!file.value || file.value.line_count === 0) return
+  if (!file.value || effectiveCount.value === 0) return
   // Defer to the next frame so any virtualizer resize from the count bump
   // has settled before we ask for a scroll target.
   requestAnimationFrame(() => {
-    if (!file.value || file.value.line_count === 0) return
-    virtualizer.value.scrollToIndex(file.value.line_count - 1, { align: 'end' })
+    if (!file.value || effectiveCount.value === 0) return
+    // Index space is the virtualizer's count -- effectiveCount, not the
+    // file's raw line_count. In filter mode they diverge, and asking
+    // scrollToIndex for an out-of-bounds index sent scrollTop past the
+    // last legal row, which landed the topmost-visible row on the new
+    // tail line (treated as a continuation) and spuriously triggered
+    // the sticky header overlay.
+    virtualizer.value.scrollToIndex(effectiveCount.value - 1, { align: 'end' })
   })
 }
 
@@ -706,6 +1019,292 @@ async function testPattern() {
     patternScore.value = null
   }
 }
+
+// --- Search ---
+
+function scheduleSearch() {
+  if (pendingSearchTimer !== null) globalThis.clearTimeout(pendingSearchTimer)
+  // Debounce so a fast typist's keystrokes don't fire one backend search
+  // per character. ~60Hz is the upper bound from design.md s7; 50ms is
+  // close enough and survives a human's slow finger.
+  pendingSearchTimer = globalThis.setTimeout(() => {
+    pendingSearchTimer = null
+    void runSearch()
+  }, 50)
+}
+
+async function runSearch() {
+  if (!file.value) return
+  const fileId = file.value.file_id
+  const query = searchQuery.value
+  const mask = buildLevelMask()
+  // Bump the generation IMMEDIATELY and synchronously. Any previous
+  // runSearch's onmessage closure now sees `myGen !== runSearchGen` and
+  // self-disables -- no chance of a slow earlier search clobbering a
+  // newer one's hit set when its delta lands after the newer one's
+  // started.
+  const myGen = ++runSearchGen
+  // Empty query: cancel any pending search, clear hits. Filter mode
+  // with empty query then narrows by level mask alone -- we synthesize
+  // an "all-records" view by leaving hits empty and showing nothing in
+  // filter mode (matches the user mental model: no hits => nothing to
+  // filter to). When filter mode is off, this just clears the overlay.
+  if (query.trim().length === 0) {
+    try {
+      await invoke('cancel_search', { fileId })
+    } catch {
+      // best effort
+    }
+    // Only clear if we're still the latest run. (A newer runSearch
+    // could have been scheduled while we awaited cancel_search.)
+    if (myGen !== runSearchGen) return
+    hits.value = new Map()
+    hitOrder.value = []
+    currentHit.value = -1
+    searchInflight.value = false
+    searchError.value = null
+    return
+  }
+  searchError.value = null
+  searchInflight.value = true
+  const channel = new Channel<SearchDelta>()
+  // Accumulate hits as they arrive. Fresh local buffers each call so a
+  // stale stream that lingers after a newer one was launched can never
+  // mutate a buffer the new run is using.
+  const local = new Map<number, HitRef>()
+  const order: number[] = []
+  channel.onmessage = (delta: SearchDelta) => {
+    // The closure's own generation gate. The backend `delta.search_id`
+    // is deliberately NOT consulted -- it arrives via the invoke
+    // response and can race against the channel's first deltas (the
+    // response and channel messages travel separate IPC paths and
+    // aren't ordered relative to each other). `runSearchGen` is bumped
+    // synchronously at the top of every runSearch, so this check is
+    // race-free.
+    if (myGen !== runSearchGen) return
+    for (const h of delta.hits) {
+      if (!local.has(h.record_idx)) {
+        local.set(h.record_idx, h)
+        order.push(h.record_idx)
+      }
+    }
+    // Publish a fresh snapshot so Vue's reactivity tracking picks it up.
+    hits.value = new Map(local)
+    hitOrder.value = order.slice()
+    if (delta.done) {
+      searchInflight.value = false
+      // Park the cursor at the first hit if we don't have one yet.
+      if (currentHit.value < 0 && order.length > 0) currentHit.value = 0
+    }
+  }
+  try {
+    await invoke('start_search', {
+      fileId,
+      request: {
+        mode: searchMode.value,
+        query,
+        case_sensitive: searchCaseSensitive.value,
+        level_mask: mask,
+      },
+      onHits: channel,
+    })
+  } catch (e) {
+    // A newer run may have already started while this invoke was in
+    // flight -- don't stomp its state with this run's error.
+    if (myGen !== runSearchGen) return
+    const err = e as IpcError | string
+    const message = typeof err === 'string' ? err : err.message
+    // Regex compile errors are expected during typing -- surface inline,
+    // never modal.
+    searchError.value = message
+    searchInflight.value = false
+    hits.value = new Map()
+    hitOrder.value = []
+  }
+}
+
+function nextHit() {
+  if (hitOrder.value.length === 0) return
+  currentHit.value = (currentHit.value + 1) % hitOrder.value.length
+  scrollToCurrentHit()
+}
+
+function prevHit() {
+  if (hitOrder.value.length === 0) return
+  const n = hitOrder.value.length
+  currentHit.value = (currentHit.value - 1 + n) % n
+  scrollToCurrentHit()
+}
+
+function scrollToCurrentHit() {
+  if (currentHit.value < 0) return
+  const recIdx = hitOrder.value[currentHit.value]
+  const hit = hits.value.get(recIdx)
+  if (!hit) return
+  // In filter mode, find this hit's position within filteredLineIndices.
+  // Otherwise it's just the record's first line.
+  const filt = filteredLineIndices.value
+  let targetVirtual: number
+  if (filt) {
+    const want = hit.record_first_line
+    // Linear scan would be O(filt.length) per click; not ideal but fine
+    // for typical hit counts. If a 75k-hit file becomes the norm, swap
+    // for a binary search.
+    targetVirtual = filt.indexOf(want)
+    if (targetVirtual < 0) return
+  } else {
+    targetVirtual = hit.record_first_line
+  }
+  followTail.value = false
+  virtualizer.value.scrollToIndex(targetVirtual, { align: 'center' })
+  // After the virtualizer has mounted the row, find the actual hit
+  // span in the DOM and bring it into the row's per-row horizontal
+  // viewport. The virtualizer's scroll is asynchronous (it sets
+  // scrollTop, the browser schedules a scroll event, Vue then
+  // re-renders virtualRows, and only then does the row exist in the
+  // DOM). Two rAF ticks aren't enough on a fresh page; instead poll
+  // up to FRAMES_MAX times and bail.
+  scheduleHitFocus()
+}
+
+const HIT_FOCUS_FRAMES_MAX = 30
+let hitFocusFramesLeft = 0
+let hitFocusScheduled = false
+
+function scheduleHitFocus() {
+  hitFocusFramesLeft = HIT_FOCUS_FRAMES_MAX
+  if (hitFocusScheduled) return
+  hitFocusScheduled = true
+  const step = () => {
+    hitFocusScheduled = false
+    if (bringCurrentHitMatchIntoView()) return
+    if (--hitFocusFramesLeft <= 0) return
+    hitFocusScheduled = true
+    requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
+}
+
+function isCurrentHitRow(row: LineRow | null): boolean {
+  if (!row) return false
+  if (currentHit.value < 0) return false
+  const recIdx = hitOrder.value[currentHit.value]
+  return row.record_idx === recIdx
+}
+
+function bringCurrentHitMatchIntoView(): boolean {
+  const el = scrollEl.value
+  if (!el) return false
+  // The current hit's row is tagged with `.is-current-hit` (see the
+  // template binding); inside it the first `.h-search-match` is the
+  // match we want centred. We deliberately do NOT use the native
+  // scrollIntoView() because it walks up to *every* scrollable
+  // ancestor -- including the viewport -- and would re-trigger
+  // vertical scrolling. Instead, scroll the row's .txt cell directly
+  // by computing the offset from .txt to the match.
+  const match = el.querySelector('.row.is-current-hit .h-search-match') as HTMLElement | null
+  if (!match) return false
+  const txt = match.closest('.txt') as HTMLElement | null
+  if (!txt) return false
+  if (txt.scrollWidth <= txt.clientWidth) {
+    // Nothing to scroll -- the match already fits.
+    return true
+  }
+  const matchRect = match.getBoundingClientRect()
+  const txtRect = txt.getBoundingClientRect()
+  // Position of the match within the txt's scroll content. Convert
+  // from viewport coordinates by subtracting txt's left edge and
+  // adding txt's current scrollLeft.
+  const matchLeftInContent = matchRect.left - txtRect.left + txt.scrollLeft
+  // Centre the match within the visible txt width.
+  const targetScrollLeft =
+    matchLeftInContent - txt.clientWidth / 2 + match.offsetWidth / 2
+  const maxScrollLeft = txt.scrollWidth - txt.clientWidth
+  txt.scrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft))
+  return true
+}
+
+function toggleFilterMode() {
+  filterMode.value = !filterMode.value
+  // Snap to top whenever filter changes -- the previous scrollTop won't
+  // map cleanly onto the new virtual line set.
+  const el = scrollEl.value
+  if (el) el.scrollTop = 0
+}
+
+function toggleLevel(level: LevelKey) {
+  levelAllow.value = { ...levelAllow.value, [level]: !levelAllow.value[level] }
+  // Refresh the level-allowed record list so the view narrows even when
+  // no search is active. If a search IS active, also re-run it so its
+  // hit set is rebuilt under the new mask.
+  void refreshAllowedRecords()
+  if (searchQuery.value.trim().length > 0) scheduleSearch()
+}
+
+function clearSearch() {
+  if (searchQuery.value.length === 0) return
+  searchQuery.value = ''
+  searchError.value = null
+  // Cancel any in-flight search and reset hit state. scheduleSearch
+  // would do this asynchronously after the debounce; clearing the box
+  // should feel instant.
+  if (pendingSearchTimer !== null) {
+    globalThis.clearTimeout(pendingSearchTimer)
+    pendingSearchTimer = null
+  }
+  if (file.value) {
+    invoke('cancel_search', { fileId: file.value.file_id }).catch(() => {})
+  }
+  hits.value = new Map()
+  hitOrder.value = []
+  currentHit.value = -1
+  searchInflight.value = false
+  // Keep keyboard focus in the input so the user can type a fresh
+  // query immediately.
+  searchInputEl.value?.focus()
+}
+
+function setSearchMode(mode: SearchMode) {
+  if (searchMode.value === mode) return
+  searchMode.value = mode
+  scheduleSearch()
+}
+
+function isFullLevelMask(): boolean {
+  // The "full mask" is every bit set across the levels we track. If the
+  // user has all level buttons on AND nothing surprising is present (off
+  // / all / unknown are always allowed in the UI), we can take the
+  // null-allowed fast path.
+  for (const lvl of LEVEL_KEYS) {
+    if (!levelAllow.value[lvl]) return false
+  }
+  return true
+}
+
+async function refreshAllowedRecords() {
+  if (!file.value) {
+    allowedRecords.value = null
+    return
+  }
+  if (isFullLevelMask()) {
+    // No narrowing necessary. Use the null sentinel so the renderer
+    // skips the filter path entirely.
+    allowedRecords.value = null
+    return
+  }
+  try {
+    const payload = await invoke<RecordRefsPayload>('list_records_by_level', {
+      fileId: file.value.file_id,
+      levelMask: buildLevelMask(),
+    })
+    allowedRecords.value = payload.refs
+  } catch {
+    // Non-fatal: leave the previous list (or null) in place so the view
+    // doesn't blank.
+  }
+}
+
+// Auto-cancel on file change is handled at pickFile/onBeforeUnmount.
 
 async function applyPattern() {
   if (!file.value) return
@@ -785,9 +1384,11 @@ onBeforeUnmount(() => {
   if (rotationToastTimer !== null) globalThis.clearTimeout(rotationToastTimer)
   if (file.value) {
     const id = file.value.file_id
+    invoke('cancel_search', { fileId: id }).catch(() => {})
     invoke('stop_tail', { fileId: id }).catch(() => {})
     invoke('close_file', { fileId: id }).catch(() => {})
   }
+  if (pendingSearchTimer !== null) globalThis.clearTimeout(pendingSearchTimer)
 })
 
 // --- Header-line span slicing (axis-1) + axis-2 highlight overlay. ---
@@ -829,16 +1430,35 @@ function headerBaseSpans(
  * continuation row we treat the whole text as a single `message` base span
  * so the gutter / indentation styling continues to apply.
  */
+function searchSpansForLine(row: LineRow): { start: number; end: number; cls: string }[] {
+  const hit = hits.value.get(row.record_idx)
+  if (!hit) return []
+  const boff = row.byte_offset_in_record
+  const len = row.text.length
+  const out: { start: number; end: number; cls: string }[] = []
+  for (const [s, e] of hit.ranges) {
+    // Hit ranges are record-relative bytes; line text is ASCII-assumed
+    // (matches axis-1 field-span treatment). Clamp into [0, len).
+    const ls = Math.max(0, s - boff)
+    const le = Math.min(len, e - boff)
+    if (le > ls) out.push({ start: ls, end: le, cls: 'h-search-match' })
+  }
+  return out
+}
+
 function renderLine(row: LineRow): LeafSpan[] {
+  const search = searchSpansForLine(row)
   if (row.fields) {
     const base = headerBaseSpans(row.text, row.fields)
     const axis2 = highlightsFor(row.text)
-    const leaves = overlay(row.text, base, axis2)
+    const combined = search.length === 0 ? axis2 : [...search, ...axis2]
+    const leaves = overlay(row.text, base, combined)
     return decorateLevels(leaves, row.level)
   }
   const base = [{ start: 0, end: row.text.length, cls: 'message' }]
   const axis2 = highlightsFor(row.text)
-  return overlay(row.text, base, axis2)
+  const combined = search.length === 0 ? axis2 : [...axis2, ...search]
+  return overlay(row.text, base, combined)
 }
 
 // The level-colour class is keyed by the row's level, not by the cls itself,
@@ -992,26 +1612,27 @@ function levelGutterVar(level: string): string {
       <div class="total" :style="{ height: `${totalSize}px` }">
         <template v-for="vrow in virtualRows" :key="String(vrow.key)">
         <div
-          v-if="lineRow(vrow.index)"
+          v-if="lineRowVirtual(vrow.index)"
           class="row"
           :class="[
             {
-              'is-header': lineRow(vrow.index)?.line_within_record === 0,
-              'is-continuation': (lineRow(vrow.index)?.line_within_record ?? 0) > 0,
+              'is-header': lineRowVirtual(vrow.index)?.line_within_record === 0,
+              'is-continuation': (lineRowVirtual(vrow.index)?.line_within_record ?? 0) > 0,
+              'is-current-hit': isCurrentHitRow(lineRowVirtual(vrow.index)),
             },
-            'level-row-' + (lineRow(vrow.index)?.level ?? 'unknown'),
+            'level-row-' + (lineRowVirtual(vrow.index)?.level ?? 'unknown'),
           ]"
           :style="{
             transform: `translateY(${vrow.start}px)`,
             height: `${vrow.size}px`,
-            '--gutter-color': levelGutterVar(lineRow(vrow.index)?.level ?? 'unknown'),
+            '--gutter-color': levelGutterVar(lineRowVirtual(vrow.index)?.level ?? 'unknown'),
           }"
         >
           <span class="gutter" />
-          <span class="idx">{{ vrow.index + 1 }}</span>
+          <span class="idx">{{ actualLineIndex(vrow.index) + 1 }}</span>
           <span class="txt">
               <span
-                v-for="(span, si) in renderLine(lineRow(vrow.index)!)"
+                v-for="(span, si) in renderLine(lineRowVirtual(vrow.index)!)"
                 :key="si"
                 :class="span.cls"
                 :data-url="span.url || null"
@@ -1049,6 +1670,85 @@ function levelGutterVar(level: string): string {
       </div>
     </div>
     <p v-else class="placeholder">No file open. Click <em>Open file...</em> to pick one.</p>
+
+    <section v-if="file" class="search-bar">
+      <fieldset class="mode-toggle">
+        <legend class="sr-only">Search mode</legend>
+        <span class="mode-label">Search:</span>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ 'is-on': searchMode === 'smart' }"
+          :aria-pressed="searchMode === 'smart'"
+          title="Smart proximity-ranked substring search"
+          @click="setSearchMode('smart')"
+        >Smart</button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ 'is-on': searchMode === 'regex' }"
+          :aria-pressed="searchMode === 'regex'"
+          title="Regular expression search (regex::bytes)"
+          @click="setSearchMode('regex')"
+        >Regex</button>
+      </fieldset>
+      <span class="search-input-wrap">
+        <input
+          ref="searchInputEl"
+          v-model="searchQuery"
+          class="search-input"
+          :class="{ 'has-error': !!searchError }"
+          :placeholder="searchMode === 'smart' ? `e.g., 'installed core'...` : `regular expression, e.g., 'installed.*core'...`"
+          spellcheck="false"
+          @input="scheduleSearch"
+          @keydown.enter.prevent="nextHit"
+          @keydown.shift.enter.prevent="prevHit"
+          @keydown.esc.prevent="clearSearch"
+        />
+        <button
+          v-if="searchQuery.length > 0"
+          type="button"
+          class="clear-search"
+          title="Clear search (Esc)"
+          aria-label="Clear search"
+          @click="clearSearch"
+        >&times;</button>
+      </span>
+      <label class="case" title="Case-sensitive search" @click="scheduleSearch">
+        <input type="checkbox" v-model="searchCaseSensitive" @change="scheduleSearch" />
+        Aa
+      </label>
+      <span v-if="hitOrder.length > 0" class="hit-count">
+        <strong>{{ currentHit + 1 }}</strong> / {{ hitOrder.length }}
+      </span>
+      <span v-else-if="searchQuery.trim() && !searchInflight && !searchError" class="hit-count muted">
+        0 hits
+      </span>
+      <span v-else-if="searchInflight" class="hit-count muted">searching...</span>
+      <button type="button" :disabled="hitOrder.length === 0" @click="prevHit">&uarr;</button>
+      <button type="button" :disabled="hitOrder.length === 0" @click="nextHit">&darr;</button>
+      <button
+        type="button"
+        class="filter-toggle"
+        :class="{ 'is-on': filterMode }"
+        :title="filterMode ? 'Showing only matching records -- click to show all' : 'Filter to matching records'"
+        @click="toggleFilterMode"
+      >
+        {{ filterMode ? 'Filter on' : 'Filter' }}
+      </button>
+      <span class="level-mask">
+        <button
+          v-for="lvl in LEVEL_KEYS"
+          :key="lvl"
+          type="button"
+          class="lvl-btn"
+          :class="['lvl-' + lvl, { 'is-off': !levelAllow[lvl] }]"
+          :title="`Toggle ${lvl.toUpperCase()} records`"
+          @click="toggleLevel(lvl)"
+        >{{ lvl.toUpperCase() }}</button>
+      </span>
+      <span v-if="searchError" class="search-error">{{ searchError }}</span>
+    </section>
 
     <footer class="status-bar">
       <span class="slot left" />
@@ -1241,6 +1941,206 @@ function levelGutterVar(level: string): string {
   border: 1px solid var(--border-error);
   border-radius: var(--radius-sm);
   color: var(--fg-error);
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Segmented control. The two buttons share a border and the active
+     one inverts to read as "currently selected" without needing a
+     separate indicator. */
+  .mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: none;
+    padding: 0;
+    margin: 0;
+
+    .mode-label {
+      color: var(--fg-muted);
+    }
+
+    .mode-btn {
+      background: var(--bg-button);
+      color: var(--fg-muted);
+      border: 1px solid var(--border-button);
+      padding: 0.25rem 0.7rem;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+
+      /* Join the two buttons into a single segmented control. */
+      &:first-of-type {
+        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+        border-right-width: 0;
+      }
+      &:last-of-type {
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+
+      &:hover:not(.is-on) { background: var(--bg-button-hover); }
+
+      &.is-on {
+        background: var(--level-info);
+        color: var(--slate-950);
+        border-color: var(--level-info);
+        font-weight: 600;
+      }
+    }
+  }
+
+  /* Wrap the input so the clear button can overlay its right edge. */
+  .search-input-wrap {
+    flex: 1 1 16rem;
+    min-width: 12rem;
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+  }
+
+  .search-input {
+    flex: 1 1 auto;
+    width: 100%;
+    background: var(--bg-viewport);
+    color: var(--fg-default);
+    border: 1px solid var(--border-button);
+    border-radius: var(--radius-sm);
+    /* Right padding leaves room for the clear button so a long query
+       doesn't slide under the cross. */
+    padding: 0.3rem 1.6rem 0.3rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+
+    &.has-error {
+      border-color: var(--level-error);
+      color: var(--fg-error);
+      text-decoration: underline;
+      text-decoration-color: var(--level-error);
+      text-decoration-style: wavy;
+    }
+
+    &::placeholder {
+      color: var(--fg-dim);
+      font-style: italic;
+    }
+  }
+
+  .clear-search {
+    position: absolute;
+    top: 50%;
+    right: 0.3rem;
+    transform: translateY(-50%);
+    width: 1.1rem;
+    height: 1.1rem;
+    padding: 0;
+    background: transparent;
+    color: var(--fg-dim);
+    border: none;
+    border-radius: 50%;
+    font-family: var(--font-sans);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover {
+      background: var(--bg-button-hover);
+      color: var(--fg-default);
+    }
+
+    &:focus-visible {
+      outline: 1px solid var(--level-info);
+      outline-offset: 1px;
+    }
+  }
+
+  .case {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .hit-count {
+    font-family: var(--font-mono);
+    color: var(--fg-default);
+
+    strong { color: var(--level-info); }
+    &.muted { color: var(--fg-dim); }
+  }
+
+  button {
+    background: var(--bg-button);
+    color: var(--fg-default);
+    border: 1px solid var(--border-button);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.55rem;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    cursor: pointer;
+
+    &:hover:not(:disabled) { background: var(--bg-button-hover); }
+    &:disabled { opacity: 0.4; cursor: default; }
+  }
+
+  .filter-toggle.is-on {
+    border-color: var(--level-info);
+    color: var(--level-info);
+  }
+
+  .level-mask {
+    display: inline-flex;
+    gap: 0.15rem;
+
+    .lvl-btn {
+      padding: 0.2rem 0.4rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      border-color: var(--border-button);
+
+      &.is-off {
+        opacity: 0.35;
+        text-decoration: line-through;
+      }
+    }
+    .lvl-trace { color: var(--level-trace); }
+    .lvl-debug { color: var(--level-debug); }
+    .lvl-info { color: var(--level-info); }
+    .lvl-warn { color: var(--level-warn); }
+    .lvl-error { color: var(--level-error); }
+    .lvl-fatal { color: var(--level-fatal); }
+  }
+
+  .search-error {
+    color: var(--fg-error);
+    font-family: var(--font-mono);
+    flex-basis: 100%;
+  }
 }
 
 .placeholder {
@@ -1466,8 +2366,17 @@ function levelGutterVar(level: string): string {
 
     .txt {
       padding-right: 0.6rem;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      /* Per-row horizontal scroll exists ONLY as a programmatic surface
+         so `scrollIntoView` can bring an off-screen search match into
+         view (see bringCurrentHitMatchIntoView). The visible scrollbar
+         was ugly and hard to use, so it's hidden -- overflow-x stays
+         `auto` (not `hidden`) because scrollLeft only takes effect on
+         scrollable elements. */
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+
+      &::-webkit-scrollbar { display: none; }
     }
 
     &.is-continuation .txt {
@@ -1530,6 +2439,13 @@ function levelGutterVar(level: string): string {
 
       &:hover { text-decoration-thickness: 2px; }
     }
+    .h-search-match {
+      background: var(--hl-search-bg);
+      color: var(--hl-search-fg);
+      font-weight: 600;
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px var(--hl-search-bg);
+    }
 
     /* Subtle row tint for the louder severities. We layer a flat colour
        image over the opaque `background-color: var(--bg-viewport)` so the
@@ -1552,6 +2468,23 @@ function levelGutterVar(level: string): string {
         color-mix(in srgb, var(--level-fatal) 10%, transparent),
         color-mix(in srgb, var(--level-fatal) 10%, transparent)
       );
+    }
+
+    /* Active search hit: wash the whole row in the search-highlight
+       hue so prev/next navigation lands somewhere obvious without the
+       user having to spot the small per-token match span. Layered as
+       a separate background-image so it composites cleanly on top of
+       any level-row tint, and uses a bright outline at the top/bottom
+       edges to read like a focus ring rather than another level
+       background. */
+    &.is-current-hit {
+      background-image: linear-gradient(
+        color-mix(in srgb, var(--hl-search-bg) 22%, transparent),
+        color-mix(in srgb, var(--hl-search-bg) 22%, transparent)
+      );
+      box-shadow:
+        inset 0 1px 0 var(--hl-search-bg),
+        inset 0 -1px 0 var(--hl-search-bg);
     }
   }
 

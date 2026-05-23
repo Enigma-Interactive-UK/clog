@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-05-23
+> Last updated: 2026-05-23 (post-P6)
 
 ## User Preferences
 
@@ -31,6 +31,7 @@
 - [2026-05-23] Initially recommended SolidJS for the UI without first asking about team framework familiarity. For a non-perf-critical layer (framework reactivity overhead is dwarfed by virtualiser + IPC + parser), familiarity should win. Ask before recommending unfamiliar stacks.
 - [2026-05-23] The sample-log fixture referenced in `docs/build-phases.md` as `research/solopress.out` actually lives at `research/solopress-prod.log` (8.7 MB, 74,921 lines, prod pattern) and `research/solopress-wsl-oink.out` (42 KB, 386 lines, wsl-oink pattern). Docs are stale - until they are updated, code should reference the actual filenames. Smoke-test constant for the prod fixture is `74_921` lines.
 - [2026-05-23] Used `Bash` with Windows-style backslash paths (`mkdir e:\Work\clog\docs`). Bash interprets `\` as an escape character so this can collapse to a single mangled directory name like `eWorkclogdocs`. On Windows, for directory operations either (a) use `PowerShell` with `New-Item -ItemType Directory -Force <path>`, or (b) if using Bash, use forward slashes (`e:/Work/clog/docs`) or quote-and-escape carefully. Prefer PowerShell for filesystem ops on this machine.
+- [2026-05-23] In Vue `<script setup>`, called `useVirtualizer(computed(() => ({ count: effectiveCount.value, ... })))` before `effectiveCount` was declared. @tanstack/vue-virtual reads the supplied computed synchronously at setup time, which evaluated the getter immediately and threw a TDZ ReferenceError; the app then mounted blank. **Rule:** any computed/function/ref whose `.value` is read synchronously from another setup call (`useVirtualizer`, `useQuery`, etc.) MUST be declared physically above that call. Template references are safe because templates run post-mount, but anything called during script-setup execution is bound to the script's lexical order.
 
 ## Decision Log
 
@@ -123,3 +124,33 @@ Two-layer CSS custom property tokens (palette + semantic), `prefers-color-scheme
 
 ### [2026-05-23] Packaging: NSIS + portable zip
 Per-user install (no UAC). NSIS installer offers `.log` AND `.out` "Open with" registration as opt-in checkbox. Tauri auto-updater wired from v1 with self-hosted `latest.json`; update-signing keypair generated now. Code-signing cert deferred until SmartScreen friction is real; CI build cert-aware via env vars (`CLOG_SIGNING_PFX_BASE64`).
+
+### [2026-05-23] P6 vertical slice landed
+clog-core gained search.rs (SearchMode Smart/Regex; LevelMask u16 bit-per-Level via level_bit; HitRef with record_idx, record_first_line, record_line_count, ranges record-relative bytes, score; SearchOptions case_sensitive + level_mask; SearchError EmptyQuery/BadRegex; search_records walks records via rayon par_iter). Smart search: tokens split on ASCII whitespace, lowercased when insensitive; for each token find every occurrence; for each starting position of token 0, greedily pick the earliest occurrence of subsequent tokens whose start is at or after prev_end; pick the alignment with the lowest gap-sum. Greedy is optimal because a later occurrence only widens the left gap without helping any future gap. Regex: prefixed (?i) when insensitive, applied via regex::bytes::Regex find_iter per record so matches cannot cross record boundaries. rayon added to clog-core. clog-app gained channels::SearchEmitter (batches 512 hits per SearchDelta, finish ships terminal done=true, abort drops buffer on cancellation), start_search + cancel_search IPC. start_search bundles params into SearchRequest to stay under clippy::too_many_arguments. Each call bumps OpenedFile.current_search_id, allocates a fresh Arc<AtomicBool> cancel flag, snapshots records+bytes under the lock, dispatches via tokio::task::spawn_blocking so rayon does not park a tokio worker; pre-flight regex compile catches bad patterns sub-millisecond. close_file cancels the search alongside the tail. tokio gained rt-multi-thread; regex 1 added to clog-app. LinePayload gained byte_offset_in_record so the UI can map record-relative hit bytes onto line-relative offsets (ASCII assumption, matches axis-1 field spans). UI: search bar (mode toggle, query input with wavy red-underline regex-invalid indicator, case toggle, hit count badge, prev/next, Filter toggle, level-mask buttons), 50ms debounce, current_search_id discriminator drops stale streams, filter mode flattens hit records line spans into filteredLineIndices, virtualizer count is effectiveCount, lineRowVirtual is the new template entry point, renderLine prepends search spans to axis-2 in the overlay() call so search wins findAxis2 first-match-wins. style.css gained --hl-search-bg/fg tokens; .h-search-match uses them with weight 600 and 1px box-shadow ring. 52 cargo tests (13 new), 14 vitest unchanged, cargo fmt/clippy/build + npm build + npm test all green. Playwright still deferred.
+
+### [2026-05-23] P6 design choice: greedy earliest-after-prev_end smart alignment
+For multi-token smart search, picking the earliest token-1 occurrence at-or-after token-0 end is optimal because choosing a later one strictly increases the gap on the left without changing any subsequent gap. Implementation iterates every starting position of token 0 and takes the min over those. Cost is bounded by len(occs[0]) * len(tokens); records sub-KB and occurrences typically single-digit, so single microseconds per record even before rayon.
+
+### [2026-05-23] P6 design choice: rayon synchronous then batch-emit, not streaming
+rayon collects all HitRef into a Vec then the awaiting tokio task batches them via SearchEmitter (SEARCH_BATCH_SIZE=512) into SearchDelta chunks. Considered streaming hits live (crossbeam channel into the tokio task) but the full rayon scan on a 75k-record file finishes well under the 16ms frame budget. SearchEmitter is the stable seam if future profiling shows a need.
+
+### [2026-05-23] P6 design choice: SearchRequest struct over many positional args
+The natural signature exceeds 7 args (clippy::too_many_arguments). Bundled mode/query/case_sensitive/level_mask into a serde-deserialised SearchRequest. JS sends { fileId, request: { mode, query, case_sensitive, level_mask }, onHits } -- field names snake_case to match serde defaults.
+
+### [2026-05-23] P6 design choice: level mask as u16 bitmask
+Tested once per record in the rayon hot loop -- one bitwise AND vs a HashSet probe. Copy semantics so it ships trivially into the parallel closure. UI mirrors the bit layout in a small LEVEL_BIT object.
+
+### [2026-05-23] P6 design choice: search-match overlay rides axis-2 overlap merge with search prepended
+renderLine constructs [...search, ...axis2] and hands the combined list to engine.overlay(). overlay.findAxis2 walks in order and returns the first containing span, so prepending search makes it win on overlap with axis-2 rules. Within each list, spans are guaranteed non-overlapping (computeHighlights per-char paint, smart_match greedy alignment, regex find_iter non-overlap contract). No third merge step needed.
+
+### [2026-05-23] P6 design choice: byte_offset_in_record + ASCII char-offset assumption
+HitRef ranges are record-relative bytes. UI subtracts the line offset within the record to get line-local char offsets. Axis-1 field spans (HeaderFields) already make the same ASCII assumption -- log content is overwhelmingly ASCII; rare non-ASCII rows skew the overlay boundaries but never crash. Documented in LinePayload byte_offset_in_record doc comment.
+
+### [2026-05-23] P6 design choice: filter mode flattens to line-index array
+filteredLineIndices: number[] is the concatenated line spans of all matching records in record order. effectiveCount is its length. actualLineIndex(virtualIdx) is O(1). Trade-off: rebuild on hit/filter change costs O(visible records); negligible vs backend RTT. The virtualizer needs an exact count (design.md s9), so a precomputed array beats on-the-fly mapping.
+
+### [2026-05-23] P6 known limitations recorded for later phases
+- Level mask only re-triggers the search when a query is present. Toggling levels with no query has no visible effect (no separate code path for unfiltered level-mask rendering); intentional simplification.
+- Filter mode with empty query shows nothing.
+- Hit prev/next uses linear indexOf into filteredLineIndices in filter mode; binary search if hit counts blow up.
+- No Playwright smoke test yet (matches P4/P5 status).

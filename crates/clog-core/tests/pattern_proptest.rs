@@ -61,15 +61,15 @@ fn message_body() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    /// Render-and-reparse round trip for the wsl-oink pattern.
+    /// Render-and-reparse round trip for the wsl-dev pattern.
     #[test]
-    fn wsl_oink_roundtrips(
+    fn wsl_dev_roundtrips(
         level in level_strategy(),
         thread in thread_name(),
         logger in logger_name(),
         msg in message_body(),
     ) {
-        let pat = CompiledPattern::compile(builtin_pattern("wsl-oink").unwrap()).expect("compile");
+        let pat = CompiledPattern::compile(builtin_pattern("wsl-dev").unwrap()).expect("compile");
         let level_text = pad_right(level_word(level), 5);
         let line = format!(
             "[{level_text}] 2026-05-22 16:28:59.246 [{thread}] {logger} - {msg}"

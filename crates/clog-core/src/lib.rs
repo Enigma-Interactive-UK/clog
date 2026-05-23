@@ -10,6 +10,7 @@ pub mod index;
 pub mod pattern;
 pub mod record;
 pub mod regex_scanner;
+pub mod search;
 pub mod source;
 pub mod tail;
 
@@ -20,6 +21,7 @@ pub use pattern::{
 };
 pub use record::{scan_records, Level, RecordHeader, RecordScanner};
 pub use regex_scanner::{RegexScanner, RegexScannerError};
+pub use search::{search_records, HitRef, LevelMask, SearchError, SearchMode, SearchOptions};
 pub use source::{LineSource, StreamedFile};
 pub use tail::{TailEvent, TailState, DEFAULT_POLL_INTERVAL_MS, HEAD_HASH_BYTES};
 
@@ -140,11 +142,11 @@ mod tests {
         assert_eq!(summary.line_count, 74_921);
     }
 
-    /// Integration test for P2: scan the wsl-oink sample and assert that
+    /// Integration test for P2: scan the wsl-dev sample and assert that
     /// adjacent records meet exactly, the last record runs to EOF, and the
     /// first/last record byte offsets match the file shape.
     #[test]
-    fn solopress_wsl_oink_record_coverage_is_watertight() {
+    fn solopress_wsl_dev_record_coverage_is_watertight() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../research/solopress-wsl-oink.out"
@@ -177,9 +179,9 @@ mod tests {
         assert!(records.len() <= line_index.line_count());
     }
 
-    /// P3: auto-detect must choose wsl-oink for `solopress-wsl-oink.out`.
+    /// P3: auto-detect must choose wsl-dev for `solopress-wsl-oink.out`.
     #[test]
-    fn auto_detect_chooses_wsl_oink_for_sample() {
+    fn auto_detect_chooses_wsl_dev_for_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../research/solopress-wsl-oink.out"
@@ -191,10 +193,10 @@ mod tests {
         let lines = sample_lines(path, 64 * 1024).expect("sample");
         let refs: Vec<&[u8]> = lines.iter().map(Vec::as_slice).collect();
         let (name, _, score) = auto_detect(refs).expect("detects something");
-        assert_eq!(name, "wsl-oink");
+        assert_eq!(name, "wsl-dev");
         // The fixture is a startup log peppered with stack-trace
         // continuation lines, so the absolute score is well under 1. The
-        // important assertion is that wsl-oink wins; we just sanity-check
+        // important assertion is that wsl-dev wins; we just sanity-check
         // it dominates noise.
         assert!(score > 0.4, "score {score} too low to be a confident pick");
     }
