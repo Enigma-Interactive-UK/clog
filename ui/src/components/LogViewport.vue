@@ -835,6 +835,9 @@ interface MinimapTooltip {
   timestamp: string | null
   error: number
   warn: number
+  speed_count: number
+  speed_avg_ms: number
+  speed_max_ms: number
 }
 const minimapTooltip = ref<MinimapTooltip>({
   visible: false,
@@ -844,6 +847,9 @@ const minimapTooltip = ref<MinimapTooltip>({
   timestamp: null,
   error: 0,
   warn: 0,
+  speed_count: 0,
+  speed_avg_ms: 0,
+  speed_max_ms: 0,
 })
 
 function tooltipTargetFromY(
@@ -890,6 +896,7 @@ function updateMinimapTooltip(ev: PointerEvent) {
     minimapTooltip.value = {
       visible: false, top: 0, left: 0,
       lineIndex: 0, timestamp: null, error: 0, warn: 0,
+      speed_count: 0, speed_avg_ms: 0, speed_max_ms: 0,
     }
     return
   }
@@ -901,6 +908,16 @@ function updateMinimapTooltip(ev: PointerEvent) {
   const rect = canvas?.getBoundingClientRect()
   const left = rect ? rect.left : ev.clientX
   const bucket = bucketIndex >= 0 ? minimapBuckets.value[bucketIndex] : null
+  const sg = speedGrid.value
+  let speed_count = 0
+  let speed_avg_ms = 0
+  let speed_max_ms = 0
+  if (sg && bucketIndex >= 0 && bucketIndex < sg.buckets.length) {
+    const sb = sg.buckets[bucketIndex]
+    speed_count = sb.count
+    speed_avg_ms = sb.avg_ms
+    speed_max_ms = sb.max_ms
+  }
   minimapTooltip.value = {
     visible: true,
     top: ev.clientY,
@@ -909,6 +926,9 @@ function updateMinimapTooltip(ev: PointerEvent) {
     timestamp: ts,
     error: bucket?.error ?? 0,
     warn: bucket?.warn ?? 0,
+    speed_count,
+    speed_avg_ms,
+    speed_max_ms,
   }
 }
 
@@ -916,7 +936,11 @@ function onMinimapPointerEnter(ev: PointerEvent) {
   updateMinimapTooltip(ev)
 }
 function onMinimapPointerLeave() {
-  minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null, error: 0, warn: 0 }
+  minimapTooltip.value = {
+    visible: false, top: 0, left: 0,
+    lineIndex: 0, timestamp: null, error: 0, warn: 0,
+    speed_count: 0, speed_avg_ms: 0, speed_max_ms: 0,
+  }
 }
 let minimapDragging = false
 function bookmarkVirtualIdxAtY(clientY: number): number | null {
@@ -1177,6 +1201,17 @@ function heatLine(error: number, warn: number): string {
   return parts.join(', ')
 }
 
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 60_000).toFixed(1)}m`
+}
+
+function speedLine(count: number, avg: number, max: number): string {
+  const label = count === 1 ? 'hit' : 'hits'
+  return `${count} ${label}, avg ${formatMs(avg)}, peak ${formatMs(max)}`
+}
+
 defineExpose({
   scrollToCurrentHit,
   jumpToBottom,
@@ -1308,12 +1343,22 @@ defineExpose({
           v-if="minimapTooltip.error > 0 || minimapTooltip.warn > 0"
           class="heat"
         >{{ heatLine(minimapTooltip.error, minimapTooltip.warn) }}</span>
+        <span
+          v-if="minimapTooltip.speed_count > 0"
+          class="speed-line"
+        >{{ speedLine(minimapTooltip.speed_count, minimapTooltip.speed_avg_ms, minimapTooltip.speed_max_ms) }}</span>
       </div>
     </div>
     <canvas
       v-if="speedRailVisible"
       ref="speedRailEl"
       class="speed-rail"
+      @pointerdown="onMinimapPointerDown"
+      @pointermove="onMinimapPointerMove"
+      @pointerup="onMinimapPointerUp"
+      @pointercancel="onMinimapPointerUp"
+      @pointerenter="onMinimapPointerEnter"
+      @pointerleave="onMinimapPointerLeave"
     />
     <InsightsDrawer
       v-if="tab.insightsOpen.value"
@@ -1484,6 +1529,7 @@ defineExpose({
   .ts { color: var(--fg-default); }
   .ts.muted { color: var(--fg-dim); }
   .heat { color: var(--hl-search-fg); font-weight: 600; }
+  .speed-line { color: var(--speed-mid); font-weight: 600; }
 
   &::before,
   &::after {
