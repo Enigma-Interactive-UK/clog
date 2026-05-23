@@ -644,33 +644,26 @@ fn level_rank(l: Level) -> u8 {
     }
 }
 
-#[tauri::command]
-fn get_level_minimap(
-    state: State<'_, AppState>,
-    file_id: u64,
-    bucket_count: u32,
-) -> Result<LevelMinimapPayload, IpcError> {
-    let guard = state.files.lock().expect("files mutex poisoned");
-    let file = guard
-        .get(&file_id)
-        .ok_or(IpcError::UnknownFile { file_id })?;
-    let bucket_count = bucket_count.max(1) as usize;
+/// Pure rollup used by `get_level_minimap` and by tests. Maps each
+/// record's physical line span onto a `bucket_count`-wide grid and keeps
+/// the worst severity per bucket. Equivalent to the inlined logic that
+/// used to live inside the command.
+fn build_level_minimap_payload(
+    records: &[RecordHeader],
+    line_count: u64,
+    bucket_count: usize,
+) -> LevelMinimapPayload {
+    let bucket_count = bucket_count.max(1);
     let mut buckets = vec![Level::Unknown; bucket_count];
-    let line_count = file.line_count;
-    if line_count == 0 || file.records.is_empty() {
-        return Ok(LevelMinimapPayload {
+    if line_count == 0 || records.is_empty() {
+        return LevelMinimapPayload {
             buckets,
             line_count,
-        });
+        };
     }
-
-    // Map each record's physical-line span onto the bucket grid. The bucket
-    // for line `i` is `i * bucket_count / line_count`. We compute the
-    // first/last bucket a record touches and bump every bucket in that
-    // range to the record's level if it outranks what's there.
     let lc = line_count;
     let bc = bucket_count as u64;
-    for rec in &file.records {
+    for rec in records {
         let first_line = u64::from(rec.line_offset);
         let last_line = first_line + u64::from(rec.line_count.max(1)) - 1;
         let first_bucket =
@@ -684,11 +677,27 @@ fn get_level_minimap(
             }
         }
     }
-
-    Ok(LevelMinimapPayload {
+    LevelMinimapPayload {
         buckets,
         line_count,
-    })
+    }
+}
+
+#[tauri::command]
+fn get_level_minimap(
+    state: State<'_, AppState>,
+    file_id: u64,
+    bucket_count: u32,
+) -> Result<LevelMinimapPayload, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    Ok(build_level_minimap_payload(
+        &file.records,
+        file.line_count,
+        bucket_count as usize,
+    ))
 }
 
 /// Lightweight projection of a record. Used by the UI's level-mask + filter
@@ -1657,6 +1666,25 @@ mod tests {
             CompiledScanner::Pattern(p) => extend_with_appended(file, p, from, payload),
             CompiledScanner::Regex(r) => extend_with_appended(file, r, from, payload),
         }
+    }
+
+    #[test]
+    fn level_minimap_baseline_worst_severity_per_bucket() {
+        let (mut file, scanner) = fresh_file();
+        let body = concat!(
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - one\n",
+            "[ERROR] 2026-05-22 16:28:59.247 [main] play - two\n",
+            "[INFO ] 2026-05-22 16:28:59.248 [main] play - three\n",
+        );
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 3);
+
+        let payload = build_level_minimap_payload(&file.records, file.line_count, 3);
+        assert_eq!(payload.buckets.len(), 3);
+        assert_eq!(payload.buckets[0], Level::Info);
+        assert_eq!(payload.buckets[1], Level::Error);
+        assert_eq!(payload.buckets[2], Level::Info);
+        assert_eq!(payload.line_count, 3);
     }
 
     /// Reproduces the symptom the user reported: each tail tick adds one
