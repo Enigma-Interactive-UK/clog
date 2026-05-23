@@ -6,6 +6,9 @@
 //! buckets parsed occurrences across a fixed-count grid so the UI can
 //! paint a file-wide speed heatmap.
 
+use std::sync::OnceLock;
+
+use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 
 /// How paths are grouped in `SlowRequestSummary.entries`.
@@ -110,6 +113,49 @@ fn is_long_hex(seg: &str) -> bool {
     seg.len() >= 12 && seg.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Per-occurrence record, pre-dedup, pre-aggregation. Internal to the
+/// crate; the public output is `SlowRequestOccurrence`.
+#[derive(Debug, Clone)]
+pub struct RawSlowRequest {
+    pub duration_ms: u32,
+    pub raw_path: String,
+    pub class_method: String,
+}
+
+fn slow_request_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // Anchored to message head. Two duration delimiters (`:` or
+        // `()`), two class.method delimiters (`()` or `[]`). The
+        // double-alternation captures land in groups 1+3 (format A) or
+        // 2+4 (format B). Path is whitespace-bounded between them.
+        Regex::new(
+            r"(?-u)^SLOW REQUEST\s*(?::\s*(\d+)ms|\((\d+)ms\))\s*-\s*(\S+)\s+(?:\(([^)]+)\)|\[([^\]]+)\])",
+        )
+        .expect("slow-request regex compiles")
+    })
+}
+
+/// Try to parse a single message-byte slice into a `RawSlowRequest`.
+/// `None` when the bytes do not start with `SLOW REQUEST` or do not
+/// match either supported phrasing.
+#[must_use]
+pub fn extract_raw(message: &[u8]) -> Option<RawSlowRequest> {
+    let caps = slow_request_re().captures(message)?;
+    let duration_bytes = caps.get(1).or_else(|| caps.get(2))?.as_bytes();
+    let duration_ms: u32 = std::str::from_utf8(duration_bytes).ok()?.parse().ok()?;
+    let raw_path = std::str::from_utf8(caps.get(3)?.as_bytes())
+        .ok()?
+        .to_string();
+    let class_method_bytes = caps.get(4).or_else(|| caps.get(5))?.as_bytes();
+    let class_method = std::str::from_utf8(class_method_bytes).ok()?.to_string();
+    Some(RawSlowRequest {
+        duration_ms,
+        raw_path,
+        class_method,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +222,49 @@ mod tests {
     #[test]
     fn thresholds_new_rejects_out_of_bounds() {
         assert!(SlowRequestThresholds::new(0, 600_001).is_none());
+    }
+
+    fn make_message(msg: &str) -> Vec<u8> {
+        msg.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn extract_parses_format_a() {
+        let msg = make_message(
+            "SLOW REQUEST: 5064ms - /preflight/killpreflightrequest.json (SoloPreflightFront.killPreflightRequest_JSON)",
+        );
+        let r = extract_raw(&msg).expect("format A parses");
+        assert_eq!(r.duration_ms, 5064);
+        assert_eq!(r.raw_path, "/preflight/killpreflightrequest.json");
+        assert_eq!(
+            r.class_method,
+            "SoloPreflightFront.killPreflightRequest_JSON"
+        );
+    }
+
+    #[test]
+    fn extract_parses_format_b_with_suggestion_tail() {
+        let msg = make_message(
+            "SLOW REQUEST (5064ms) - /preflight/killpreflightrequest.json [SoloPreflightFront.killPreflightRequest_JSON] - consider using an asynchronous call to ease the load on the threadpool.",
+        );
+        let r = extract_raw(&msg).expect("format B parses");
+        assert_eq!(r.duration_ms, 5064);
+        assert_eq!(r.raw_path, "/preflight/killpreflightrequest.json");
+        assert_eq!(
+            r.class_method,
+            "SoloPreflightFront.killPreflightRequest_JSON"
+        );
+    }
+
+    #[test]
+    fn extract_rejects_unrelated_lines() {
+        assert!(extract_raw(b"Google 360 identifier /event-tickets/").is_none());
+        assert!(extract_raw(b"finalisePreflightRequest designId 14861895").is_none());
+        assert!(extract_raw(b"").is_none());
+    }
+
+    #[test]
+    fn extract_rejects_anchored_substring_only() {
+        assert!(extract_raw(b"prefix SLOW REQUEST: 1000ms - /x (Y.Z)").is_none());
     }
 }
