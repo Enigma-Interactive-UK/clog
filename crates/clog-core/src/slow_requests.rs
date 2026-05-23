@@ -431,6 +431,88 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SpeedBucket {
+    pub count: u32,
+    pub avg_ms: u32,
+    pub max_ms: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeedGrid {
+    pub buckets: Vec<SpeedBucket>,
+    pub min_avg_ms: u32,
+    pub max_avg_ms: u32,
+}
+
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn build_speed_grid(
+    occurrences: &[SlowRequestOccurrence],
+    line_count: u64,
+    bucket_count: usize,
+) -> SpeedGrid {
+    let bucket_count = bucket_count.max(1);
+    let empty = SpeedBucket {
+        count: 0,
+        avg_ms: 0,
+        max_ms: 0,
+    };
+    if line_count == 0 || occurrences.is_empty() {
+        return SpeedGrid {
+            buckets: vec![empty; bucket_count],
+            min_avg_ms: 0,
+            max_avg_ms: 0,
+        };
+    }
+    let mut sums = vec![0u64; bucket_count];
+    let mut counts = vec![0u32; bucket_count];
+    let mut maxes = vec![0u32; bucket_count];
+    let bc = bucket_count as u64;
+    for occ in occurrences {
+        let mut b = (occ.line_index.saturating_mul(bc) / line_count) as usize;
+        if b >= bucket_count {
+            b = bucket_count - 1;
+        }
+        sums[b] = sums[b].saturating_add(u64::from(occ.duration_ms));
+        counts[b] = counts[b].saturating_add(1);
+        if occ.duration_ms > maxes[b] {
+            maxes[b] = occ.duration_ms;
+        }
+    }
+    let mut buckets = Vec::with_capacity(bucket_count);
+    let mut min_avg = u32::MAX;
+    let mut max_avg = 0u32;
+    let mut any = false;
+    for i in 0..bucket_count {
+        let count = counts[i];
+        let avg = if count == 0 {
+            0
+        } else {
+            u32::try_from(sums[i] / u64::from(count)).unwrap_or(u32::MAX)
+        };
+        if count > 0 {
+            any = true;
+            if avg < min_avg {
+                min_avg = avg;
+            }
+            if avg > max_avg {
+                max_avg = avg;
+            }
+        }
+        buckets.push(SpeedBucket {
+            count,
+            avg_ms: avg,
+            max_ms: maxes[i],
+        });
+    }
+    SpeedGrid {
+        buckets,
+        min_avg_ms: if any { min_avg } else { 0 },
+        max_avg_ms: max_avg,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,6 +851,64 @@ mod tests {
         assert_eq!(entry.occurrences.len(), 50);
         assert_eq!(entry.occurrences[0].duration_ms, 6000);
         assert_eq!(entry.occurrences[49].duration_ms, 1100);
+    }
+
+    fn occs(line_ms: &[(u64, u32)]) -> Vec<SlowRequestOccurrence> {
+        line_ms
+            .iter()
+            .map(|&(line, ms)| SlowRequestOccurrence {
+                timestamp_ms: None,
+                duration_ms: ms,
+                line_index: line,
+                record_idx: 0,
+                dup_count: 1,
+                class_method: "X.x".into(),
+                raw_path: "/x".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn speed_grid_buckets_occurrences_across_grid() {
+        let o = occs(&[(0, 1000), (4, 3000), (5, 2000), (9, 8000)]);
+        let g = build_speed_grid(&o, 10, 2);
+        assert_eq!(g.buckets.len(), 2);
+        assert_eq!(g.buckets[0].count, 2);
+        assert_eq!(g.buckets[0].avg_ms, 2000);
+        assert_eq!(g.buckets[0].max_ms, 3000);
+        assert_eq!(g.buckets[1].count, 2);
+        assert_eq!(g.buckets[1].avg_ms, 5000);
+        assert_eq!(g.buckets[1].max_ms, 8000);
+        assert_eq!(g.min_avg_ms, 2000);
+        assert_eq!(g.max_avg_ms, 5000);
+    }
+
+    #[test]
+    fn speed_grid_empty_input_yields_zeroed_buckets() {
+        let g = build_speed_grid(&[], 100, 4);
+        assert_eq!(g.buckets.len(), 4);
+        for b in &g.buckets {
+            assert_eq!(b.count, 0);
+            assert_eq!(b.avg_ms, 0);
+            assert_eq!(b.max_ms, 0);
+        }
+        assert_eq!(g.min_avg_ms, 0);
+        assert_eq!(g.max_avg_ms, 0);
+    }
+
+    #[test]
+    fn speed_grid_degenerate_spread_collapses_min_eq_max() {
+        let o = occs(&[(0, 1000), (5, 1000)]);
+        let g = build_speed_grid(&o, 10, 2);
+        assert_eq!(g.min_avg_ms, 1000);
+        assert_eq!(g.max_avg_ms, 1000);
+    }
+
+    #[test]
+    fn speed_grid_clamps_overflow_bucket_to_last() {
+        let o = occs(&[(10, 5000)]);
+        let g = build_speed_grid(&o, 10, 2);
+        assert_eq!(g.buckets[1].count, 1);
     }
 
     #[test]
