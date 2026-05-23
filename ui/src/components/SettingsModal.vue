@@ -6,14 +6,14 @@
  * resets nothing else.
  */
 
-import { ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { ask } from '@tauri-apps/plugin-dialog'
 
 import BaseModal from './BaseModal.vue'
 import HighlightRulesEditor from './HighlightRulesEditor.vue'
 import type { DataDirPayload, Settings, UserHighlightRule } from '../types'
 
-defineProps<{
+const props = defineProps<{
   settings: Settings
   dataDir: DataDirPayload | null
   globalRules: UserHighlightRule[]
@@ -33,6 +33,53 @@ const emit = defineEmits<{
 
 type TabId = 'general' | 'highlighting' | 'advanced'
 const activeTab = ref<TabId>('general')
+
+// --- Slow request thresholds (global) ------------------------------------
+
+const fastInput = ref('')
+const slowInput = ref('')
+
+// Sync the inputs whenever the upstream settings.slow_request_thresholds
+// changes (e.g. modal opened, or a reset hit). Blank inputs represent
+// "no global override" so the auto/per-file resolution takes over.
+watchEffect(() => {
+  const t = props.settings.slow_request_thresholds
+  fastInput.value = t ? String(t.fast_ms) : ''
+  slowInput.value = t ? String(t.slow_ms) : ''
+})
+
+const thresholdError = computed<string | null>(() => {
+  if (fastInput.value === '' && slowInput.value === '') return null
+  if (fastInput.value === '' || slowInput.value === '') return 'Both fields required'
+  const f = Number(fastInput.value)
+  const s = Number(slowInput.value)
+  if (Number.isNaN(f) || Number.isNaN(s)) return 'Numbers only'
+  if (f >= s) return 'fast must be less than slow'
+  if (s > 600_000) return 'slow capped at 600,000 (10 min)'
+  return null
+})
+
+function saveGlobalThresholds() {
+  if (thresholdError.value) return
+  if (fastInput.value === '' && slowInput.value === '') {
+    // Sending `null` clears the global override server-side via the custom
+    // Option<Option<...>> deserialiser; auto-detection takes over again.
+    emit('update', { slow_request_thresholds: null })
+    return
+  }
+  emit('update', {
+    slow_request_thresholds: {
+      fast_ms: Number(fastInput.value),
+      slow_ms: Number(slowInput.value),
+    },
+  })
+}
+
+function resetGlobalThresholds() {
+  fastInput.value = ''
+  slowInput.value = ''
+  emit('update', { slow_request_thresholds: null })
+}
 
 function basename(p: string): string {
   const m = p.match(/[^\\/]+$/)
@@ -169,6 +216,27 @@ function onResetAll() {
             @change="(e: Event) => emit('update', { follow_tail_default: (e.target as HTMLInputElement).checked })"
           />
         </span>
+      </div>
+
+      <h3>Slow requests</h3>
+      <p class="muted hint">
+        Pin the speed-rail gradient anchors. Both values required; fast must be
+        less than slow; both capped at 600,000 ms (10 minutes). Per-file overrides
+        from the insights drawer take precedence over these.
+      </p>
+      <div class="threshold-grid">
+        <label>Fast (ms) <input v-model="fastInput" type="number" min="0" max="600000" /></label>
+        <label>Slow (ms) <input v-model="slowInput" type="number" min="0" max="600000" /></label>
+      </div>
+      <div v-if="thresholdError" class="threshold-error">{{ thresholdError }}</div>
+      <div class="threshold-actions">
+        <button
+          type="button"
+          class="seg-btn"
+          :disabled="!!thresholdError"
+          @click="saveGlobalThresholds"
+        >Save</button>
+        <button type="button" class="seg-btn" @click="resetGlobalThresholds">Reset to default</button>
       </div>
 
       <h3>Recent files</h3>
@@ -424,5 +492,24 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 }
 
 .reset-grid { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0; }
+
+.hint { margin-bottom: 0.5rem; }
+.threshold-grid {
+  display: flex;
+  gap: 0.8rem;
+  margin: 0.4rem 0;
+
+  & label { color: var(--fg-muted); font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+  & input {
+    width: 6rem;
+    background: var(--bg-viewport);
+    border: 1px solid var(--border-button);
+    color: var(--fg-default);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm);
+  }
+}
+.threshold-error { color: var(--level-error); font-size: 0.8rem; margin: 0.2rem 0; }
+.threshold-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
 .footer-note { margin-top: 1.2rem; padding-top: 0.6rem; border-top: 1px solid var(--border-default); font-size: 0.8rem; }
 </style>

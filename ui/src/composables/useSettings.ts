@@ -40,6 +40,10 @@ function defaultSettings(): Settings {
 export function useSettings() {
   const settings = ref<Settings>(defaultSettings())
   const dataDir = ref<DataDirPayload | null>(null)
+  /** Bumped after every successful settings save so observers (e.g. the
+   *  insights drawer) can refetch derived state without prop-drilling
+   *  every individual field. */
+  const settingsVersion = ref(0)
 
   const systemDarkMql =
     typeof globalThis !== 'undefined' && typeof globalThis.matchMedia === 'function'
@@ -75,6 +79,7 @@ export function useSettings() {
     try {
       const s = (await invoke('update_settings', { patch })) as Settings
       settings.value = s
+      settingsVersion.value++
       if (patch.theme !== undefined) applyTheme(s.theme)
       if (patch.font_size !== undefined) applyFontSize(s.font_size)
       return null
@@ -180,6 +185,7 @@ export function useSettings() {
 
   return {
     settings,
+    settingsVersion,
     dataDir,
     themeToggleGlyph,
     THEME_LABEL,

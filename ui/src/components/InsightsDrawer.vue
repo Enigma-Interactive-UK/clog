@@ -5,7 +5,7 @@
  * and a sortable entry list with click-to-jump + expandable occurrence
  * rows. Threshold editor and speed grid land in later tasks.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { Tab } from '../tab'
 import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds } from '../types'
@@ -95,6 +95,17 @@ onMounted(() => {
   void refresh()
   void refreshThresholds()
 })
+
+// When global settings change (e.g. Settings modal saves new thresholds),
+// refetch the effective-thresholds payload so the chip + speed rail
+// repaint without requiring a reload.
+const settingsVersion = inject<Ref<number> | null>('settingsVersion', null)
+if (settingsVersion) {
+  watch(settingsVersion, () => {
+    void refreshThresholds()
+    emit('thresholds-changed')
+  })
+}
 
 watch(() => props.tab.slowRequestMode.value, refresh)
 watch(

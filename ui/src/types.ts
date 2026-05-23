@@ -96,6 +96,7 @@ export interface Settings {
   font_size: number
   recent_files: string[]
   follow_tail_default: boolean
+  slow_request_thresholds?: SlowRequestThresholds | null
 }
 
 export interface RestoredFile {

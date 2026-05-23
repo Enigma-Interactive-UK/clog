@@ -6,7 +6,7 @@
  * objects (see ./tab.ts) -- the viewport, search bar, tail and search
  * channels all flow through those.
  */
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, useTemplateRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -41,6 +41,7 @@ const aboutRef = useTemplateRef<InstanceType<typeof AboutModal>>('aboutRef')
 
 const {
   settings,
+  settingsVersion,
   dataDir,
   themeToggleGlyph,
   THEME_LABEL,
@@ -55,6 +56,11 @@ const {
   forgetRecent,
   resetData,
 } = useSettings()
+
+// Make the version counter available to the insights drawer (deep in the
+// LogViewport tree) so it can refetch effective thresholds whenever any
+// settings save fires - no prop drilling through LogViewport required.
+provide('settingsVersion', settingsVersion)
 
 const {
   tabs,
