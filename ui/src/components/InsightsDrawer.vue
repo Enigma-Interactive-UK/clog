@@ -192,6 +192,31 @@ const filteredEntries = computed<SlowRequestEntry[]>(() => {
   return filtered
 })
 
+// Per-entry "slowness" score in 0..1, normalised across the currently
+// visible entries (so filtering recalibrates). Weighted blend: total
+// time dominates because it captures both volume and per-hit slowness,
+// p95 surfaces tail latency, count surfaces noisy-but-quick endpoints.
+const slownessScores = computed<Map<string, number>>(() => {
+  const list = filteredEntries.value
+  const map = new Map<string, number>()
+  if (list.length === 0) return map
+  let maxCount = 0
+  let maxTotal = 0
+  let maxP95 = 0
+  for (const e of list) {
+    if (e.count > maxCount) maxCount = e.count
+    if (e.total_ms > maxTotal) maxTotal = e.total_ms
+    if (e.p95_ms > maxP95) maxP95 = e.p95_ms
+  }
+  for (const e of list) {
+    const cN = maxCount > 0 ? e.count / maxCount : 0
+    const tN = maxTotal > 0 ? e.total_ms / maxTotal : 0
+    const pN = maxP95 > 0 ? e.p95_ms / maxP95 : 0
+    map.set(e.path, 0.5 * tN + 0.25 * pN + 0.25 * cN)
+  }
+  return map
+})
+
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -327,7 +352,11 @@ function jumpTo(line: number) {
 
       <ul v-else class="entry-list">
         <li v-for="entry in filteredEntries" :key="entry.path" class="entry">
-          <div class="entry-row" @click="toggleExpanded(entry.path)">
+          <div
+            class="entry-row"
+            :style="{ '--score': slownessScores.get(entry.path) ?? 0 }"
+            @click="toggleExpanded(entry.path)"
+          >
             <span class="entry-path" :title="entry.path" @click.stop="jumpTo(entry.longest_line)">
               {{ entry.path }}
             </span>
@@ -504,10 +533,34 @@ function jumpTo(line: number) {
   border-bottom: 1px solid var(--border-default);
 
   & .entry-row {
+    --score: 0;
+    position: relative;
     display: grid;
     grid-template-columns: 1fr auto 16px;
     gap: 0.4rem;
-    padding: 0.4rem 0;
+    padding: 0.4rem 0.4rem 0.4rem 0;
+
+    /* Slowness bar: scaleX from 0..1 driven by the per-row --score var.
+       Painted behind the row contents (z-index -1 against the relative
+       parent) with a faint warm tint that picks up the speed palette so
+       the drawer reads consistently with the speed rail. */
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--speed-mid) 14%, transparent),
+        color-mix(in srgb, var(--speed-slow) 22%, transparent)
+      );
+      transform: scaleX(var(--score));
+      transform-origin: left center;
+      z-index: 0;
+      pointer-events: none;
+      transition: transform 180ms ease;
+    }
+
+    & > * { position: relative; z-index: 1; }
     align-items: center;
     cursor: pointer;
   }
