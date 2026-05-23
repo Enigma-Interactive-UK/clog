@@ -126,6 +126,13 @@
      per `MarkerKind` variant on the Rust side. */
   --marker-restart: var(--green-500);
 
+  /* Speed-rail palette - three HSL stops driving the continuous
+     green-to-amber-to-red gradient over per-bucket avg slow-request
+     duration. Light theme overrides further down. */
+  --speed-fast: hsl(140, 70%, 45%);
+  --speed-mid:  hsl(40, 85%, 50%);
+  --speed-slow: hsl(0, 75%, 50%);
+
   /* User-rule palette (P8: editable highlight rules pick from these slots) */
   --h-user-red: #f87171;
   --h-user-amber: #fbbf24;
@@ -218,6 +225,10 @@
   --hl-search-fg: #14181f;
 
   --marker-restart: #15803d;
+
+  --speed-fast: #15803d;
+  --speed-mid:  #b45309;
+  --speed-slow: #b91c1c;
 
   --h-user-red: #b91c1c;
   --h-user-amber: #b45309;

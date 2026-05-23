@@ -29,6 +29,7 @@ import {
   type LineRow,
   type MarkerRef,
   type RecordRef,
+  type SpeedGrid,
 } from '../types'
 import type { Tab } from '../tab'
 
@@ -43,6 +44,14 @@ const emit = defineEmits<{
 // --- DOM refs ---
 const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
 const minimapEl = useTemplateRef<HTMLCanvasElement>('minimapEl')
+const speedRailEl = useTemplateRef<HTMLCanvasElement>('speedRailEl')
+const speedGrid = ref<SpeedGrid | null>(null)
+const speedRailVisible = computed(() => {
+  const g = speedGrid.value
+  if (!g) return false
+  return g.buckets.length > 0 && (g.max_avg_ms > 0 || g.buckets.some((b) => b.count > 0))
+})
+const SPEED_RAIL_WIDTH = 4
 
 // --- Local UI state (per-mount) ---
 const minimapBuckets = ref<BucketStat[]>([])
@@ -368,7 +377,93 @@ function scheduleMinimapFetch(force = false) {
     minimapFetchPending = false
     void fetchMinimap(force)
     void fetchMarkers(force)
+    void fetchSpeedGrid()
   })
+}
+
+async function fetchSpeedGrid() {
+  const height = viewportHeightPx.value
+  if (height <= 0) return
+  const bucketCount = Math.max(1, Math.floor(height))
+  try {
+    const payload = await invoke<SpeedGrid>('get_slow_request_speeds', {
+      fileId: props.tab.file.value.file_id,
+      bucketCount,
+    })
+    speedGrid.value = payload
+    paintSpeedRail()
+  } catch {
+    // non-fatal
+  }
+}
+
+function readCssColour(varName: string): string {
+  const styles = globalThis.getComputedStyle?.(document.documentElement)
+  const v = styles?.getPropertyValue(varName).trim()
+  return v && v.length > 0 ? v : '#15803d'
+}
+
+function resolveToRgb(colour: string): [number, number, number] {
+  const probe = document.createElement('span')
+  probe.style.color = colour
+  probe.style.display = 'none'
+  document.body.appendChild(probe)
+  const computed = globalThis.getComputedStyle(probe).color
+  probe.remove()
+  const m = computed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+  if (!m) return [0, 0, 0]
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+function lerpColour(a: string, b: string, t: number): string {
+  const ca = resolveToRgb(a)
+  const cb = resolveToRgb(b)
+  const r = Math.round(ca[0] + (cb[0] - ca[0]) * t)
+  const g = Math.round(ca[1] + (cb[1] - ca[1]) * t)
+  const bb = Math.round(ca[2] + (cb[2] - ca[2]) * t)
+  return `rgb(${r}, ${g}, ${bb})`
+}
+
+function bucketColour(avgMs: number, fastMs: number, slowMs: number): string {
+  const fast = readCssColour('--speed-fast')
+  const mid = readCssColour('--speed-mid')
+  const slow = readCssColour('--speed-slow')
+  if (avgMs <= fastMs || slowMs <= fastMs) return fast
+  if (avgMs >= slowMs) return slow
+  const t = (avgMs - fastMs) / (slowMs - fastMs)
+  if (t < 0.5) return lerpColour(fast, mid, t * 2)
+  return lerpColour(mid, slow, (t - 0.5) * 2)
+}
+
+function paintSpeedRail() {
+  const canvas = speedRailEl.value
+  const grid = speedGrid.value
+  if (!canvas || !grid || grid.buckets.length === 0) return
+  const h = grid.buckets.length
+  const dpr = globalThis.devicePixelRatio || 1
+  canvas.width = SPEED_RAIL_WIDTH * dpr
+  canvas.height = h * dpr
+  canvas.style.width = `${SPEED_RAIL_WIDTH}px`
+  canvas.style.height = `${h}px`
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const fast = grid.min_avg_ms
+  const slow = Math.max(grid.max_avg_ms, fast + 1)
+  const gradient = ctx.createLinearGradient(0, 0, 0, h)
+  for (let i = 0; i < h; i++) {
+    const b = grid.buckets[i]
+    const avg = b.count > 0 ? b.avg_ms : fast
+    const colour = bucketColour(avg, fast, slow)
+    const offset = h === 1 ? 0 : (i + 0.5) / h
+    gradient.addColorStop(Math.max(0, Math.min(1, offset)), colour)
+  }
+  const firstAvg = grid.buckets[0].count > 0 ? grid.buckets[0].avg_ms : fast
+  const lastAvg = grid.buckets[h - 1].count > 0 ? grid.buckets[h - 1].avg_ms : fast
+  gradient.addColorStop(0, bucketColour(firstAvg, fast, slow))
+  gradient.addColorStop(1, bucketColour(lastAvg, fast, slow))
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, SPEED_RAIL_WIDTH, h)
 }
 
 async function fetchMarkers(force: boolean) {
@@ -1190,6 +1285,11 @@ defineExpose({
         >{{ heatLine(minimapTooltip.error, minimapTooltip.warn) }}</span>
       </div>
     </div>
+    <canvas
+      v-if="speedRailVisible"
+      ref="speedRailEl"
+      class="speed-rail"
+    />
     <button
       v-if="!tab.followTail.value && !atBottom"
       type="button"
@@ -1673,5 +1773,13 @@ defineExpose({
       &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
     }
   }
+}
+
+.speed-rail {
+  flex: 0 0 auto;
+  width: 4px;
+  display: block;
+  cursor: pointer;
+  image-rendering: pixelated;
 }
 </style>
