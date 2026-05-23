@@ -22,6 +22,46 @@ const expanded = ref<Set<string>>(new Set())
 const error = ref<string | null>(null)
 const loading = ref(false)
 
+// Drawer width is user-resizable via the left-edge handle and persists
+// across sessions in localStorage. Clamped to keep the toolbar usable
+// and to stop the drawer eating the entire window.
+const MIN_WIDTH = 240
+const MAX_WIDTH = 800
+const STORAGE_KEY = 'clog.insightsDrawer.width'
+function loadWidth(): number {
+  const raw = globalThis.localStorage?.getItem(STORAGE_KEY)
+  const n = raw === null || raw === undefined ? Number.NaN : Number(raw)
+  if (!Number.isFinite(n)) return 360
+  return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n))
+}
+const drawerWidth = ref(loadWidth())
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+function onResizeDown(ev: PointerEvent) {
+  resizeStartX = ev.clientX
+  resizeStartWidth = drawerWidth.value
+  ;(ev.currentTarget as Element).setPointerCapture(ev.pointerId)
+  ev.preventDefault()
+}
+
+function onResizeMove(ev: PointerEvent) {
+  const target = ev.currentTarget as Element
+  if (!target.hasPointerCapture(ev.pointerId)) return
+  // Handle sits on the left edge of a right-anchored drawer, so
+  // dragging left (negative deltaX) grows the drawer.
+  const next = resizeStartWidth - (ev.clientX - resizeStartX)
+  drawerWidth.value = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, next))
+}
+
+function onResizeUp(ev: PointerEvent) {
+  const target = ev.currentTarget as Element
+  if (target.hasPointerCapture(ev.pointerId)) {
+    target.releasePointerCapture(ev.pointerId)
+  }
+  globalThis.localStorage?.setItem(STORAGE_KEY, String(drawerWidth.value))
+}
+
 async function refresh() {
   loading.value = true
   error.value = null
@@ -182,7 +222,15 @@ function jumpTo(line: number) {
 </script>
 
 <template>
-  <aside class="insights-drawer">
+  <aside class="insights-drawer" :style="{ width: drawerWidth + 'px' }">
+    <div
+      class="resize-handle"
+      aria-label="Resize insights drawer"
+      @pointerdown="onResizeDown"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeUp"
+      @pointercancel="onResizeUp"
+    />
     <header class="drawer-head">
       <span class="title">Slow requests</span>
       <button type="button" class="close-btn" aria-label="Close" @click="emit('close')">
@@ -298,12 +346,30 @@ function jumpTo(line: number) {
 <style scoped>
 .insights-drawer {
   flex: 0 0 auto;
-  width: 360px;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
   border-left: 1px solid var(--border-default);
   min-height: 0;
+  position: relative;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 2;
+  background: transparent;
+  transition: background 120ms;
+  touch-action: none;
+
+  &:hover, &:active {
+    background: var(--accent);
+    opacity: 0.4;
+  }
 }
 
 .drawer-head {
