@@ -271,19 +271,20 @@ function bringCurrentHitMatchIntoView(): boolean {
 }
 
 // --- Minimap ---
-// Dim "wash" alpha used as the base layer for every bucket. Buckets that
-// also have ERROR/FATAL/WARN records get a brighter second pass painted
-// on top in paintMinimap. Keep INFO/UNKNOWN deliberately null so quiet
-// regions read as background.
+// Dim "wash" alpha used as the base layer for every non-INFO bucket. The
+// wash is hue-neutral on purpose -- it conveys "data lives here" without
+// competing with the hot overlay, which carries all the per-level colour.
+// INFO/UNKNOWN stay null so quiet regions read as pure background.
+const NEUTRAL_WASH = 'rgba(180, 184, 196, 0.14)'
 const LEVEL_COLOUR: Record<string, string | null> = {
-  trace: 'rgba(111, 118, 130, 0.12)',
-  debug: 'rgba(158, 197, 255, 0.12)',
+  trace: NEUTRAL_WASH,
+  debug: NEUTRAL_WASH,
   info: null,
-  warn: 'rgba(224, 176, 74, 0.18)',
-  error: 'rgba(212, 87, 95, 0.18)',
-  fatal: 'rgba(179, 134, 232, 0.18)',
-  off: 'rgba(74, 84, 102, 0.12)',
-  all: 'rgba(108, 199, 135, 0.18)',
+  warn: NEUTRAL_WASH,
+  error: NEUTRAL_WASH,
+  fatal: NEUTRAL_WASH,
+  off: NEUTRAL_WASH,
+  all: NEUTRAL_WASH,
   unknown: null,
 }
 
