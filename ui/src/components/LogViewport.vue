@@ -574,6 +574,8 @@ interface MinimapTooltip {
   left: number
   lineIndex: number
   timestamp: string | null
+  error: number
+  warn: number
 }
 const minimapTooltip = ref<MinimapTooltip>({
   visible: false,
@@ -581,9 +583,13 @@ const minimapTooltip = ref<MinimapTooltip>({
   left: 0,
   lineIndex: 0,
   timestamp: null,
+  error: 0,
+  warn: 0,
 })
 
-function tooltipLineFromY(clientY: number): number | null {
+function tooltipTargetFromY(
+  clientY: number,
+): { lineIndex: number; bucketIndex: number } | null {
   const canvas = minimapEl.value
   if (!canvas || effectiveCount.value === 0) return null
   const rect = canvas.getBoundingClientRect()
@@ -593,7 +599,11 @@ function tooltipLineFromY(clientY: number): number | null {
     effectiveCount.value - 1,
     Math.floor(ratio * effectiveCount.value),
   )
-  return actualLineIndex(virtualIdx)
+  const bucketCount = minimapBuckets.value.length
+  const bucketIndex = bucketCount === 0
+    ? -1
+    : Math.min(bucketCount - 1, Math.floor(ratio * bucketCount))
+  return { lineIndex: actualLineIndex(virtualIdx), bucketIndex }
 }
 
 function timestampForLine(lineIndex: number): string | null {
@@ -616,23 +626,30 @@ function timestampForLine(lineIndex: number): string | null {
 }
 
 function updateMinimapTooltip(ev: PointerEvent) {
-  const idx = tooltipLineFromY(ev.clientY)
-  if (idx === null) {
-    minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null }
+  const target = tooltipTargetFromY(ev.clientY)
+  if (target === null) {
+    minimapTooltip.value = {
+      visible: false, top: 0, left: 0,
+      lineIndex: 0, timestamp: null, error: 0, warn: 0,
+    }
     return
   }
-  const pageIdx = Math.floor(idx / PAGE_SIZE)
+  const { lineIndex, bucketIndex } = target
+  const pageIdx = Math.floor(lineIndex / PAGE_SIZE)
   if (!props.tab.pages.value.has(pageIdx)) void props.tab.fetchPage(pageIdx)
-  const ts = timestampForLine(idx)
+  const ts = timestampForLine(lineIndex)
   const canvas = minimapEl.value
   const rect = canvas?.getBoundingClientRect()
   const left = rect ? rect.left : ev.clientX
+  const bucket = bucketIndex >= 0 ? minimapBuckets.value[bucketIndex] : null
   minimapTooltip.value = {
     visible: true,
     top: ev.clientY,
     left,
-    lineIndex: idx,
+    lineIndex,
     timestamp: ts,
+    error: bucket?.error ?? 0,
+    warn: bucket?.warn ?? 0,
   }
 }
 
@@ -640,7 +657,7 @@ function onMinimapPointerEnter(ev: PointerEvent) {
   updateMinimapTooltip(ev)
 }
 function onMinimapPointerLeave() {
-  minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null }
+  minimapTooltip.value = { visible: false, top: 0, left: 0, lineIndex: 0, timestamp: null, error: 0, warn: 0 }
 }
 let minimapDragging = false
 function bookmarkVirtualIdxAtY(clientY: number): number | null {
@@ -894,6 +911,13 @@ function onIdxContextMenu(lineIdx: number, ev: MouseEvent) {
   props.tab.removeBookmark(lineIdx)
 }
 
+function heatLine(error: number, warn: number): string {
+  const parts: string[] = []
+  if (error > 0) parts.push(`${error} ${error === 1 ? 'error' : 'errors'}`)
+  if (warn > 0) parts.push(`${warn} ${warn === 1 ? 'warning' : 'warnings'}`)
+  return parts.join(', ')
+}
+
 defineExpose({
   scrollToCurrentHit,
   jumpToBottom,
@@ -995,6 +1019,10 @@ defineExpose({
         <span class="line-no">line {{ minimapTooltip.lineIndex + 1 }}</span>
         <span v-if="minimapTooltip.timestamp" class="ts">{{ minimapTooltip.timestamp }}</span>
         <span v-else class="ts muted">--</span>
+        <span
+          v-if="minimapTooltip.error > 0 || minimapTooltip.warn > 0"
+          class="heat"
+        >{{ heatLine(minimapTooltip.error, minimapTooltip.warn) }}</span>
       </div>
     </div>
     <button
@@ -1121,6 +1149,7 @@ defineExpose({
   .line-no { color: var(--fg-muted); }
   .ts { color: var(--fg-default); }
   .ts.muted { color: var(--fg-dim); }
+  .heat { color: var(--hl-search-fg); font-weight: 600; }
 
   &::before,
   &::after {
