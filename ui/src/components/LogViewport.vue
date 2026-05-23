@@ -458,16 +458,19 @@ function bucketColour(avgMs: number, fastMs: number, slowMs: number): string {
 }
 
 // Auto-mode paint: any bucket with at least one slow request starts at
-// mid (yellow) and ramps to slow (red) as the bucket's WORST hit
-// approaches slowMs. Painting against max_ms (not avg_ms) means a single
-// long request in an otherwise quiet bucket is still clearly visible -
-// averaging would let neighbours mask it. Empty buckets stay green
-// (handled by the caller).
-function autoNonEmptyColour(peakMs: number, slowMs: number): string {
+// mid (yellow) and ramps to slow (red) as the bucket's blended score
+// approaches slowMs. Score is the mean of avg and max, so a single big
+// request still pulls the colour up (max contributes), but density also
+// matters (avg goes up with more hits). Pure max would snap most busy
+// buckets to red the moment any outlier landed in them; pure avg would
+// let one big request hide behind quiet neighbours. Empty buckets stay
+// green (handled by the caller).
+function autoNonEmptyColour(avgMs: number, maxMs: number, slowMs: number): string {
   const mid = readCssColour('--speed-mid')
   const slow = readCssColour('--speed-slow')
-  if (slowMs <= 0 || peakMs >= slowMs) return slow
-  const t = Math.max(0, peakMs) / slowMs
+  const score = (avgMs + maxMs) / 2
+  if (slowMs <= 0 || score >= slowMs) return slow
+  const t = Math.max(0, score) / slowMs
   return lerpColour(mid, slow, t)
 }
 
@@ -480,7 +483,7 @@ function colourForBucket(
   auto: boolean,
 ): string {
   if (bucketCount === 0) return readCssColour('--speed-fast')
-  if (auto) return autoNonEmptyColour(bucketMax, slow)
+  if (auto) return autoNonEmptyColour(bucketAvg, bucketMax, slow)
   return bucketColour(bucketAvg, fast, slow)
 }
 
