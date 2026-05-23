@@ -22,6 +22,7 @@ import {
   OVERSCAN,
   PAGE_SIZE,
   ROW_HEIGHT,
+  type BucketStat,
   type HeaderFields,
   type LevelMinimapPayload,
   type LineRow,
@@ -42,12 +43,13 @@ const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
 const minimapEl = useTemplateRef<HTMLCanvasElement>('minimapEl')
 
 // --- Local UI state (per-mount) ---
-const minimapBuckets = ref<string[]>([])
+const minimapBuckets = ref<BucketStat[]>([])
 const viewportHeightPx = ref(0)
 const viewportScrollTop = ref(0)
 let minimapFetchPending = false
 let lastMinimapLineCount = -1
 let lastMinimapHeight = -1
+let lastMaxErrorWarnSum = 0
 const MINIMAP_WIDTH = 20
 
 // Filter-mode source records: respect either the level mask (allowedRecords)
@@ -304,7 +306,9 @@ async function fetchMinimap(force: boolean) {
     const eff = effectiveCount.value
     const contentPx = eff * ROW_HEIGHT
     const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
-    minimapBuckets.value = buildFilteredMinimap(source, eff, bucketCount)
+    const { buckets, maxErrorWarnSum } = buildFilteredMinimap(source, eff, bucketCount)
+    minimapBuckets.value = buckets
+    lastMaxErrorWarnSum = maxErrorWarnSum
     lastMinimapHeight = bucketCount
     lastMinimapLineCount = eff
     paintMinimap()
@@ -325,6 +329,7 @@ async function fetchMinimap(force: boolean) {
       bucketCount,
     })
     minimapBuckets.value = payload.buckets
+    lastMaxErrorWarnSum = payload.max_error_warn_sum
     lastMinimapHeight = bucketCount
     lastMinimapLineCount = payload.line_count
     paintMinimap()
@@ -358,9 +363,13 @@ function buildFilteredMinimap(
   source: RecordRef[],
   virtualLineCount: number,
   bucketCount: number,
-): string[] {
-  const buckets: string[] = new Array(bucketCount).fill('unknown')
-  if (virtualLineCount === 0 || bucketCount === 0) return buckets
+): { buckets: BucketStat[]; maxErrorWarnSum: number } {
+  const empty = (): BucketStat => ({ worst: 'unknown', error: 0, warn: 0, total: 0 })
+  const buckets: BucketStat[] = new Array(bucketCount)
+  for (let i = 0; i < bucketCount; i++) buckets[i] = empty()
+  if (virtualLineCount === 0 || bucketCount === 0) {
+    return { buckets, maxErrorWarnSum: 0 }
+  }
   let virtualCursor = 0
   for (const rec of source) {
     const firstLine = virtualCursor
@@ -375,11 +384,20 @@ function buildFilteredMinimap(
     )
     const rank = minimapLevelRank(rec.level)
     for (let b = firstBucket; b <= lastBucket; b++) {
-      if (rank > minimapLevelRank(buckets[b])) buckets[b] = rec.level
+      const bucket = buckets[b]
+      if (rank > minimapLevelRank(bucket.worst)) bucket.worst = rec.level
+      bucket.total += 1
+      if (rec.level === 'error' || rec.level === 'fatal') bucket.error += 1
+      else if (rec.level === 'warn') bucket.warn += 1
     }
     virtualCursor += rec.record_line_count
   }
-  return buckets
+  let maxErrorWarnSum = 0
+  for (const b of buckets) {
+    const heat = b.error + b.warn
+    if (heat > maxErrorWarnSum) maxErrorWarnSum = heat
+  }
+  return { buckets, maxErrorWarnSum }
 }
 
 // Physical line indices the user has bookmarked, projected to the
@@ -435,8 +453,10 @@ function paintMinimap() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.fillStyle = currentMinimapBg()
   ctx.fillRect(0, 0, MINIMAP_WIDTH, h)
+  // lastMaxErrorWarnSum is used by the hot-overlay pass added in Task 3.
+  void lastMaxErrorWarnSum
   const colourAt = (i: number): string | null =>
-    i < h ? (LEVEL_COLOUR[buckets[i]] ?? null) : null
+    i < h ? (LEVEL_COLOUR[buckets[i].worst] ?? null) : null
   let runStart = 0
   let runColour = colourAt(0)
   for (let i = 1; i <= h; i++) {

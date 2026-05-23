@@ -616,15 +616,39 @@ fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesP
     })
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+struct BucketStat {
+    /// Worst severity touching this bucket. Same semantics as the
+    /// previous scalar minimap payload. Drives hue UI-side.
+    worst: Level,
+    /// Record count in this bucket at level ERROR or FATAL. Counted per
+    /// record, not per physical line -- a multi-line ERROR contributes
+    /// 1 to every bucket it touches.
+    error: u32,
+    /// Record count in this bucket at level WARN.
+    warn: u32,
+    /// Total record count in this bucket. Reserved for a future
+    /// density wash; emitted now so the UI doesn't need another IPC
+    /// round trip.
+    total: u32,
+}
+
 #[derive(Debug, Serialize)]
 struct LevelMinimapPayload {
-    /// One level per bucket, top-of-file first. Length == requested
+    /// One stat per bucket, top-of-file first. Length == requested
     /// `bucket_count` (clamped to >= 1). When the file is empty every
-    /// bucket is `Level::Unknown`.
-    buckets: Vec<Level>,
+    /// bucket reads as `Level::Unknown` with zeroed counts.
+    buckets: Vec<BucketStat>,
     /// The line span this minimap was computed over. UIs compare this to
     /// the current `line_count` to know whether a refetch is warranted.
     line_count: u64,
+    /// Maximum value of `(error + warn)` across all buckets. The UI uses
+    /// this to normalise hot-overlay alpha. Zero means "no error/warn
+    /// anywhere" -- UI falls back to the dim wash only.
+    max_error_warn_sum: u32,
+    /// Maximum `total` across all buckets. Reserved for a future
+    /// density wash.
+    max_total: u32,
 }
 
 /// Rank for the "worst severity wins" bucket aggregation. Higher = more
@@ -654,11 +678,19 @@ fn build_level_minimap_payload(
     bucket_count: usize,
 ) -> LevelMinimapPayload {
     let bucket_count = bucket_count.max(1);
-    let mut buckets = vec![Level::Unknown; bucket_count];
+    let empty = BucketStat {
+        worst: Level::Unknown,
+        error: 0,
+        warn: 0,
+        total: 0,
+    };
+    let mut buckets = vec![empty; bucket_count];
     if line_count == 0 || records.is_empty() {
         return LevelMinimapPayload {
             buckets,
             line_count,
+            max_error_warn_sum: 0,
+            max_total: 0,
         };
     }
     let lc = line_count;
@@ -672,14 +704,37 @@ fn build_level_minimap_payload(
             .unwrap_or(bucket_count - 1)
             .min(bucket_count - 1);
         for b in &mut buckets[first_bucket..=last_bucket] {
-            if level_rank(rec.level) > level_rank(*b) {
-                *b = rec.level;
+            if level_rank(rec.level) > level_rank(b.worst) {
+                b.worst = rec.level;
             }
+            b.total = b.total.saturating_add(1);
+            match rec.level {
+                Level::Error | Level::Fatal => {
+                    b.error = b.error.saturating_add(1);
+                }
+                Level::Warn => {
+                    b.warn = b.warn.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut max_error_warn_sum = 0u32;
+    let mut max_total = 0u32;
+    for b in &buckets {
+        let heat = b.error.saturating_add(b.warn);
+        if heat > max_error_warn_sum {
+            max_error_warn_sum = heat;
+        }
+        if b.total > max_total {
+            max_total = b.total;
         }
     }
     LevelMinimapPayload {
         buckets,
         line_count,
+        max_error_warn_sum,
+        max_total,
     }
 }
 
@@ -1681,10 +1736,72 @@ mod tests {
 
         let payload = build_level_minimap_payload(&file.records, file.line_count, 3);
         assert_eq!(payload.buckets.len(), 3);
-        assert_eq!(payload.buckets[0], Level::Info);
-        assert_eq!(payload.buckets[1], Level::Error);
-        assert_eq!(payload.buckets[2], Level::Info);
+        assert_eq!(payload.buckets[0].worst, Level::Info);
+        assert_eq!(payload.buckets[1].worst, Level::Error);
+        assert_eq!(payload.buckets[2].worst, Level::Info);
         assert_eq!(payload.line_count, 3);
+    }
+
+    #[test]
+    fn level_minimap_counts_errors_and_warns_per_bucket() {
+        let (mut file, scanner) = fresh_file();
+        let body = concat!(
+            "[WARN ] 2026-05-22 16:28:59.246 [main] play - w\n",
+            "[ERROR] 2026-05-22 16:28:59.247 [main] play - e\n",
+            "[FATAL] 2026-05-22 16:28:59.248 [main] play - f\n",
+            "[INFO ] 2026-05-22 16:28:59.249 [main] play - i\n",
+        );
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 4);
+
+        let p = build_level_minimap_payload(&file.records, file.line_count, 1);
+        assert_eq!(p.buckets.len(), 1);
+        let b = &p.buckets[0];
+        assert_eq!(b.worst, Level::Fatal);
+        assert_eq!(b.error, 2, "ERROR + FATAL count");
+        assert_eq!(b.warn, 1, "WARN count");
+        assert_eq!(b.total, 4);
+        assert_eq!(p.max_error_warn_sum, 3, "(error + warn) max");
+        assert_eq!(p.max_total, 4);
+    }
+
+    #[test]
+    fn level_minimap_empty_file_zeroes_counts() {
+        let (file, _scanner) = fresh_file();
+        let p = build_level_minimap_payload(&file.records, file.line_count, 8);
+        assert_eq!(p.buckets.len(), 8);
+        for b in &p.buckets {
+            assert_eq!(b.worst, Level::Unknown);
+            assert_eq!(b.error, 0);
+            assert_eq!(b.warn, 0);
+            assert_eq!(b.total, 0);
+        }
+        assert_eq!(p.max_error_warn_sum, 0);
+        assert_eq!(p.max_total, 0);
+    }
+
+    #[test]
+    fn level_minimap_multi_line_record_bumps_every_touched_bucket_once() {
+        let (mut file, scanner) = fresh_file();
+        let body = concat!(
+            "[ERROR] 2026-05-22 16:28:59.246 [main] play - boom\n",
+            "    at com.example.A.foo(A.java:12)\n",
+            "    at com.example.B.bar(B.java:34)\n",
+        );
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 3);
+        assert_eq!(file.records.len(), 1);
+
+        let p = build_level_minimap_payload(&file.records, file.line_count, 3);
+        assert_eq!(p.buckets.len(), 3);
+        for (i, b) in p.buckets.iter().enumerate() {
+            assert_eq!(b.worst, Level::Error, "bucket {i}");
+            assert_eq!(b.error, 1, "bucket {i} - counted once per touched bucket");
+            assert_eq!(b.warn, 0, "bucket {i}");
+            assert_eq!(b.total, 1, "bucket {i}");
+        }
+        assert_eq!(p.max_error_warn_sum, 1);
+        assert_eq!(p.max_total, 1);
     }
 
     /// Reproduces the symptom the user reported: each tail tick adds one

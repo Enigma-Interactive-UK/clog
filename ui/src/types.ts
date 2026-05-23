@@ -135,9 +135,25 @@ export interface ApplyPatternPayload {
   loose: boolean
 }
 
+export interface BucketStat {
+  /** Worst severity touching this bucket. Same alphabet as `LineRow.level`
+   *  ('trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'off' | 'all' | 'unknown'). */
+  worst: string
+  /** Record count at level ERROR or FATAL in this bucket. */
+  error: number
+  /** Record count at level WARN in this bucket. */
+  warn: number
+  /** Total record count in this bucket. */
+  total: number
+}
+
 export interface LevelMinimapPayload {
-  buckets: string[]
+  buckets: BucketStat[]
   line_count: number
+  /** Max of `(error + warn)` across all buckets; normaliser for hot overlay. */
+  max_error_warn_sum: number
+  /** Max `total` across all buckets; reserved for density wash. */
+  max_total: number
 }
 
 export interface TailDelta {
