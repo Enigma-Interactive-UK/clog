@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use clog_core::SlowRequestThresholds;
 use serde::{Deserialize, Serialize};
 
 use crate::paths;
@@ -39,6 +40,10 @@ pub struct Settings {
     /// "follow tail" preference for newly-opened files.
     #[serde(default = "default_true")]
     pub follow_tail_default: bool,
+    /// Global default thresholds used when no per-file override is set.
+    /// Absent / `None` means slow-request detection is disabled.
+    #[serde(default)]
+    pub slow_request_thresholds: Option<SlowRequestThresholds>,
 }
 
 impl Default for Settings {
@@ -49,6 +54,7 @@ impl Default for Settings {
             font_size: default_font_size(),
             recent_files: Vec::new(),
             follow_tail_default: true,
+            slow_request_thresholds: None,
         }
     }
 }
@@ -285,6 +291,10 @@ pub struct PerFileRulesFile {
     pub path: String,
     #[serde(default)]
     pub rules: Vec<UserHighlightRule>,
+    /// Per-file slow-request thresholds. `None` means "inherit the global
+    /// default from `Settings`". An explicit `Some` overrides it.
+    #[serde(default)]
+    pub slow_request_thresholds: Option<SlowRequestThresholds>,
 }
 
 impl PerFileRulesFile {
@@ -306,6 +316,16 @@ impl PerFileRulesFile {
         let mut to_write = self.clone();
         to_write.path = source_path.to_string_lossy().to_string();
         write_atomic(&paths::per_file_rules_path(source_path), &to_write)
+    }
+
+    /// True when this file holds no highlight rules and no slow-request
+    /// thresholds. Callers use this to decide whether `save` should
+    /// instead delete the file - leaving an empty stub on disk is wasted
+    /// I/O and confuses readers grepping the per-file-rules folder.
+    #[must_use]
+    #[allow(dead_code)] // wired up by the per-file rules save IPC in a later task
+    pub fn is_effectively_empty(&self) -> bool {
+        self.rules.is_empty() && self.slow_request_thresholds.is_none()
     }
 
     /// Delete the per-file rules file for `source_path`. Idempotent.
@@ -383,5 +403,47 @@ mod tests {
         assert_eq!(s.theme, "light");
         assert_eq!(s.font_size, default_font_size());
         assert_eq!(s.schema, SCHEMA_VERSION);
+    }
+}
+
+#[cfg(test)]
+mod thresholds_tests {
+    use super::*;
+    use clog_core::SlowRequestThresholds;
+
+    #[test]
+    fn settings_loads_old_file_without_threshold_field() {
+        let raw = r#"{"schema":1,"theme":"dark","font_size":13,"recent_files":[],"follow_tail_default":true}"#;
+        let s: Settings = serde_json::from_str(raw).expect("v1 settings decodes");
+        assert!(s.slow_request_thresholds.is_none());
+    }
+
+    #[test]
+    fn settings_round_trips_thresholds() {
+        let s = Settings {
+            slow_request_thresholds: SlowRequestThresholds::new(1000, 5000),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).expect("serialises");
+        let back: Settings = serde_json::from_str(&json).expect("round-trips");
+        assert_eq!(back.slow_request_thresholds, s.slow_request_thresholds);
+    }
+
+    #[test]
+    fn per_file_rules_loads_old_file_without_threshold_field() {
+        let raw = r#"{"schema":1,"path":"/x","rules":[]}"#;
+        let f: PerFileRulesFile = serde_json::from_str(raw).expect("v1 per-file decodes");
+        assert!(f.slow_request_thresholds.is_none());
+    }
+
+    #[test]
+    fn per_file_rules_is_empty_when_no_rules_and_no_thresholds() {
+        let f = PerFileRulesFile::default();
+        assert!(f.is_effectively_empty());
+        let f2 = PerFileRulesFile {
+            slow_request_thresholds: SlowRequestThresholds::new(100, 200),
+            ..PerFileRulesFile::default()
+        };
+        assert!(!f2.is_effectively_empty());
     }
 }
