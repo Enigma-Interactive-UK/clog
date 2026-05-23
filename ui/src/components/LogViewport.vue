@@ -30,6 +30,7 @@ import {
   type MarkerRef,
   type RecordRef,
   type SpeedGrid,
+  type EffectiveThresholds,
 } from '../types'
 import type { Tab } from '../tab'
 import InsightsDrawer from './InsightsDrawer.vue'
@@ -379,7 +380,26 @@ function scheduleMinimapFetch(force = false) {
     void fetchMinimap(force)
     void fetchMarkers(force)
     void fetchSpeedGrid()
+    void fetchSpeedThresholds()
   })
+}
+
+const speedAnchors = ref<{ fast: number; slow: number } | null>(null)
+
+async function fetchSpeedThresholds() {
+  try {
+    const payload = await invoke<EffectiveThresholds>('get_slow_request_thresholds', {
+      fileId: props.tab.file.value.file_id,
+    })
+    speedAnchors.value = {
+      fast: payload.effective.fast_ms,
+      slow: payload.effective.slow_ms,
+    }
+    props.tab.slowRequestThresholds.value = payload
+    paintSpeedRail()
+  } catch {
+    // non-fatal; auto-from-grid fallback applies
+  }
 }
 
 async function fetchSpeedGrid() {
@@ -449,8 +469,11 @@ function paintSpeedRail() {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  const fast = grid.min_avg_ms
-  const slow = Math.max(grid.max_avg_ms, fast + 1)
+  const anchors = speedAnchors.value
+  const fast = anchors ? anchors.fast : grid.min_avg_ms
+  const slow = anchors
+    ? Math.max(anchors.slow, fast + 1)
+    : Math.max(grid.max_avg_ms, fast + 1)
   const gradient = ctx.createLinearGradient(0, 0, 0, h)
   for (let i = 0; i < h; i++) {
     const b = grid.buckets[i]
@@ -1297,6 +1320,7 @@ defineExpose({
       :tab="tab"
       @close="tab.insightsOpen.value = false"
       @jump="jumpToLine"
+      @thresholds-changed="fetchSpeedThresholds"
     />
     <button
       v-if="!tab.followTail.value && !atBottom"

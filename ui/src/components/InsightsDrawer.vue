@@ -8,13 +8,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { Tab } from '../tab'
-import type { SlowRequestEntry, SlowRequestSummary } from '../types'
+import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds } from '../types'
 
 const props = defineProps<{ tab: Tab }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'jump', line: number): void
+  (e: 'thresholds-changed'): void
 }>()
 
 const expanded = ref<Set<string>>(new Set())
@@ -37,8 +38,62 @@ async function refresh() {
   }
 }
 
+const fastInput = ref('')
+const slowInput = ref('')
+
+const validationError = computed<string | null>(() => {
+  const fast = Number(fastInput.value)
+  const slow = Number(slowInput.value)
+  if (fastInput.value === '' && slowInput.value === '') return null
+  if (fastInput.value === '' || slowInput.value === '') return 'Both fields required'
+  if (Number.isNaN(fast) || Number.isNaN(slow)) return 'Numbers only'
+  if (fast >= slow) return 'fast must be less than slow'
+  if (slow > 600_000) return 'slow capped at 600,000 (10 min)'
+  return null
+})
+
+async function refreshThresholds() {
+  try {
+    const payload = await invoke<EffectiveThresholds>('get_slow_request_thresholds', {
+      fileId: props.tab.file.value.file_id,
+    })
+    props.tab.slowRequestThresholds.value = payload
+    fastInput.value = String(payload.per_file?.fast_ms ?? '')
+    slowInput.value = String(payload.per_file?.slow_ms ?? '')
+  } catch {
+    // non-fatal
+  }
+}
+
+async function savePerFile() {
+  if (validationError.value) return
+  const fast = Number(fastInput.value)
+  const slow = Number(slowInput.value)
+  const t: SlowRequestThresholds | null =
+    fastInput.value === '' && slowInput.value === ''
+      ? null
+      : { fast_ms: fast, slow_ms: slow }
+  try {
+    await invoke<void>('save_slow_request_thresholds', {
+      fileId: props.tab.file.value.file_id,
+      thresholds: t,
+    })
+    await refreshThresholds()
+    emit('thresholds-changed')
+  } catch (e) {
+    error.value = String((e as { message?: string })?.message ?? e)
+  }
+}
+
+async function clearPerFile() {
+  fastInput.value = ''
+  slowInput.value = ''
+  await savePerFile()
+}
+
 onMounted(() => {
   void refresh()
+  void refreshThresholds()
 })
 
 watch(() => props.tab.slowRequestMode.value, refresh)
@@ -124,6 +179,32 @@ function jumpTo(line: number) {
       </button>
     </header>
     <div class="drawer-totals">{{ totals }}</div>
+    <div class="threshold-row">
+      <span
+        class="threshold-chip"
+        :class="`source-${tab.slowRequestThresholds.value?.source ?? 'auto'}`"
+      >
+        {{ tab.slowRequestThresholds.value?.source === 'per_file' ? 'Per-file'
+          : tab.slowRequestThresholds.value?.source === 'global' ? 'Global'
+          : 'Auto' }}
+      </span>
+      <span class="threshold-current">
+        Fast {{ tab.slowRequestThresholds.value?.effective.fast_ms ?? '-' }}ms,
+        Slow {{ tab.slowRequestThresholds.value?.effective.slow_ms ?? '-' }}ms
+      </span>
+    </div>
+    <details class="threshold-editor">
+      <summary>Override for this file</summary>
+      <div class="threshold-fields">
+        <label>Fast (ms) <input v-model="fastInput" type="number" min="0" max="600000" /></label>
+        <label>Slow (ms) <input v-model="slowInput" type="number" min="0" max="600000" /></label>
+      </div>
+      <div v-if="validationError" class="threshold-error">{{ validationError }}</div>
+      <div class="threshold-actions">
+        <button type="button" :disabled="!!validationError" @click="savePerFile">Save</button>
+        <button type="button" class="muted" @click="clearPerFile">Clear override</button>
+      </div>
+    </details>
     <div class="drawer-toolbar">
       <div class="mode-toggle">
         <button
@@ -367,6 +448,70 @@ function jumpTo(line: number) {
     padding: 0.1rem 0.4rem;
     border-radius: 3px;
     cursor: pointer;
+  }
+}
+
+.threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.6rem 0.4rem;
+}
+
+.threshold-chip {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  border: 1px solid var(--border-button);
+
+  &.source-auto    { color: var(--level-info);  }
+  &.source-global  { color: var(--level-warn);  }
+  &.source-per_file { color: var(--accent); border-color: var(--accent); }
+}
+
+.threshold-current { color: var(--fg-muted); font-size: 0.8rem; }
+
+.threshold-editor {
+  margin: 0 0.6rem 0.6rem;
+  font-size: 0.8rem;
+
+  & summary { cursor: pointer; color: var(--fg-muted); }
+}
+
+.threshold-fields {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.4rem 0;
+
+  & input {
+    width: 6rem;
+    background: var(--bg-viewport);
+    border: 1px solid var(--border-button);
+    color: var(--fg-default);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+  }
+}
+
+.threshold-error { color: var(--level-error); margin: 0.2rem 0; }
+
+.threshold-actions {
+  display: flex;
+  gap: 0.4rem;
+
+  & button {
+    background: transparent;
+    border: 1px solid var(--border-button);
+    color: var(--fg-default);
+    padding: 0.15rem 0.6rem;
+    border-radius: 3px;
+    cursor: pointer;
+
+    &.muted { color: var(--fg-muted); }
+    &:disabled { opacity: 0.4; cursor: not-allowed; }
   }
 }
 </style>
