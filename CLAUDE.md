@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Clog** (Core Log) - a Windows desktop application for viewing, tailing, searching and filtering log4j2-formatted log files produced by Play 1.x Java applications.
 
-The design lives in [docs/design.md](docs/design.md). The build is sliced into ten vertical phases in [docs/build-phases.md](docs/build-phases.md). At each session's start, check the current phase and re-read its **Scope**, **Done-criteria**, and **Demo** before touching code. Resist scope creep into the current phase.
+The design lives in [docs/design.md](docs/design.md). The v1 build was sliced into ten vertical phases in [docs/build-phases.md](docs/build-phases.md); all ten have landed (workspace version `1.0.0`, P10 slice A: NSIS installer + portable zip). Post-v1 enhancement candidates live in [docs/future-ideas.md](docs/future-ideas.md) - that is the source of truth for "what's next". At the start of any session that's about to touch code, check the relevant phase doc (or future-ideas entry) for context before editing.
 
 ## Stack
 
@@ -24,9 +24,10 @@ clog/
     clog-app/               Tauri v2 binary (bin name: clog)
       tauri.conf.json
       capabilities/         capability files (default.json grants dialog open)
-      icons/                bundle icons (placeholder until P10)
+      icons/                bundle icons (real, used by NSIS installer)
   ui/                       Vue 3 + Vite + TS frontend
-  docs/                     design.md + build-phases.md
+  docs/                     design.md, build-phases.md, future-ideas.md
+  scripts/                  release packaging (make-portable-zip.ps1)
   research/                 sample logs + log4j2 configs (gitignored)
   .wolf/                    OpenWolf project memory
 ```
@@ -54,6 +55,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 # Tests
 cargo test --workspace
+
+# UI unit tests (vitest)
+npm --prefix ui run test
+
+# Release artefacts (NSIS installer + portable zip)
+cargo tauri build --config crates/clog-app/tauri.conf.json
+.\scripts\make-portable-zip.ps1
 ```
 
 **Tauri config gotcha:** `beforeDevCommand` runs with cwd set to the frontend root (`ui/`), not the workspace root and not the tauri.conf.json dir. Keep it as `npm run dev` / `npm run build`. Prefixing with `--prefix ui` double-paths to `ui/ui/`.

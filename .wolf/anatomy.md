@@ -124,6 +124,7 @@ P7 in App.vue: `loadSettings()` boots theme + font-size on mount, `restoreSessio
 
 - `design.md` - v1 design snapshot
 - `build-phases.md` - P1..P10 phase plan
+- `future-ideas.md` - post-v1 enhancement candidates (v1.1+). Grouped by theme: reading/navigation (minimap heatmap, bookmarks, time-axis, go-to-timestamp, collapse stack traces), search (saved presets, history, field-scoped operators, diff), multi-file (merge-by-timestamp, workspaces, split panes), analysis (histograms, sparkline, similar-record clustering), ergonomics (command palette, keymap, export, copy-as-structured), reach (WSL daemon, SSH/SFTP, gz/zip), niceties (notifications, smart auto-pause). Top picks: minimap heatmap, bookmarks+go-to-timestamp, merge-by-timestamp.
 
 ## research/ (gitignored)
 
