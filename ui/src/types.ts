@@ -85,6 +85,36 @@ export const LEVEL_BIT: Record<string, number> = {
 }
 export const LEVEL_KEYS: LevelKey[] = ['trace', 'debug', 'info', 'warn', 'error', 'fatal']
 
+export type ThreadGroupKey =
+  | 'requests'
+  | 'jobs'
+  | 'scheduler'
+  | 'system'
+  | 'infra'
+  | 'other'
+
+// Bit positions must match clog_core::thread_groups::group_bit.
+export const THREAD_GROUP_BIT: Record<ThreadGroupKey, number> = {
+  requests:  1 << 0,
+  jobs:      1 << 1,
+  scheduler: 1 << 2,
+  system:    1 << 3,
+  infra:     1 << 4,
+  other:     1 << 5,
+}
+export const THREAD_GROUP_KEYS: ThreadGroupKey[] = [
+  'requests', 'jobs', 'scheduler', 'system', 'infra', 'other',
+]
+export const THREAD_GROUP_LABEL: Record<ThreadGroupKey, string> = {
+  requests:  'Requests',
+  jobs:      'Jobs',
+  scheduler: 'Scheduler',
+  system:    'System',
+  infra:     'Infra',
+  other:     'Other',
+}
+export const FULL_THREAD_GROUP_MASK = 0x3F
+
 export interface LinesPayload {
   start_line: number
   lines: LineRow[]
@@ -111,6 +141,7 @@ export interface RestoredFile {
   scroll_top: number
   follow_tail: boolean
   level_mask: number
+  thread_group_mask: number
   filter_text: string
   search_mode: SearchMode
   search_case_sensitive: boolean
