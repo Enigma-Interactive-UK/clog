@@ -45,8 +45,13 @@ function onDocClick(ev: MouseEvent) {
   const root = rootEl.value
   if (!root) return
   if (root.contains(ev.target as Node)) return
-  // Click landed outside the popover surface -- but if it landed on the
-  // trigger button, the parent will toggle us off; otherwise we dismiss.
+  // If the click landed on the trigger (or anywhere inside the anchor
+  // that wraps trigger + popover), let the trigger's own click handler
+  // toggle us shut. Emitting close here would race the trigger's click,
+  // and because mousedown fires before click, our close would land first
+  // and the trigger would immediately re-open the popover.
+  const target = ev.target as Element | null
+  if (target && target.closest('.filters-anchor')) return
   emit('close')
 }
 
