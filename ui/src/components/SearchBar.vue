@@ -4,13 +4,18 @@
  * lives on the tab object; this component is mostly markup + the small
  * methods that translate v-model writes into the right tab mutations.
  *
+ * The level + thread-group mask toggles live in a Filters popover anchored
+ * to a single button on the bar -- see FiltersPopover.vue.
+ *
  * `next-hit` and `prev-hit` are emitted to the parent so it can call into
  * the LogViewport's exposed `scrollToCurrentHit()` -- this component does
  * not touch the DOM.
  */
-import { useTemplateRef } from 'vue'
-import { LEVEL_KEYS, type LevelKey, type SearchMode } from '../types'
+import { computed, ref, useTemplateRef } from 'vue'
+import { LEVEL_KEYS, THREAD_GROUP_KEYS, THREAD_GROUP_LABEL, type SearchMode } from '../types'
+import { isFullLevelMask, isFullThreadGroupMask } from '../tab'
 import type { Tab } from '../tab'
+import FiltersPopover from './FiltersPopover.vue'
 
 const props = defineProps<{
   tab: Tab
@@ -22,6 +27,7 @@ const emit = defineEmits<{
 }>()
 
 const searchInputEl = useTemplateRef<HTMLInputElement>('searchInputEl')
+const filtersOpen = ref(false)
 
 function setSearchMode(mode: SearchMode) {
   props.tab.setSearchMode(mode)
@@ -29,10 +35,6 @@ function setSearchMode(mode: SearchMode) {
 
 function toggleFilterMode() {
   props.tab.filterMode.value = !props.tab.filterMode.value
-}
-
-function toggleLevel(level: LevelKey) {
-  props.tab.toggleLevel(level)
 }
 
 function clearSearch() {
@@ -49,6 +51,23 @@ function onNextHit() {
 function onPrevHit() {
   if (props.tab.prevHitIdx() !== null) emit('prev-hit')
 }
+
+const hasNonDefaultFilters = computed(() =>
+  !isFullLevelMask(props.tab.levelAllow.value) ||
+  !isFullThreadGroupMask(props.tab.threadGroupAllow.value))
+
+const filtersSummary = computed(() => {
+  const parts: string[] = []
+  const offLevels = LEVEL_KEYS.filter((k) => !props.tab.levelAllow.value[k])
+  if (offLevels.length > 0) {
+    parts.push(`Hiding ${offLevels.map((k) => k.toUpperCase()).join(', ')}`)
+  }
+  const offGroups = THREAD_GROUP_KEYS.filter((k) => !props.tab.threadGroupAllow.value[k])
+  if (offGroups.length > 0) {
+    parts.push(`Hiding ${offGroups.map((k) => THREAD_GROUP_LABEL[k]).join(', ')} threads`)
+  }
+  return parts.length > 0 ? parts.join('; ') : 'No filters active'
+})
 
 defineExpose({
   focus: () => searchInputEl.value?.focus(),
@@ -125,16 +144,22 @@ defineExpose({
     >
       {{ tab.filterMode.value ? 'Filter on' : 'Filter' }}
     </button>
-    <span class="level-mask">
+    <span class="filters-anchor">
       <button
-        v-for="lvl in LEVEL_KEYS"
-        :key="lvl"
         type="button"
-        class="lvl-btn"
-        :class="['lvl-' + lvl, { 'is-off': !tab.levelAllow.value[lvl] }]"
-        :title="`Toggle ${lvl.toUpperCase()} records`"
-        @click="toggleLevel(lvl)"
-      >{{ lvl.toUpperCase() }}</button>
+        class="filters-toggle"
+        :class="{ 'is-on': filtersOpen, 'has-active': hasNonDefaultFilters }"
+        :title="filtersSummary"
+        :aria-pressed="filtersOpen"
+        @click="filtersOpen = !filtersOpen"
+      >
+        Filters<span v-if="hasNonDefaultFilters" class="filters-badge" aria-hidden="true" />
+      </button>
+      <FiltersPopover
+        v-if="filtersOpen"
+        :tab="tab"
+        @close="filtersOpen = false"
+      />
     </span>
     <span v-if="tab.searchError.value" class="search-error">{{ tab.searchError.value }}</span>
   </section>
@@ -289,27 +314,28 @@ defineExpose({
     color: var(--accent);
   }
 
-  .level-mask {
+  .filters-anchor {
+    position: relative;
     display: inline-flex;
-    gap: 0.15rem;
+  }
 
-    .lvl-btn {
-      padding: 0.2rem 0.4rem;
-      font-size: 0.72rem;
-      letter-spacing: 0.04em;
-      border-color: var(--border-button);
+  .filters-toggle {
+    position: relative;
 
-      &.is-off {
-        opacity: 0.35;
-        text-decoration: line-through;
-      }
+    &.has-active {
+      border-color: var(--accent);
+      color: var(--accent);
     }
-    .lvl-trace { color: var(--level-trace); }
-    .lvl-debug { color: var(--level-debug); }
-    .lvl-info { color: var(--level-info); }
-    .lvl-warn { color: var(--level-warn); }
-    .lvl-error { color: var(--level-error); }
-    .lvl-fatal { color: var(--level-fatal); }
+  }
+
+  .filters-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
   }
 
   .search-error {
