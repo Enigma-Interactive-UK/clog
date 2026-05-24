@@ -37,6 +37,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::record::{Level, RecordHeader};
+use crate::thread_groups::{classify, ThreadGroupMask};
 
 /// Search mode. Mirrored over IPC as a tagged enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +117,7 @@ pub struct HitRef {
 pub struct SearchOptions {
     pub case_sensitive: bool,
     pub level_mask: LevelMask,
+    pub thread_group_mask: ThreadGroupMask,
 }
 
 impl Default for SearchOptions {
@@ -123,6 +125,7 @@ impl Default for SearchOptions {
         Self {
             case_sensitive: false,
             level_mask: LevelMask::ALL,
+            thread_group_mask: ThreadGroupMask::ALL,
         }
     }
 }
@@ -133,6 +136,33 @@ pub enum SearchError {
     EmptyQuery,
     #[error("regex compile failed: {0}")]
     BadRegex(String),
+}
+
+fn record_passes(rec: &RecordHeader, bytes: &[u8], opts: SearchOptions) -> bool {
+    if !opts.level_mask.allows(rec.level) {
+        return false;
+    }
+    if opts.thread_group_mask == ThreadGroupMask::ALL {
+        return true;
+    }
+    let group = match rec.fields.thread {
+        Some((s, e)) => {
+            let start = usize::try_from(rec.byte_offset)
+                .unwrap_or(usize::MAX)
+                .saturating_add(s as usize);
+            let end = usize::try_from(rec.byte_offset)
+                .unwrap_or(usize::MAX)
+                .saturating_add(e as usize);
+            let end = end.min(bytes.len());
+            if start > end || start >= bytes.len() {
+                crate::thread_groups::ThreadGroup::Other
+            } else {
+                classify(&bytes[start..end])
+            }
+        }
+        None => crate::thread_groups::ThreadGroup::Other,
+    };
+    opts.thread_group_mask.allows(group)
 }
 
 /// Run a search across the file's records. Returns hits in record order.
@@ -162,7 +192,7 @@ pub fn search_records(
                 .par_iter()
                 .enumerate()
                 .filter_map(|(i, rec)| {
-                    if !opts.level_mask.allows(rec.level) {
+                    if !record_passes(rec, bytes, opts) {
                         return None;
                     }
                     let text = record_text(rec, bytes);
@@ -188,7 +218,7 @@ pub fn search_records(
                 .par_iter()
                 .enumerate()
                 .filter_map(|(i, rec)| {
-                    if !opts.level_mask.allows(rec.level) {
+                    if !record_passes(rec, bytes, opts) {
                         return None;
                     }
                     let text = record_text(rec, bytes);
@@ -475,6 +505,39 @@ mod tests {
         let hits = search_records(&records, bytes, SearchMode::Smart, "hello", opts).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].record_idx, 1);
+    }
+
+    /// Thread-group mask: a record whose thread classifies to an
+    /// excluded group is skipped.
+    #[test]
+    fn thread_group_mask_filters_records() {
+        use crate::ThreadGroup;
+        use crate::ThreadGroupMask;
+        let bytes = b"[INFO ] 2026-01-01 00:00:00.000 [play-thread-1] play - hello\n[INFO ] 2026-01-01 00:00:01.000 [jobs-thread-2] play - hello\n";
+        let li = LineIndex::build(std::io::Cursor::new(bytes.as_slice())).unwrap();
+        let scanner = CompiledPattern::compile(builtin_pattern("wsl-dev").unwrap()).unwrap();
+        let records = scan_records(&scanner, &li, bytes);
+        assert_eq!(records.len(), 2);
+
+        // Without mask: both hit.
+        let hits = search_records(
+            &records,
+            bytes,
+            SearchMode::Smart,
+            "hello",
+            SearchOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // Mask out Jobs: only the Requests-classified record remains.
+        let opts = SearchOptions {
+            thread_group_mask: ThreadGroupMask::ALL.with(ThreadGroup::Jobs, false),
+            ..SearchOptions::default()
+        };
+        let hits = search_records(&records, bytes, SearchMode::Smart, "hello", opts).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_idx, 0);
     }
 
     /// Integration test on the prod fixture: a smart-search query that
