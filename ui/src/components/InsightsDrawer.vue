@@ -1137,7 +1137,7 @@ function jumpTo(line: number) {
   display: block;
   width: 100%;
   height: 100%;
-  cursor: crosshair;
+  cursor: initial;
 }
 
 .chart-crosshair-v,
@@ -1145,7 +1145,7 @@ function jumpTo(line: number) {
   position: absolute;
   pointer-events: none;
   background: var(--fg-default);
-  opacity: 0.25;
+  opacity: 0.15;
   z-index: 2;
 }
 
