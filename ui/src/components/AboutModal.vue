@@ -6,7 +6,6 @@
 
 import { ref } from 'vue'
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import BaseModal from './BaseModal.vue'
 
 defineProps<{ open: boolean }>()

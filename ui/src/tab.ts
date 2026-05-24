@@ -19,9 +19,12 @@
 import { ref, shallowRef } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import {
+  FULL_THREAD_GROUP_MASK,
   LEVEL_BIT,
   LEVEL_KEYS,
   PAGE_SIZE,
+  THREAD_GROUP_BIT,
+  THREAD_GROUP_KEYS,
   type ApplyPatternPayload,
   type EffectiveThresholds,
   type HitRef,
@@ -39,6 +42,7 @@ import {
   type SlowRequestPathMode,
   type SlowRequestSummary,
   type TailDelta,
+  type ThreadGroupKey,
 } from './types'
 
 export interface TabDefaults {
@@ -104,6 +108,40 @@ export function applyMaskToAllow(mask: number): Record<string, boolean> {
   return allow
 }
 
+export function buildThreadGroupMaskFromAllow(allow: Record<string, boolean>): number {
+  let mask = 0
+  for (const [k, v] of Object.entries(allow)) {
+    if (v) mask |= THREAD_GROUP_BIT[k as ThreadGroupKey] ?? 0
+  }
+  return mask
+}
+
+export function isFullThreadGroupMask(allow: Record<string, boolean>): boolean {
+  for (const k of THREAD_GROUP_KEYS) {
+    if (!allow[k]) return false
+  }
+  return true
+}
+
+export function defaultThreadGroupAllow(): Record<ThreadGroupKey, boolean> {
+  return {
+    requests: true,
+    jobs: true,
+    scheduler: true,
+    system: true,
+    infra: true,
+    other: true,
+  }
+}
+
+export function applyThreadGroupMaskToAllow(mask: number): Record<ThreadGroupKey, boolean> {
+  const allow = defaultThreadGroupAllow()
+  for (const k of THREAD_GROUP_KEYS) {
+    allow[k] = (mask & THREAD_GROUP_BIT[k]) !== 0
+  }
+  return allow
+}
+
 export function createTab(localId: number, opened: OpenedFile, defaults: TabDefaults, hooks: TabHooks = {}) {
   // --- File handle + page cache ---
   const file = ref<OpenedFile>(opened)
@@ -132,6 +170,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   const currentHit = ref<number>(-1)
   const allowedRecords = ref<RecordRef[] | null>(null)
   const levelAllow = ref<Record<string, boolean>>(defaultLevelAllow())
+  const threadGroupAllow = ref<Record<ThreadGroupKey, boolean>>(defaultThreadGroupAllow())
   let runSearchGen = 0
   let pendingSearchTimer: number | null = null
 
@@ -282,7 +321,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       clearBookmarks()
       showRotationToast()
       void fetchPage(0)
-      if (!isFullLevelMask(levelAllow.value)) void refreshAllowedRecords()
+      if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) void refreshAllowedRecords()
       if (searchQuery.value.trim().length > 0) scheduleSearch()
       hooks.onTailRotate?.(api, delta)
       unread.value = true
@@ -304,7 +343,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       }
     }
     lastTailLineCount = delta.line_count
-    if (!isFullLevelMask(levelAllow.value)) void refreshAllowedRecords()
+    if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) void refreshAllowedRecords()
     if (searchQuery.value.trim().length > 0) scheduleSearch()
     hooks.onTailAppend?.(api, delta)
     unread.value = true
@@ -328,6 +367,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     const fileId = file.value.file_id
     const query = searchQuery.value
     const mask = buildLevelMaskFromAllow(levelAllow.value)
+    const tgMask = buildThreadGroupMaskFromAllow(threadGroupAllow.value)
     const myGen = ++runSearchGen
     if (query.trim().length === 0) {
       try {
@@ -371,6 +411,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
           query,
           case_sensitive: searchCaseSensitive.value,
           level_mask: mask,
+          thread_group_mask: tgMask,
         },
         onHits: channel,
       })
@@ -422,15 +463,22 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     if (searchQuery.value.trim().length > 0) scheduleSearch()
   }
 
+  function toggleThreadGroup(group: ThreadGroupKey) {
+    threadGroupAllow.value = { ...threadGroupAllow.value, [group]: !threadGroupAllow.value[group] }
+    void refreshAllowedRecords()
+    if (searchQuery.value.trim().length > 0) scheduleSearch()
+  }
+
   async function refreshAllowedRecords(): Promise<void> {
-    if (isFullLevelMask(levelAllow.value)) {
+    if (isFullLevelMask(levelAllow.value) && isFullThreadGroupMask(threadGroupAllow.value)) {
       allowedRecords.value = null
       return
     }
     try {
-      const payload = await invoke<RecordRefsPayload>('list_records_by_level', {
+      const payload = await invoke<RecordRefsPayload>('list_records_by_filters', {
         fileId: file.value.file_id,
         levelMask: buildLevelMaskFromAllow(levelAllow.value),
+        threadGroupMask: buildThreadGroupMaskFromAllow(threadGroupAllow.value),
       })
       allowedRecords.value = payload.refs
     } catch {
@@ -482,6 +530,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
 
   function applyRestored(r: RestoredFile) {
     levelAllow.value = applyMaskToAllow(r.level_mask)
+    threadGroupAllow.value = applyThreadGroupMaskToAllow(r.thread_group_mask ?? FULL_THREAD_GROUP_MASK)
     searchMode.value = r.search_mode === 'regex' ? 'regex' : 'smart'
     searchCaseSensitive.value = !!r.search_case_sensitive
     filterMode.value = !!r.filter_mode
@@ -506,6 +555,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       scroll_top: scrollTop.value,
       follow_tail: followTail.value,
       level_mask: buildLevelMaskFromAllow(levelAllow.value),
+      thread_group_mask: buildThreadGroupMaskFromAllow(threadGroupAllow.value),
       filter_text: searchQuery.value,
       search_mode: searchMode.value,
       search_case_sensitive: searchCaseSensitive.value,
@@ -557,6 +607,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     currentHit,
     allowedRecords,
     levelAllow,
+    threadGroupAllow,
     tailing,
     followTail,
     tailPulse,
@@ -586,6 +637,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     nextHitIdx,
     prevHitIdx,
     toggleLevel,
+    toggleThreadGroup,
     refreshAllowedRecords,
     testPattern,
     applyPattern,
