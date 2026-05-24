@@ -13,7 +13,7 @@
  * new pages, the minimap, and -- when `tab.followTail` -- a scroll to
  * the bottom.
  */
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, useTemplateRef, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useVirtualizer } from '@tanstack/vue-virtual'
@@ -31,6 +31,7 @@ import {
   type RecordRef,
   type SpeedGrid,
   type EffectiveThresholds,
+  type Settings,
 } from '../types'
 import type { Tab } from '../tab'
 import InsightsDrawer from './InsightsDrawer.vue'
@@ -48,7 +49,23 @@ const scrollEl = useTemplateRef<HTMLDivElement>('scrollEl')
 const minimapEl = useTemplateRef<HTMLCanvasElement>('minimapEl')
 const speedRailEl = useTemplateRef<HTMLCanvasElement>('speedRailEl')
 const speedGrid = ref<SpeedGrid | null>(null)
+
+// App.vue provides the live settings ref so the minimap/speed-rail
+// surfaces can read configurable display knobs (heatmap blend, canvas
+// opacity, speed-rail enabled) without prop-drilling through every
+// intermediate layer. Fallback (no provider in a test mount) gets the
+// stock defaults.
+const settings = inject<Ref<Settings> | null>('settings', null)
+const minimapHeatmapBlend = computed(() =>
+  Math.max(0, Math.min(1, settings?.value.minimap_heatmap_blend ?? 1)),
+)
+const minimapCanvasOpacity = computed(() =>
+  Math.max(0, Math.min(1, settings?.value.minimap_background_opacity ?? 1)),
+)
+const speedRailEnabled = computed(() => settings?.value.speed_rail_enabled !== false)
+
 const speedRailVisible = computed(() => {
+  if (!speedRailEnabled.value) return false
   const g = speedGrid.value
   if (!g) return false
   return g.buckets.length > 0 && (g.max_avg_ms > 0 || g.buckets.some((b) => b.count > 0))
@@ -869,14 +886,19 @@ function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
 }
 
-function hotColour(level: string, heat: number, max: number): string | null {
+function hotColour(level: string, heat: number, max: number, blend: number): string | null {
   if (heat <= 0 || max <= 0) return null
   const template = LEVEL_HOT[level]
   if (!template) return null
   // Log scale so a stray single error stays barely visible while big
-  // clusters dominate -- linear modulation flattens both ends.
+  // clusters dominate -- linear modulation flattens both ends. `blend`
+  // lerps from the heat-modulated alpha (0 = full density encoding,
+  // current behaviour) up to a solid 1.0 (1 = ignore heat, paint the
+  // level colour at full strength). Any value in between trades density
+  // contrast for hue legibility.
   const t = Math.max(0, Math.min(1, Math.log1p(heat) / Math.log1p(max)))
-  const alpha = HOT_ALPHA_MIN + (HOT_ALPHA_MAX - HOT_ALPHA_MIN) * t
+  const modulated = HOT_ALPHA_MIN + (HOT_ALPHA_MAX - HOT_ALPHA_MIN) * t
+  const alpha = modulated + (1 - modulated) * blend
   return template.replace('ALPHA', alpha.toFixed(3))
 }
 
@@ -895,6 +917,14 @@ function paintMinimap() {
   canvas.height = h * dpr
   canvas.style.width = `${MINIMAP_WIDTH}px`
   canvas.style.height = `${h}px`
+  // Opacity 0: the canvas is CSS-hidden anyway, so skip every fill/wash/
+  // hot-overlay pass and just clear. Sizing still happens above so the
+  // pointer hit-test geometry stays correct if the user later raises it.
+  if (minimapCanvasOpacity.value <= 0) {
+    const ctx0 = canvas.getContext('2d')
+    if (ctx0) ctx0.clearRect(0, 0, canvas.width, canvas.height)
+    return
+  }
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -920,18 +950,45 @@ function paintMinimap() {
   }
 
   // Pass 2: hot overlay. Per-bucket alpha is bucket-local, so no run
-  // coalescing here -- a one-pixel-per-bucket loop is fine at ~viewport
-  // height (a few hundred buckets at most).
+  // coalescing in the modulated path -- a one-pixel-per-bucket loop is
+  // fine at ~viewport height (a few hundred buckets at most). At blend
+  // == 1 the alpha is constant per level, so we precompute solid
+  // templates and skip the per-bucket log curve entirely; the run-
+  // coalescing strategy from Pass 1 then applies here too.
   const max = lastMaxErrorWarnSum
   if (max > 0) {
-    for (let i = 0; i < h; i++) {
-      const b = buckets[i]
-      const heat = b.error + b.warn
-      if (heat === 0) continue
-      const colour = hotColour(b.worst, heat, max)
-      if (!colour) continue
-      ctx.fillStyle = colour
-      ctx.fillRect(0, i, MINIMAP_WIDTH, 1)
+    const blend = minimapHeatmapBlend.value
+    if (blend >= 1) {
+      const solidAt = (i: number): string | null => {
+        if (i >= h) return null
+        const b = buckets[i]
+        if (b.error + b.warn === 0) return null
+        const tpl = LEVEL_HOT[b.worst]
+        return tpl ? tpl.replace('ALPHA', '1.000') : null
+      }
+      let hotStart = 0
+      let hotColourRun = solidAt(0)
+      for (let i = 1; i <= h; i++) {
+        const next = solidAt(i)
+        if (next !== hotColourRun) {
+          if (hotColourRun !== null) {
+            ctx.fillStyle = hotColourRun
+            ctx.fillRect(0, hotStart, MINIMAP_WIDTH, i - hotStart)
+          }
+          hotStart = i
+          hotColourRun = next
+        }
+      }
+    } else {
+      for (let i = 0; i < h; i++) {
+        const b = buckets[i]
+        const heat = b.error + b.warn
+        if (heat === 0) continue
+        const colour = hotColour(b.worst, heat, max, blend)
+        if (!colour) continue
+        ctx.fillStyle = colour
+        ctx.fillRect(0, i, MINIMAP_WIDTH, 1)
+      }
     }
   }
 
@@ -1102,6 +1159,23 @@ function onMinimapPointerUp(ev: PointerEvent) {
 // --- Watchers tying everything together ---
 watch(filteredSourceRecords, () => {
   scheduleMinimapFetch(true)
+})
+
+// Configurable display knobs: a heatmap-blend change needs a canvas
+// repaint (alpha is baked into the pixels, not a CSS layer). Canvas
+// opacity is bound via :style so Vue handles the redraw.
+watch(minimapHeatmapBlend, () => {
+  requestAnimationFrame(() => paintMinimap())
+})
+
+// Speed-rail visibility is gated by v-if, which destroys the canvas
+// when hidden and remounts a fresh blank one when shown. Nothing else
+// re-triggers paintSpeedRail on remount (the grid data is still in
+// memory but the new canvas is empty), so watch for the toggle going
+// true and repaint once Vue has put the element back into the DOM.
+watch(speedRailVisible, (on) => {
+  if (!on) return
+  requestAnimationFrame(() => paintSpeedRail())
 })
 
 watch(
@@ -1520,7 +1594,7 @@ defineExpose({
       @pointerenter="onMinimapPointerEnter"
       @pointerleave="onMinimapPointerLeave"
     >
-      <canvas ref="minimapEl" class="minimap-canvas" />
+      <canvas ref="minimapEl" class="minimap-canvas" :style="{ opacity: minimapCanvasOpacity }" />
       <div
         v-if="minimapIndicator.visible"
         class="minimap-indicator"

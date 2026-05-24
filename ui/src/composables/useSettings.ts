@@ -35,6 +35,9 @@ function defaultSettings(): Settings {
     recent_files: [],
     follow_tail_default: true,
     colour_blind: false,
+    minimap_heatmap_blend: 0,
+    minimap_background_opacity: 0.5,
+    speed_rail_enabled: true,
   }
 }
 

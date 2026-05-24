@@ -98,6 +98,12 @@ export interface Settings {
   follow_tail_default: boolean
   slow_request_thresholds?: SlowRequestThresholds | null
   colour_blind?: boolean
+  /** 0..1 multiplier on the minimap hot-overlay alpha. Default 1. */
+  minimap_heatmap_blend?: number
+  /** 0..1 CSS opacity for the minimap heatmap canvas. Default 1. */
+  minimap_background_opacity?: number
+  /** When false the slow-request speed rail is hidden globally. Default true. */
+  speed_rail_enabled?: boolean
 }
 
 export interface RestoredFile {

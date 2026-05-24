@@ -231,6 +231,42 @@ function onResetAll() {
         </span>
       </div>
 
+      <h4 class="subhead">Minimap</h4>
+      <div class="row-grid">
+        <label for="minimap-heatmap-blend" class="row-label">Level heatmap blend</label>
+        <span class="control-cell slider-cell">
+          <input
+            id="minimap-heatmap-blend"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            :value="Math.round((settings.minimap_heatmap_blend ?? 1) * 100)"
+            @input="(e: Event) => emit('update', { minimap_heatmap_blend: Number((e.target as HTMLInputElement).value) / 100 })"
+          />
+          <span class="slider-val">{{ Math.round((settings.minimap_heatmap_blend ?? 1) * 100) }}%</span>
+        </span>
+      </div>
+      <div class="row-grid">
+        <label for="minimap-bg-opacity" class="row-label">Heatmap opacity</label>
+        <span class="control-cell slider-cell">
+          <input
+            id="minimap-bg-opacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            :value="Math.round((settings.minimap_background_opacity ?? 1) * 100)"
+            @input="(e: Event) => emit('update', { minimap_background_opacity: Number((e.target as HTMLInputElement).value) / 100 })"
+          />
+          <span class="slider-val">{{ Math.round((settings.minimap_background_opacity ?? 1) * 100) }}%</span>
+        </span>
+      </div>
+      <p class="muted hint-inline minimap-hint">
+        Level heatmap makes areas of sparser and denser log lines visually distinct, making sparse areas more faded.
+        Setting to 100% shows all log levels in the minimap the same, regardless of density.
+      </p>
+
       <h3>Behaviour</h3>
       <div class="row-grid">
         <label for="follow-tail-default">Follow tail by default</label>
@@ -261,6 +297,23 @@ function onResetAll() {
 
     <!-- Slow requests -->
     <section v-if="activeTab === 'slow-requests'" class="tab-panel" role="tabpanel">
+      <h3>Display</h3>
+      <div class="row-grid">
+        <label for="speed-rail-enabled" class="row-label">Show speed rail</label>
+        <span class="control-cell">
+          <input
+            id="speed-rail-enabled"
+            type="checkbox"
+            :checked="settings.speed_rail_enabled !== false"
+            @change="(e: Event) => emit('update', { speed_rail_enabled: (e.target as HTMLInputElement).checked })"
+          />
+          <span class="muted hint-inline">
+            The thin coloured strip beside the minimap that shows the
+            slow-request heatmap. Disable to hide it globally.
+          </span>
+        </span>
+      </div>
+
       <h3>Global thresholds</h3>
       <p class="muted hint">
         Set the thresholds for slow requests; values less than or equal to 'fast' show <span style="color: var(--speed-fast);">green</span>,
@@ -525,6 +578,32 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 
 .hint { margin-bottom: 0.5rem; }
 .hint-inline { font-size: 0.78rem; line-height: 1.35; max-width: 26rem; }
+.subhead {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin: 0.8rem 0 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.slider-cell {
+  width: 100%;
+  gap: 0.6rem;
+
+  & input[type='range'] {
+    flex: 1;
+    min-width: 0;
+    max-width: 16rem;
+  }
+}
+.slider-val {
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  min-width: 3rem;
+  text-align: right;
+}
+.minimap-hint { margin-top: 0.3rem; max-width: 32rem; }
 .threshold-grid {
   display: flex;
   gap: 0.8rem;

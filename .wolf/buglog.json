@@ -2,6 +2,14 @@
   "version": 1,
   "bugs": [
     {
+      "date": "2026-05-24",
+      "phase": "post-v1",
+      "error_message": "Toggling the speed rail off and back on via Settings -> Slow requests -> Show speed rail leaves the rail blank after it remounts",
+      "root_cause": "The rail is rendered with `v-if=\"speedRailVisible\"`, which destroys the canvas DOM node when the toggle goes off and remounts a fresh blank one when it goes back on. The grid data stays in memory but nothing re-triggers paintSpeedRail on remount -- paintSpeedRail is only called from fetchSpeedGrid / fetchSpeedThresholds / themeObserver, none of which fire on a pure visibility flip.",
+      "fix": "Added a `watch(speedRailVisible, ...)` in LogViewport that, when the computed flips to true, schedules a paintSpeedRail() in the next animation frame so Vue has finished re-mounting the canvas and the template ref is populated. Mirrors the pattern used for the minimap heatmap-blend repaint watcher.",
+      "tags": ["ui", "vue", "v-if", "canvas-remount", "speed-rail", "settings"]
+    },
+    {
       "date": "2026-05-23",
       "phase": "P4",
       "error_message": "TailState's head-hash rotation check flagged every append as a rotation when the file was shorter than HEAD_HASH_BYTES",

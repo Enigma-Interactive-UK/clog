@@ -1862,6 +1862,9 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "deserialize_optional_optional")]
     pub slow_request_thresholds: Option<Option<clog_core::SlowRequestThresholds>>,
     pub colour_blind: Option<bool>,
+    pub minimap_heatmap_blend: Option<f32>,
+    pub minimap_background_opacity: Option<f32>,
+    pub speed_rail_enabled: Option<bool>,
 }
 
 #[allow(clippy::option_option)] // tri-state patch: None=untouched, Some(None)=clear, Some(Some)=set
@@ -1903,6 +1906,15 @@ fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
     }
     if let Some(b) = patch.colour_blind {
         s.colour_blind = b;
+    }
+    if let Some(v) = patch.minimap_heatmap_blend {
+        s.minimap_heatmap_blend = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = patch.minimap_background_opacity {
+        s.minimap_background_opacity = v.clamp(0.0, 1.0);
+    }
+    if let Some(b) = patch.speed_rail_enabled {
+        s.speed_rail_enabled = b;
     }
     s.save().map_err(|e| IpcError::Io {
         message: e.to_string(),

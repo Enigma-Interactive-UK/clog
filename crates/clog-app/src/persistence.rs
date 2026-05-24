@@ -50,6 +50,22 @@ pub struct Settings {
     /// the stops apart.
     #[serde(default)]
     pub colour_blind: bool,
+    /// 0.0..=1.0 multiplier on the per-bucket alpha of the minimap's hot
+    /// overlay (warn/error/fatal heatmap). 0 hides the heatmap entirely,
+    /// 1 is the historic full-strength behaviour.
+    #[serde(default = "default_minimap_heatmap_blend")]
+    pub minimap_heatmap_blend: f32,
+    /// 0.0..=1.0 CSS opacity applied to the minimap's heatmap canvas
+    /// (wash + hot overlay). The scroll-position handle stays fully
+    /// opaque regardless. 0 hides the visualisation while the handle
+    /// remains usable; 1 is the historic full-opacity behaviour.
+    #[serde(default = "default_minimap_background_opacity")]
+    pub minimap_background_opacity: f32,
+    /// When false, the per-tab slow-request speed rail beside the
+    /// minimap is hidden globally even when slow-request data is
+    /// available.
+    #[serde(default = "default_true")]
+    pub speed_rail_enabled: bool,
 }
 
 impl Default for Settings {
@@ -62,6 +78,9 @@ impl Default for Settings {
             follow_tail_default: true,
             slow_request_thresholds: None,
             colour_blind: false,
+            minimap_heatmap_blend: default_minimap_heatmap_blend(),
+            minimap_background_opacity: default_minimap_background_opacity(),
+            speed_rail_enabled: true,
         }
     }
 }
@@ -77,6 +96,12 @@ fn default_font_size() -> u32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_minimap_heatmap_blend() -> f32 {
+    0.0
+}
+fn default_minimap_background_opacity() -> f32 {
+    0.5
 }
 
 impl Settings {

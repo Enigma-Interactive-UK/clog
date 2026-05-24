@@ -61,6 +61,10 @@ const {
 // LogViewport tree) so it can refetch effective thresholds whenever any
 // settings save fires - no prop drilling through LogViewport required.
 provide('settingsVersion', settingsVersion)
+// Same rationale for the settings ref itself: the minimap heatmap blend,
+// minimap canvas opacity, and speed-rail enabled toggle all read it and
+// repaint, no prop-drilling needed.
+provide('settings', settings)
 
 const {
   tabs,
