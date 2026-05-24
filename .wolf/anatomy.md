@@ -1,143 +1,165 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-23
-> P8 vertical slice landed (post-P9, addressing the previously skipped phase): user highlight rule editor in Settings (global) + PatternModal (per-file), live preview pane, palette colour + bold/italic/underline knobs, priority + enable toggle, regex compile error inline, overlap warning when every match is overridden. Persistence via highlight-rules.json (global) and per-file-rules/<hash>.json (per-file). New IPC: get/save_highlight_rules, get/save/forget_per_file_rules. PatternModal also gained a Forget pattern override button.
-> Post-P10 vertical slice: slow-request insights drawer + 4px continuous-gradient speed rail next to the minimap. New clog-core::slow_requests module (detection, aggregation, speed grid), four new IPCs (get_slow_requests, get_slow_request_speeds, get_slow_request_thresholds, save_slow_request_thresholds), persistence extension on Settings and PerFileRulesFile with optional thresholds, InsightsDrawer.vue with sortable entry table + per-file threshold editor + Auto/Global/Per-file chip, Settings modal Slow requests section for the global default.
-> Post-P9 sidequest: bookmarks feature added (click-to-toggle on line numbers, right-click to remove, accent stripes in minimap, persisted per tab via RestoredFile.bookmarks with silent drop of out-of-range indices). App.vue further decomposed. App.vue now a thin orchestrator composing useSettings + useTabs + useSession + useStartupPaths + useAppShortcuts + useWindowChrome + useHighlightRules. Modals (Settings, About, Pattern) extracted into components with a shared BaseModal scaffold. AppHeader, StatusBar, DropOverlay extracted. P9 vertical slice landed (multi-tab UI, tauri-plugin-single-instance, CLI argv forwarding, multi-tab session restore).
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T08:56:16.701Z
+> Files: 89 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
-- `Cargo.toml` - Rust workspace (members: clog-core, clog-app); workspace version 1.0.0
-- `CLAUDE.md` - OpenWolf project instructions
-- `README.md` - dev setup + how to run P1 demo
-- `clog.code-workspace`
-- `.gitignore`
-- `.cargo/config.toml` - `cargo dev` alias for `cargo tauri dev --config crates/clog-app/tauri.conf.json`
+- `.gitignore` — Git ignore rules (~98 tok)
+- `Cargo.toml` — Rust package manifest (~111 tok)
+- `CLAUDE.md` — CLAUDE.md (~1269 tok)
+- `clog.code-workspace` (~16 tok)
+- `README.md` — Project documentation (~783 tok)
 
-## scripts/
+## .cargo/
 
-- `make-portable-zip.ps1` - P10 slice A. Reads version from workspace Cargo.toml, runs `cargo tauri build`, stages `clog.exe` + empty `clog-data/` placeholder + `README.txt` and Compress-Archive's them to `target/release/bundle/portable/clog_<version>_x64-portable.zip`. Supports `-SkipBuild` to reuse an existing build.
+- `config.toml` (~20 tok)
+
+## .claude/
+
+- `settings.json` (~441 tok)
 
 ## .claude/rules/
 
-- `openwolf.md`
+- `openwolf.md` (~313 tok)
 
-## crates/clog-core/
+## C:/Users/septi/.claude/
 
-- `Cargo.toml` - engine crate, no Tauri deps (serde, thiserror, regex, rayon, bincode, blake3; dev: proptest, tempfile)
-- `src/lib.rs` - `FileSummary`, `CoreError`, `summarise_file()`, `index_file()`, `sample_lines()`, re-exports, smoke + watertight + auto-detect tests
-- `src/index.rs` - `LineIndex` (in-memory `Vec<u64>` of line-start offsets) + edge-case unit tests
-- `src/source.rs` - `LineSource` trait + `StreamedFile` impl (BufReader + seek)
-- `src/record.rs` - `Level` enum, `RecordHeader { ... fields: HeaderFields }`, `RecordScanner` trait (`try_parse_header -> ParsedHeader`), `scan_records()` + unit tests. CompiledPattern impls RecordScanner.
-- `src/pattern.rs` - log4j2 PatternLayout compiler. `Token` enum (Literal/Level/Date/Thread/Logger/Message/Newline/SourceFile/SourceLine), `DateFormat`/`DateAtom`, `PatternError`, `PatternWarning`, `CompiledPattern { source, tokens, warnings }`, `HeaderFields`, `ParsedHeader`. Supported specifiers: `%d{...}`, `%level`/`%-Nlevel`/`%p`/`%-Np`, `%t`, `%c`/`%c{N}`, `%C`/`%C{N}` (aliased to logger), `%F` (source filename), `%L` (digit run), `%msg`/`%m`, `%n`, `%%`. Source-filename span lands in `fields.logger` when no `%C`/`%c` already claimed it. `BUILTIN_PATTERNS` (9 entries, ordered most-specific first: wsl-oink, play-class-site, play-absolute-site, prod, log4j2-default, play-short-dash, play-absolute, play-short, prod-no-thread), `auto_detect()`, `builtin_pattern(name)` lookup helper. 14 unit tests.
-- `src/regex_scanner.rs` - `RegexScanner` escape hatch reading named captures (level/timestamp/thread/logger/msg). 2 unit tests.
-- `src/search.rs` - P6 search engine. `SearchMode { Smart | Regex }`, `LevelMask(u16)` (bit-per-`Level` via `level_bit`; `allows`/`with` helpers), `HitRef { record_idx, record_first_line, record_line_count, ranges: Vec<(u32,u32)> (record-relative bytes), score }`, `SearchOptions { case_sensitive, level_mask }`, `SearchError { EmptyQuery | BadRegex }`. `search_records(records, bytes, mode, query, opts) -> Result<Vec<HitRef>, _>` runs `par_iter` over records: smart-search walks every token's occurrences and picks the lowest-gap-sum alignment (greedy "earliest occurrence at or after prev_end" is optimal); regex uses `regex::bytes::Regex` (prefixed `(?i)` when insensitive) and `find_iter` per record so matches never cross record boundaries. 7 unit tests (design-table ranking, multi-token gap sum, in-order requirement, case-sensitive flag, regex + smart boundary anchoring, level mask, solopress-prod smart-count smoke).
-- `src/idx_cache.rs` - P7 persistent index cache. `CacheFingerprint { file_size, mtime_ns, pattern_hash [u8;32] }` keys the on-disk file at `<data>/index/<blake3(path)>.idx`. Binary format: 6-byte `CLOGIX` magic + u16 schema (1) + u16 pad + u64 file_size + i128 mtime_ns + [u8;32] pattern_hash + bincode-encoded `Body { line_offsets, file_size, records }`. `load(path, expect) -> LoadOutcome { Hit { line_index, records } | Miss }` downgrades any I/O / shape error to `Miss` so an unparseable cache never blocks a file open. `save(path, fp, line_index, records)` writes to a `.idx.tmp` sibling then atomically renames (with Windows-friendly remove-and-retry fallback). 4 unit tests (roundtrip, fingerprint mismatch is miss, absent is miss, corrupted magic is miss) + cross-file parity test in lib.rs (`index_cache_roundtrip_matches_fresh_index` against the wsl-dev fixture).
-- `src/tail.rs` - polling tail state machine. `TailState { path, consumed, head_hash, head_prefix_len }`, `TailEvent { NoChange | Appended { from_offset, bytes } | Rotated }`. `poll()` stats + FNV-1a-hashes first 256 bytes (anchored to a fixed prefix length so file growth doesn't trip the hash), trims to last `\n` so partial writes stay buffered. `reset_to(size)` re-anchors after caller re-indexes. `HEAD_HASH_BYTES = 256`, `DEFAULT_POLL_INTERVAL_MS = 250`. 6 tempfile unit tests.
-- `src/slow_requests.rs` - SLOW REQUEST detection (one regex covering both observed Play formats), aggregation, and speed-grid builder. `PathMode { Normalised | Raw }`, `SlowRequestThresholds::new(fast, slow)` with validation (fast < slow, both <= 600 000 ms), `extract_slow_requests(records, bytes, line_offsets, mode, ts_extractor)` returns `SlowRequestSummary { entries, total_hits, deduped, total_ms }` with per-entry count / total / min / max / avg / nearest-rank p95 and a top-50 occurrences cap. `build_speed_grid(occurrences, line_count, bucket_count)` mirrors the level-minimap bucket geometry. 20+ unit tests cover path normalisation, both detection formats, dedup at the same ms, normalised vs raw merging, the occurrence cap, longest_line pointing at the slowest hit, and the speed grid bucketing edges.
-- `tests/pattern_proptest.rs` - proptest: render + reparse round trip for wsl-oink + prod patterns.
-- `examples/fake_tailer.rs` - dev binary. Appends synthetic wsl-oink-shaped records to `<path>` at `--rate N` lines/sec (default 10). `--rotate` truncates target on entry to exercise rotation. Every 17th record gets 2 stack-trace continuations. Optional `--count N` for a bounded run.
+- `CLAUDE.md` — Approach (~642 tok)
 
 ## crates/clog-app/
 
-- `Cargo.toml` - Tauri v2 binary `clog`, depends on clog-core + plugin-dialog + plugin-opener + plugin-single-instance + tokio (sync/time/macros/rt-multi-thread) + regex + tracing + tracing-subscriber (env-filter) + tracing-appender + blake3
-- `build.rs` - calls `tauri_build::build()`
-- `tauri.conf.json` - app config, `frontendDist: ../../ui/dist`. P10 slice A: version 1.0.0, NSIS-only target, publisher/copyright/category/short+long descriptions, `homepage: https://github.com/lewster32/clog`, `bundle.fileAssociations: [{ ext: ["log","out"], name: "Clog Log File", role: "Viewer" }]`, `bundle.windows.nsis: { installMode: "currentUser", languages: ["English"], displayLanguageSelector: false, installerIcon }`.
-- `src/main.rs` - P9 additions: `AppState.startup_paths: Mutex<Vec<String>>` (drained on boot by `take_startup_paths` IPC), `filter_paths(argv)` keeps only `is_file()` paths excluding flags + the executable, `tauri-plugin-single-instance` registered with a callback that calls `filter_paths`, refocuses the `main` webview window, and emits `single-instance-paths` (Vec<String> payload) to the running instance, `tauri::Emitter` added to the import set. Existing tab-id-keyed AppState carries through unchanged.
-- `src/paths.rs` - P7 filesystem layout. `data_dir()` returns the portable root (`<exe-dir>/clog-data/` when present) or the per-user root (`%LOCALAPPDATA%\clog` on Windows, `$XDG_DATA_HOME/clog` or `$HOME/.local/share/clog` otherwise) and `mkdir -p`s on first call. `settings_path()`, `session_path()`, `patterns_path()`, `logs_dir()`, `index_dir()`, `index_cache_path(source)` pin each per-concern path. `path_hash(path)` is blake3 over the case-folded canonical path truncated to 16 hex chars (stable across runs, collision-free in practice, keeps potentially-sensitive paths out of filenames).
-- `src/persistence.rs` - P7/P9 schema-versioned JSON state. P9 bumped `Session { schema, last_file: Option<RestoredFile>, tabs: Vec<RestoredFile>, active_tab: usize }` with `Session::normalise()` (called on load) folding legacy `last_file` into `tabs` when `tabs` is empty + clamping `active_tab` into bounds; `Session::save()` mirrors `tabs[active_tab]` back into `last_file` so an older binary downgraded to P7 still reopens *something*. P7 `Settings { schema, theme: "system"|"light"|"dark", font_size: u32 clamped 9..=24, recent_files: Vec<String> (cap 20, MRU), follow_tail_default: bool }`, `Session { schema, last_file: Option<RestoredFile { path, scroll_top, follow_tail, level_mask, filter_text, search_mode, search_case_sensitive, filter_mode } > }`, `PatternsFile { schema, overrides: BTreeMap<path, PatternOverride { kind, source }> }`. Every type round-trips through serde_json with `#[serde(default)]` on optional fields so a v1 file missing a future field still loads. Writes use a tempfile+rename helper with Windows remove-and-retry fallback. `Settings::touch_recent(path)` dedupes-and-promotes; `Settings::forget_recent(path)` drops. 3 unit tests (dedupe+cap, round-trip, unknown-field-default-decode). P11 added `slow_request_thresholds: Option<SlowRequestThresholds>` on both `Settings` and `PerFileRulesFile` with `#[serde(default)]` so existing v1 files load cleanly with None. New `PerFileRulesFile::is_effectively_empty()` lets the save IPC delete the file when both rules and thresholds end up empty.
-- `src/main.rs` - `AppState` (Mutex file registry), `OpenedFile { path, records, record_first_line, line_count, bytes, line_offsets, pattern_source, pattern_name, scanner_kind, tail_shutdown, tail_join }`. `ScannerKind { Pattern(String) | Regex(String) }` + `CompiledScanner { Pattern(CompiledPattern) | Regex(RegexScanner) }` sum so runtime-selected scanners stay sized for `index_file`/`scan_records`. IPC commands:
-  - `open_file(path)` -> `OpenedFilePayload { file_id, path, size_bytes, line_count, record_count, pattern_name, pattern_source, pattern_score, cache_hit }`. P7: first checks `patterns.json` for a per-file override (kind=pattern|regex) and uses that scanner if present; otherwise auto-detects from a 64KB sample. Then tries the persistent index cache at `paths::index_cache_path(path)` with a `CacheFingerprint { file_size, mtime_ns, pattern_hash }`; a hit skips the full `index_file` walk (cache_hit=true), a miss runs `index_file` and writes the cache back. Cache write failures are logged at warn and swallowed. Touches `Settings::recent_files` with the absolute path on success.
-  - `get_data_dir() -> { path, portable }`, `open_data_dir()` (spawns `explorer.exe`/`open`/`xdg-open`), `get_settings() -> Settings`, `update_settings(patch)` clamps font_size to [9,24], `forget_recent(path)`, `get_session() -> Session`, `save_session(session)`, `get_pattern_override(path) -> Option<PatternOverride>`, `forget_pattern_override(path)`, `reset_data({scope: "settings"|"session"|"patterns"|"index"|"all"})`.
-  - `get_records(file_id, start, end)` -> `RecordsPayload` (legacy P2 surface, still served)
-  - `get_lines(file_id, start, end)` -> `LinesPayload { start_line, lines: [LinePayload { record_idx, line_within_record, byte_offset_in_record, level, fields?, text }] }`. O(log n) record lookup via cached record_first_line. P6 added `byte_offset_in_record` (this line's first byte relative to the record's `byte_offset`) so the UI can map record-relative hit ranges onto line-relative char offsets.
-  - `test_pattern(file_id, pattern?, regex?)` -> `PatternTestPayload { score, sample_size }`
-  - `set_pattern(file_id, pattern?, regex?)` -> `ApplyPatternPayload { record_count, pattern_source }`. P7: also writes the chosen kind+source into `patterns.json` under the file's absolute path so the next open uses it automatically, and refreshes the on-disk index cache with the newly-scanned records.
-  - `start_tail(file_id, on_delta: Channel<TailDelta>)` - spawns tokio task that polls TailState every 250ms; on Appended runs `extend_with_appended` (in-place line/record extension); on Rotated runs `apply_rotation` (re-index off the lock, swap under the lock, reset_to). Tear-down via oneshot shutdown stored on OpenedFile.
-  - `stop_tail(file_id)` - sends shutdown to running tail task if any.
-  - `get_level_minimap(file_id, bucket_count)` -> `LevelMinimapPayload { buckets: Vec<BucketStat { worst, error, warn, total }>, line_count, max_error_warn_sum, max_total }`. Walks records and keeps the worst severity per bucket (drives hue) plus error / warn / total record counts per bucket (drives the hot overlay alpha). FATAL aggregates into `error`. The pure rollup lives in `build_level_minimap_payload(records, line_count, bucket_count)`, unit-tested independently of the command.
-  - `get_markers(file_id)` -> `Vec<MarkerRef { kind, line_index, record_idx }>`. Substring-matches each record's first physical line against `BUILTIN_MARKER_RULES` (currently `Restart` -> "Core Plugin Load"). One marker per record max (first matching rule wins); continuation lines are not scanned. The pure helper `scan_markers(records, bytes, line_offsets, rules)` is unit-tested independently of the command. New marker kinds are added by extending `MarkerKind` + `BUILTIN_MARKER_RULES` plus a `--marker-<kind>` CSS token.
-  - `get_slow_requests(file_id, mode)` -> `SlowRequestSummary`. Reads from a short-lived `SlowRequestCache` on `OpenedFile` keyed by `(records.len, bytes.len, pattern_hash)`; flipping mode never re-scans the file.
-  - `get_slow_request_speeds(file_id, bucket_count)` -> `SpeedGrid`. Same cache; bucket count comes from the UI to match the level-minimap grid.
-  - `get_slow_request_thresholds(file_id)` -> `EffectiveThresholds { source, effective, per_file, global }` where `source` is `auto` | `global` | `per_file`. Auto-tier `effective` is derived from the current speed grid extremes.
-  - `save_slow_request_thresholds(file_id, thresholds)` writes the per-file override (or clears it on `None`). When the resulting `PerFileRulesFile` has no rules and no thresholds the file is deleted via `forget` rather than persisted as a stub.
-  - `update_settings` patch grew an optional `slow_request_thresholds: Option<Option<SlowRequestThresholds>>` field for the global default. `Some(Some(t))` sets, `Some(None)` clears, absent leaves untouched.
-  - `start_search(file_id, request: SearchRequest { mode, query, case_sensitive, level_mask }, on_hits: Channel<SearchDelta>) -> u64` - validates the regex (or empty smart query) up-front so a bad pattern returns inline; cancels any prior search; bumps `OpenedFile.current_search_id`, allocates a fresh `Arc<AtomicBool>` cancel flag, snapshots `records` + `bytes` under the lock, then dispatches `search_records` on `tokio::task::spawn_blocking` (rayon parallel scan inside). Hits stream out via `SearchEmitter` in 512-hit batches; final `done=true` carries any remainder. Returns the new `search_id` synchronously.
-  - `cancel_search(file_id)` - flips the cancel flag for the in-flight search; the task notices on its next batch boundary and exits via `SearchEmitter::abort`.
-  - `close_file(file_id)` - also tears down any tail task AND cancels any in-flight search.
-  - `TailDelta { new_record_count, line_count, record_count, last_offset, rotated }` is the tail channel payload.
-  - `SearchDelta { search_id, hits: Vec<HitRef>, total, done }` is the search channel payload.
-- `src/channels.rs` - `TailEmitter<T>` pass-through wrapper over `tauri::ipc::Channel` (tail's 250 ms cadence is far below the 60 Hz budget). `SearchEmitter` is the P6 coalescer: buffers up to `SEARCH_BATCH_SIZE` (512) hits before sending one `SearchDelta` with `done=false`; `finish()` flushes the remainder with `done=true`; `abort()` drops the buffer and ships a terminal `done=true` (used on cancellation).
-- `capabilities/default.json` - grants dialog open + opener (allow-open-url) to main window
-- `icons/` - 32/128/128@2x/icon.png + icon.ico
+- `build.rs` (~12 tok)
+- `Cargo.toml` — Rust package manifest (~239 tok)
+- `tauri.conf.json` (~456 tok)
 
-## ui/
+## crates/clog-app/capabilities/
 
-- Vue 3 + TypeScript + Vite scaffold
-- `package.json` - deps: @tauri-apps/api, @tauri-apps/plugin-dialog, @tauri-apps/plugin-opener, @tanstack/vue-virtual; dev: @tauri-apps/cli, vitest
-- `vite.config.ts` - port 1420, ignores crates/ and target/ from HMR watch
-- `vitest.config.ts` - node env, `src/**/*.test.ts` included
-- `tsconfig.app.json` - excludes `src/**/*.test.ts` so vue-tsc doesn't pull vitest's node types into the App.vue compilation (would otherwise break setTimeout return-type assumptions)
+- `default.json` (~142 tok)
 
-### P9 module split
+## crates/clog-app/gen/schemas/
 
-P9 broke the previous ~3800-line App.vue monolith into typed modules + per-tab components. The orchestrator owns the tab list; everything per-file lives in a `Tab` reactive object that channel handlers close over.
+- `acl-manifests.json` — Declares command (~20508 tok)
+- `capabilities.json` (~114 tok)
+- `desktop-schema.json` (~38047 tok)
+- `windows-schema.json` (~38047 tok)
 
-- `src/types.ts` - shared interfaces (IpcError, HeaderFields, OpenedFile, LineRow, HitRef, SearchDelta, RecordRef, LinesPayload, Settings, RestoredFile, Session, DataDirPayload, PatternTestPayload, ApplyPatternPayload, LevelMinimapPayload, TailDelta) + `LEVEL_BIT` map + `LEVEL_KEYS` array + `PAGE_SIZE`/`ROW_HEIGHT`/`OVERSCAN` constants. No runtime code; just the wire shapes.
-- `src/tab.ts` - `createTab(localId, opened, defaults, hooks)` factory + `Tab` type alias. Holds every per-file ref (file, pages, inflight, pattern bar state, search/filter/level mask state, hits/hitOrder/currentHit, tail status, scrollTop, unread). Per-tab methods: `lineRow`, `fetchPage`, `startTail` + `handleTailDelta` (closes over the tab so tail deltas update the originating tab even when not active; sets `unread` when delta lands), `scheduleSearch` / `runSearch` / `clearSearchState` / `setSearchMode` / `nextHitIdx` / `prevHitIdx`, `toggleLevel` + `refreshAllowedRecords`, `testPattern` / `applyPattern`, `applyRestored(RestoredFile)` (hydrate from session) + `snapshot()` (produce a RestoredFile), `teardown()` (cancel_search + stop_tail + close_file + clear timers). Search/tail timer handles (pendingSearchTimer, tailPulseTimer, rotationToastTimer) are file-private locals. `buildLevelMaskFromAllow` / `isFullLevelMask` / `defaultLevelAllow` / `applyMaskToAllow` exported as helpers.
-- `src/composables/useSettings.ts` - global settings + theme + font-size composable. Returns `settings` ref, `dataDir` ref, `themeToggleGlyph` computed, `THEME_LABEL` map, and methods loadSettings/updateSettings/cycleTheme/bumpFontSize/resetFontSize/handleFontShortcut/refreshDataDir/openDataFolder/forgetRecent/resetData. Internal `applyTheme`/`applyFontSize` toggle `data-theme` and `--font-size-base` on `<html>`. Owns the `matchMedia('(prefers-color-scheme: dark)')` listener in onMounted/onBeforeUnmount.
-- `src/components/LogViewport.vue` - per-tab viewport. Takes `tab: Tab` prop; re-keyed on `tab.localId` in the parent so it remounts on tab switch (virtualizer starts fresh; scroll restores from `tab.scrollTop`). Owns the scroll element (`scrollEl`), the minimap canvas (`minimapEl`), the @tanstack/vue-virtual instance, `filteredSourceRecords` + `filteredLineIndices` + `effectiveCount` + `actualLineIndex(virtualIdx)` + `lineRowVirtual(virtualIdx)`, sticky-header overlay, jump-to-bottom button, the minimap (LEVEL_COLOUR overlay, faded-info-as-bg, bucketed paint with run coalescing), the minimap tooltip + drag scrub, `scheduleHitFocus` for horizontal hit-into-view. `scrollToCurrentHit` + `jumpToBottom` exposed via `defineExpose` so App.vue can call them from SearchBar's prev/next-hit events. `onBeforeUnmount` writes the current `scrollTop` back into `tab.scrollTop` so a switch-and-return restores. Watches `tab.file.value.line_count`: any growth fetches the touched pages and -- if `tab.followTail` -- jumps to bottom. Watcher on `filteredSourceRecords` re-paints the minimap. Scoped styles cover .viewport-shell / .minimap / .viewport / .row / .sticky-shell.
-- `src/components/SearchBar.vue` - search + filter + level-mask bar bound to current tab. `v-model="tab.searchQuery.value"`, `v-model="tab.searchCaseSensitive.value"`. Emits `next-hit` / `prev-hit` so App.vue forwards to LogViewport. `clearSearch` resets state and re-focuses the input via a `defineExpose({ focus })`. Scoped styles cover .search-bar.
-- `src/components/InsightsDrawer.vue` - right-side collapsible drawer (360px) hosting the slow-request table, mode toggle (Normalised / Raw), free-text path filter, sort dropdown (Total / Count / Max / p95 / Avg / Path) with same-option-flips-direction, per-file threshold editor with Auto / Global / Per-file chip, validation, Save and Clear-override actions.
-- `src/components/TabStrip.vue` - tab strip across the top. Props `tabs: Tab[]` + `activeTabId: number | null`. Per-tab markup shows the basename, a `tail-dot` driven by `t.tailing.value`/`t.tailPulse.value`, an `unread-dot` when `t.unread.value` and not active (tab name also goes bold). Middle-click closes. Emits `switch(localId)` / `close(localId)` / `new-tab`. "+" new-tab button is shaped like a tab (border-bottom: none + top-rounded corners + dashed border) so it visually reads as one more slot.
+## crates/clog-app/src/
 
-### Post-P9 App.vue decomposition (orchestrator, ~303 lines)
+- `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37830 tok)
+- `paths.rs` — Filesystem layout for clog's persistent data. (~994 tok)
+- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4338 tok)
 
-Sidequest after P9 pulled the remaining inline chunks out of App.vue into focused units. App.vue is now strictly an orchestrator: it composes five composables, wires them to a handful of presentational components, and owns nothing more than global UI flags (error banner, modal-open booleans, dragHover) and the drag-drop listener.
+## crates/clog-core/
 
-- `src/composables/useWindowChrome.ts` - `windowMaximized` ref + `minimize/toggleMaximize/closeWindow` handlers. Owns the `appWindow.onResized` listener (registered onMounted, torn down onBeforeUnmount). Takes an `onError` callback so failed window ops surface up through App.vue's error slot.
-- `src/composables/useTabs.ts` - `tabs: shallowRef<Tab[]>`, `activeTabId`, `currentTab` computed, `busy` ref + `openPath(path, restored?)` (dedups by path; activates existing tab if already open; otherwise creates the Tab via `createTab`, kicks the tail loop, and re-fires any restored search query), `activateTab`, `closeTab` (tears down + activates leftward neighbour), `pickFile` (dialog), `teardownAll`. The factory takes `{ settings, onError }` so it can read the follow-tail default and route errors back to App.vue.
-- `src/composables/useSession.ts` - `restoreSession()` (reads session.json, prefers `sess.tabs` over legacy `sess.last_file`, routes each path through `openPath` with the restored knobs, then sets active tab), `captureSession()`, `scheduleSessionSave()` (400ms debounce), and the coarse-fingerprint watcher that triggers the autosave on any per-tab knob change. Guards with `sessionRestoreInFlight` so restoring doesn't overwrite the session mid-flight. Cleans up its save timer onBeforeUnmount.
-- `src/composables/useStartupPaths.ts` - `consumeStartupPaths()` (drains the `take_startup_paths` IPC) and `bindSingleInstance()` (subscribes to `single-instance-paths` events). Both route through the openPath closure App.vue passes in. Unsubscribes the listener onBeforeUnmount.
-- `src/composables/useAppShortcuts.ts` - global keydown handler registered in capture phase. Handles Ctrl+T (new tab via picker), Ctrl+W (close active tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle), delegates Ctrl-+/-/0 to `handleFontShortcut`, then `suppressBrowserFind` (Ctrl+F/G). Pure side-effect composable; no return.
-- `src/components/AppHeader.vue` - title bar with logo (About trigger), Open button, settings cog, and the three window-control buttons. Uses `useWindowChrome` internally so the resize listener lives next to the maximise-tracking ref. Emits `pick-file` / `open-settings` / `open-about` / `error`. Owns the `.bar`, `.logo-btn`, `.window-controls`, and `.win-btn` scoped styles.
-- `src/components/StatusBar.vue` - footer with cache hint slot, record/line/byte stats, theme toggle, font-size hint, and pattern label + Edit button. Pure presentational: takes `tab`, `settings`, `themeToggleGlyph`, `themeLabel` props; emits `cycle-theme` / `open-pattern`. Local `formatCount` + `formatBytes` helpers.
-- `src/components/BaseModal.vue` - shared modal scaffold (backdrop, frame, head with title + close button, body slot). Backdrop click closes; close button emits the same event. Accepts `title` / `ariaLabel` / `modalClass` props. Each concrete modal layers its own body styles on top.
-- `src/components/SettingsModal.vue` - wraps `<BaseModal title="Settings">`. Renders Appearance (theme seg, font-size seg), Behaviour (follow-tail-default), Recent files (with open / forget per item), Advanced (data folder + per-scope reset buttons). All settings mutation flows back to App.vue via emits (`update`, `bump-font`, `reset-font`, `open-recent`, `forget-recent`, `open-data-folder`, `reset-data`) which routes through useSettings. Owns the row-grid / seg-btn / recent-list / data-cell / reset-grid scoped styles.
-- `src/components/AboutModal.vue` - wraps `<BaseModal>` with `modal-class="about-modal"`. Lazily resolves Tauri app name/version/tauri-version on first open via a `defineExpose({ ensureLoaded })` method that App.vue awaits after setting `aboutOpen = true`. The result is cached on the component instance for the lifetime of the window. Built-in `openUrl` calls for the GitHub and tauri.app links.
-- `src/components/PatternModal.vue` - wraps `<BaseModal modal-class="pattern-modal">`. Two-way-binds to `tab.patternMode` and `tab.patternInput`; Test/Apply buttons call `tab.testPattern()` / `tab.applyPattern()` directly. Shows match score, auto-detected pattern hint, and a pat-error line on regex compile failure.
-- `src/components/DropOverlay.vue` - takes `visible: boolean`; renders the dashed-border overlay with a "Drop a log file to open it" hint while a drag is hovering. `pointer-events: none` so it never swallows the drop.
+- `Cargo.toml` — Rust package manifest (~105 tok)
 
-App.vue itself now owns only:
+## crates/clog-core/examples/
 
-- `error`, `settingsOpen`, `aboutOpen`, `patternOpen`, `dragHover` refs.
-- `viewportRef` / `aboutRef` template refs (the former lets SearchBar's next/prev-hit emits drive the viewport scroll; the latter lets `openAbout()` await `ensureLoaded()`).
-- The `onDragDropEvent` handler + the `appWebview.onDragDropEvent` registration / teardown (still the only drag-drop seam Tauri exposes).
-- Modal-trigger wrappers (`openAbout`, `openSettings`, `openRecent`, `onForgetRecent`, `onUpdateSettings`, `onOpenDataFolder`, `onResetData`) that translate emits from the modals back into useSettings/useTabs calls and surface any error.
-- `onNextHit` / `onPrevHit` that forward to `viewportRef.value?.scrollToCurrentHit()`.
-- The mount-time bootstrap sequence: `loadSettings()` -> drag-drop bind -> `bindSingleInstance()` -> `restoreSession()` -> `consumeStartupPaths()` (in that exact order; startup paths must follow session restore so a CLI file lands as an additional tab rather than racing the restore).
+- `fake_tailer.rs` — Append synthetic log4j2-shaped records to a file at a fixed rate. Used (~1096 tok)
 
-Lines: App.vue 303, AppHeader 145, StatusBar 145, BaseModal 80, SettingsModal 241, AboutModal 120, PatternModal 95, DropOverlay 46. Composables: useWindowChrome 57, useTabs 124, useSession 88, useStartupPaths 48, useAppShortcuts 80.
+## crates/clog-core/src/
 
-### Legacy P6-7 App.vue notes (still accurate for runtime semantics; the code lives in the extracted units above)
+- `idx_cache.rs` — Persistent on-disk cache of the `(LineIndex, Vec<RecordHeader>)` produced (~2765 tok)
+- `index.rs` — In-memory line offset index. (~782 tok)
+- `lib.rs` — Clog engine. No Tauri deps. (~2827 tok)
+- `pattern.rs` — log4j2 `PatternLayout` compiler. (~9536 tok)
+- `record.rs` — Record header type and scanner. (~2236 tok)
+- `regex_scanner.rs` — Regex escape hatch. (~1269 tok)
+- `search.rs` — Smart + regex search engine. P6. (~5349 tok)
+- `slow_requests.rs` — Slow-request detection, aggregation, and speed-grid builder. (~9320 tok)
+- `source.rs` — Line-source abstraction. The v1 impl streams a local file via `BufReader`; (~946 tok)
+- `tail.rs` — Polling tail loop + rotation detection. (~4417 tok)
 
-- `src/App.vue` - per-physical-line virtualised viewer. P6 added the search bar (Smart/Regex mode toggle, query input with wavy red-underline on regex compile error, case-sensitive `Aa` toggle, hit count badge, prev/next nav buttons, Filter toggle, per-level mask buttons for TRACE..FATAL). State: `searchMode`, `searchQuery`, `searchCaseSensitive`, `filterMode`, `searchError`, `searchInflight`, `hits: Map<recordIdx, HitRef>`, `hitOrder: number[]` (encounter = record order), `currentHit`, `currentSearchId`, `levelAllow: Record<string,bool>`. `runSearch()` opens a `Channel<SearchDelta>`, ignores deltas whose `search_id !== currentSearchId`, accumulates hits into local buffers and publishes fresh `Map`/`Array` snapshots so Vue's reactivity tracks each tick. `scheduleSearch()` debounces input at 50 ms. `nextHit`/`prevHit` cycle the order and call `scrollToCurrentHit` (linear `indexOf` into `filteredLineIndices` in filter mode; sufficient for typical hit counts). Filter mode flattens visible records' line spans into `filteredLineIndices: number[]`; the virtualizer count switches to `effectiveCount`; `actualLineIndex(virtual)` maps to the file's physical line index; `lineRowVirtual(virtual)` is the new template entry point. `searchSpansForLine(row)` translates record-relative hit bytes onto line-relative offsets via `row.byte_offset_in_record` and emits `{cls: 'h-search-match'}` spans. `renderLine` passes `[...search, ...axis2]` to `overlay()` so the search match wins findAxis2's first-match-wins overlap rule. **CRITICAL ordering note**: `filteredLineIndices`, `effectiveCount`, and `actualLineIndex` MUST be declared ABOVE `useVirtualizer(...)` because the virtualizer reads its options computed synchronously at setup time (forward refs trip Vue's const-TDZ and the app mounts blank). Includes a 20px minimap scrollbar (canvas painted at devicePixelRatio, faded rgba overlays of the level palette with info/unknown deliberately absent so they read as background; bucket count = min(viewport_height_px, line_count * ROW_HEIGHT) so short files align to the top), a draggable viewport indicator with brighter border treatment for visibility, click/drag scrubbing via pointer capture (disengages follow-tail on grab), a position: fixed hover tooltip (z-index 100, transform translate(calc(-100% - 4px), -50%) anchored to minimap left edge, right-side callout arrow built from stacked ::before/::after triangles, walks back to the record header to resolve timestamps for continuation lines, pages watcher fills the timestamp in once the relevant page lands), and a bottom status bar (.status-bar with .slot.left + .slot.right placeholders, margin-left: auto on .right). .viewport-shell wraps viewport + minimap in flex row with overflow: hidden so the tooltip doesn't pull a page-level scrollbar; .viewport hides its native scrollbar via scrollbar-width: none + ::-webkit-scrollbar { display: none }. Minimap refetches on file open, pattern apply, tail delta, rotation, and viewport resize (ResizeObserver), debounced via requestAnimationFrame. P11 added a 4px `.speed-rail` `<canvas>` immediately right of the minimap painting a continuous green-to-amber-to-red gradient via `createLinearGradient` with one colour stop per bucket placed at its vertical midpoint. Empty buckets inherit the fast (green) colour so quiet regions read as healthy and the rail always paints. Hover and click are shared with the minimap so the two stripes read as one combined scrubber. The minimap tooltip gained a fourth "N hits, avg X, peak Y" line when the hovered bucket has slow-request data. PAGE_SIZE=256 paged `get_lines` fetch with `LineRow { record_idx, line_within_record, level, fields, text }`. `renderLine(row)` produces flat leaf spans by slicing axis-1 fields (`headerBaseSpans`) and overlaying axis-2 highlight matches (`highlightsFor` + `overlay`); continuation rows use a full-line `message` base span. 4px level-coloured left gutter, sticky record-header overlay when scrolled mid-record, indented continuation lines. Spans with `url` (axis-2 URL rule) click through to `openUrl` from @tauri-apps/plugin-opener. Pattern paste bar with PatternLayout/Regex toggle, Test (live match score), Apply (set_pattern). Tail controls cluster in the header bar: tailing indicator (idle/active dot + pulse-on-delivery), follow-tail toggle, jump-to-bottom button (visible when detached). Channel<TailDelta> opened on open_file via `invoke('start_tail', { onDelta: channel })`. Scroll handler disengages follow-tail when user scrolls > 4 rows from bottom. Rotation toast (~2.5s) when delta.rotated.
-- `src/highlight/engine.ts` - axis-2 highlight engine. `setRules(rules)` compiles once with gd flags; `computeHighlights(text)` paints a per-char (cls, priority, url) array (higher priority overwrites, zero-width matches skipped, 256-iter per-rule guard) and collapses runs into ordered non-overlapping `HighlightSpan { start, end, cls, url? }`. Sub-groups expand from named captures at default priority `parent+1`. `highlightsFor(text)` is a size-capped cache (4000 entries, oldest-quarter eviction) keyed by `version + text`. `overlay(text, base, axis2)` blends axis-1 base spans with axis-2 spans into ordered `LeafSpan { text, cls (space-joined), url? }`. `rulesVersion()` returns the monotonic version stamp for cache invalidation.
-- `src/highlight/default-rules.json` - 6 baked-in rules: caused-by (prio 30), stack-frame with fqn/file/line sub-groups (prio 40), java-exception (prio 20), url with self-href (prio 50), windows path (prio 10), unix path (prio 10).
-- `src/highlight/engine.test.ts` - 14 vitest cases covering default rules, overlay merging, span non-overlap, cache stability, version bumping, url propagation, empty-input safety, no-rules behaviour.
-- `src/main.ts`, `src/style.css` - two-layer CSS tokens. P6 added `--hl-search-bg` (amber-500) + `--hl-search-fg` (slate-950) palette tokens; `.h-search-match` row class uses them with `font-weight: 600` and a 1px `box-shadow` ring so matches read as discrete pills on top of any axis-2 overlay. P3 added level palette (--level-{trace..unknown}), axis-1 fg tokens (--fg-{timestamp,thread,logger,message,separator-dash}), sticky bg + border, continuation-indent + gutter-width primitives. P5 added --hl-{exception,caused-by,stack-fqn,stack-file,stack-line,path,url}-fg axis-2 highlight tokens; `.h-*` classes attached to viewport .row apply colour/weight/decoration only (no backgrounds). P7 added the full light palette behind `:root[data-theme="light"]` (every semantic token re-mapped to AA-contrast values: near-white surfaces, darker level colours, lighter --hl-search-bg of #fde68a). `html { font-size: var(--font-size-base) }` so the runtime `--font-size-base` override on `document.documentElement` cascades. The active theme is driven by `data-theme="light"|"dark"` on `<html>`; App.vue resolves `"system"` via `matchMedia('(prefers-color-scheme: dark)')` plus a change listener.
+## crates/clog-core/tests/
 
-P7 in App.vue: `loadSettings()` boots theme + font-size on mount, `restoreSession()` reads `session.json` and routes through a shared `openPath(path)` helper that tears down the prior file, calls `open_file`, and then in a two-rAF window restores level mask, search mode, case flag, filter mode, filter text, follow_tail, and scroll_top. A 400ms-debounced `scheduleSessionSave()` watches `[file.path, followTail, searchMode, searchQuery, searchCaseSensitive, filterMode, buildLevelMask()]` plus `onViewportScroll`. A new settings modal (gear button in header bar) exposes Appearance (Theme system/light/dark, Font size +/-/Reset), File handling (follow-tail-default), Recent files (open / forget), Highlighting + Updates placeholders, Advanced (Open settings folder, per-scope and total reset buttons). Ctrl-+/Ctrl-=/Ctrl-- /Ctrl-_/Ctrl-0 are intercepted by `handleFontShortcut` ahead of `suppressBrowserFind` via a single `onGlobalKey` capture-phase handler. Status bar slots now show a `cached` chip when `file.cache_hit` is true and the current font size.
+- `pattern_proptest.rs` — Property test for the `PatternLayout` compiler: generate well-formed (~943 tok)
+
+## design/
+
+- `icon.psd` (~39819 tok)
 
 ## docs/
 
-- `design.md` - v1 design snapshot
-- `build-phases.md` - P1..P10 phase plan
-- `future-ideas.md` - post-v1 enhancement candidates (v1.1+). Grouped by theme: reading/navigation (minimap heatmap, bookmarks, time-axis, go-to-timestamp, collapse stack traces), search (saved presets, history, field-scoped operators, diff), multi-file (merge-by-timestamp, workspaces, split panes), analysis (histograms, sparkline, similar-record clustering), ergonomics (command palette, keymap, export, copy-as-structured), reach (WSL daemon, SSH/SFTP, gz/zip), niceties (notifications, smart auto-pause). Top picks: minimap heatmap, bookmarks+go-to-timestamp, merge-by-timestamp.
+- `build-phases.md` — Clog v1 — Build phases (~4689 tok)
+- `design.md` — Clog v1 — Design (~5493 tok)
+- `future-ideas.md` — Clog - Future ideas (~898 tok)
 
-## research/ (gitignored)
+## docs/superpowers/plans/
 
-- `log4j.prod.properties`
-- `log4j2.wsl-oink.xml`
-- `solopress-prod.log` (~8.7 MB, 74,921 lines)
-- `solopress-wsl-oink.out` (~42 KB, 386 lines)
+- `2026-05-23-minimap-heatmap.md` — Minimap heatmap implementation plan (~8500 tok)
+- `2026-05-23-slow-request-insights.md` — Slow request insights implementation plan (~30761 tok)
+
+## docs/superpowers/specs/
+
+- `2026-05-23-minimap-heatmap-design.md` — Minimap heatmap upgrade - design (~1642 tok)
+- `2026-05-23-slow-request-insights-design.md` — Slow request insights - design (~9472 tok)
+
+## research/
+
+- `log4j.prod.properties` (~331 tok)
+- `log4j2.wsl-oink.xml` (~729 tok)
+- `solopress-wsl-oink-short.out` (~200 tok)
+- `solopress-wsl-oink.out` — Declares set (~11695 tok)
+- `test - Copy.log` (~202 tok)
+
+## scripts/
+
+- `make-portable-zip.ps1` — make-portable-zip.ps1 (~805 tok)
+
+## ui/
+
+- `.gitignore` — Git ignore rules (~68 tok)
+- `index.html` — ui (~94 tok)
+- `package-lock.json` — npm lock file (~31329 tok)
+- `package.json` — Node.js package manifest (~195 tok)
+- `README.md` — Project documentation (~111 tok)
+- `tsconfig.app.json` — /*.ts", "src/**/*.tsx", "src/**/*.vue"], (~122 tok)
+- `tsconfig.json` — TypeScript configuration (~34 tok)
+- `tsconfig.node.json` (~169 tok)
+- `vite.config.ts` — Vite build configuration (~124 tok)
+- `vitest.config.ts` — Vitest test configuration (~79 tok)
+
+## ui/src/
+
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~3082 tok)
+- `main.ts` (~32 tok)
+- `style.css` — Styles: 2 rules, 158 vars (~4034 tok)
+- `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~5483 tok)
+- `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2047 tok)
+
+## ui/src/components/
+
+- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1010 tok)
+- `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1414 tok)
+- `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
+- `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
+- `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
+- `HelloWorld.vue` — Vue: setup, TS (~755 tok)
+- `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
+- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~6892 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~18892 tok)
+- `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
+- `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2413 tok)
+- `SettingsModal.vue` — Settings modal split into three tabs: General (appearance / behaviour / (~4586 tok)
+- `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1118 tok)
+- `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3295 tok)
+
+## ui/src/composables/
+
+- `useAppShortcuts.ts` — Global keyboard shortcuts wired to the document in capture phase. (~769 tok)
+- `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
+- `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1148 tok)
+- `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~1721 tok)
+- `useStartupPaths.ts` — CLI argv + single-instance forward handler. (~450 tok)
+- `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
+- `useWindowChrome.ts` — Window chrome: maximize/restore tracking + the three title-bar buttons. (~443 tok)
+
+## ui/src/highlight/
+
+- `default-rules.json` (~358 tok)
+- `engine.test.ts` — HighlightRulesFile: findCls (~1401 tok)
+- `engine.ts` — Reactive version counter. Bumped on every `setRules()` call so any Vue (~3424 tok)
+- `user-rule.test.ts` — UserHighlightRule: makeUserRule (~1304 tok)
+- `user-rule.ts` — Compose the effective engine rule set from the three layers: (~460 tok)

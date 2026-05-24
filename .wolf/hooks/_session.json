@@ -1,0 +1,217 @@
+{
+  "session_id": "session-2026-05-24-0932",
+  "started": "2026-05-24T08:32:32.906Z",
+  "files_read": {
+    "e:/Work/clog/.wolf/anatomy.md": {
+      "count": 3,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:33:39.199Z"
+    },
+    "e:/Work/clog/ui/src/components/LogViewport.vue": {
+      "count": 6,
+      "tokens": 18026,
+      "first_read": "2026-05-24T08:33:51.964Z"
+    },
+    "e:/Work/clog/.wolf/memory.md": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:35:22.702Z"
+    },
+    "e:/Work/clog/.wolf/cron-manifest.json": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:49:57.387Z"
+    },
+    "e:/Work/clog/.wolf/cron-state.json": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:49:57.915Z"
+    },
+    "e:/Work/clog/.wolf/daemon.log": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:49:58.181Z"
+    },
+    "e:/Work/clog/.wolf/hooks/post-write.js": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:50:11.754Z"
+    },
+    "e:/Work/clog/.wolf/hooks/shared.js": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:50:25.614Z"
+    },
+    "e:/Work/clog/CLAUDE.md": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:52:32.053Z"
+    },
+    "e:/Work/clog/.wolf/buglog.json": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T08:54:29.250Z"
+    },
+    "C:/Users/septi/.claude/CLAUDE.md": {
+      "count": 1,
+      "tokens": 1424,
+      "first_read": "2026-05-24T08:55:52.968Z"
+    }
+  },
+  "files_written": [
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 74,
+      "at": "2026-05-24T08:34:21.034Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 1,
+      "at": "2026-05-24T08:34:29.686Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 40,
+      "at": "2026-05-24T08:34:40.057Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 0,
+      "at": "2026-05-24T08:34:46.000Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 324,
+      "at": "2026-05-24T08:34:58.081Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 197,
+      "at": "2026-05-24T08:35:06.814Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 939,
+      "at": "2026-05-24T08:38:12.873Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 708,
+      "at": "2026-05-24T08:38:34.114Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 48,
+      "at": "2026-05-24T08:38:47.340Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 285,
+      "at": "2026-05-24T08:38:56.691Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 258,
+      "at": "2026-05-24T08:39:08.625Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 70,
+      "at": "2026-05-24T08:39:39.478Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 83,
+      "at": "2026-05-24T08:39:45.146Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 784,
+      "at": "2026-05-24T08:40:04.261Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 290,
+      "at": "2026-05-24T08:41:08.389Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 20,
+      "at": "2026-05-24T08:41:35.931Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 17,
+      "at": "2026-05-24T08:41:54.844Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 17,
+      "at": "2026-05-24T08:41:59.432Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 280,
+      "at": "2026-05-24T08:44:23.552Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 152,
+      "at": "2026-05-24T08:44:32.215Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "action": "edit",
+      "tokens": 137,
+      "at": "2026-05-24T08:44:40.225Z"
+    },
+    {
+      "file": "e:/Work/clog/CLAUDE.md",
+      "action": "edit",
+      "tokens": 340,
+      "at": "2026-05-24T08:53:00.081Z"
+    },
+    {
+      "file": "C:/Users/septi/.claude/CLAUDE.md",
+      "action": "edit",
+      "tokens": 154,
+      "at": "2026-05-24T08:56:07.724Z"
+    },
+    {
+      "file": "e:/Work/clog/CLAUDE.md",
+      "action": "edit",
+      "tokens": 49,
+      "at": "2026-05-24T08:56:16.711Z"
+    }
+  ],
+  "edit_counts": {
+    "ui/src/components/LogViewport.vue": 21,
+    "CLAUDE.md": 2,
+    "C:/Users/septi/.claude/CLAUDE.md": 1
+  },
+  "anatomy_hits": 1,
+  "anatomy_misses": 10,
+  "repeated_reads_warned": 7,
+  "cerebrum_warnings": 0,
+  "stop_count": 11
+}

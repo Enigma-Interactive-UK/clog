@@ -72,6 +72,21 @@
       ]
     },
     {
+      "date": "2026-05-24",
+      "phase": "tooling",
+      "error_message": "OpenWolf post-write.js hook silently overwrites .wolf/anatomy.md with a one-file stub on every Edit/Write to a non-.wolf/ file. The destruction looked like a cron firing but cron-state.json showed execution_log: [] -- it was the write hook.",
+      "root_cause": "shared.js::parseAnatomy regex demands the strict OpenWolf format: backtick-wrapped filename, em-dash separator ( -- ), and a trailing (~N tok) token suffix. The project's anatomy.md was hand-maintained in plain ASCII per CLAUDE.md's global rule (ASCII hyphen, no token counts), so parseAnatomy returned an empty sections Map. The hook then added only the just-edited file to the empty map and serializeAnatomy wrote a stub with `Files: 1 tracked`. A bare `catch {}` around the whole anatomy-update block hid the parse mismatch. Every non-.wolf/ Edit/Write triggered the same destruction silently.",
+      "fix": "Added an 'ASCII-only rule exception' subsection to CLAUDE.md carving .wolf/-managed files out of the global ASCII rule -- they must use the em-dash + (~N tok) format the hook's parser expects. Rebuilt anatomy.md via `openwolf scan` (88 files indexed) so the on-disk format now matches the hook's parser; subsequent edits round-trip cleanly. Future hand-edits to .wolf/anatomy.md must match the canonical format or the hook will drop them on the next write.",
+      "tags": [
+        "openwolf",
+        "hooks",
+        "anatomy",
+        "format-mismatch",
+        "silent-failure",
+        "data-loss"
+      ]
+    },
+    {
       "date": "2026-05-23",
       "phase": "P8",
       "error_message": "Dragging from inside a modal input out onto the backdrop and releasing (a normal text-selection gesture) closes the modal.",
