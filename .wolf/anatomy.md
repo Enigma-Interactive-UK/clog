@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T11:59:42.187Z
-> Files: 93 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T12:20:13.374Z
+> Files: 94 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -22,6 +22,10 @@
 ## .claude/rules/
 
 - `openwolf.md` (~429 tok)
+
+## .claude/skills/release/
+
+- `SKILL.md` — Release (~993 tok)
 
 ## crates/clog-app/
 
