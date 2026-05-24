@@ -60,7 +60,7 @@ defineExpose({ ensureLoaded })
     <h3>Guest starring</h3>
     <ul class="dep-list">
       <li><strong>Rust</strong>: the speedy engine, parser, search and tail loop.</li>
-      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <a href="https://tauri.app/" class="link-btn" target="_blank" rel="noopener noreferrer">tauri.app</a> - the native UI wrapper</li>
+      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <a href="https://tauri.app/" class="link-btn" target="_blank" rel="noopener noreferrer">tauri.app</a> - the native UI wrapper.</li>
       <li><strong>Vue 3</strong> + <strong>Vite</strong> + <strong>TypeScript</strong>: the UI framework.</li>
       <li><strong>@tanstack/vue-virtual</strong>: virtualised line viewer to make big logs go brrrr.</li>
       <li><strong>rayon</strong>: parallel record search.</li>
