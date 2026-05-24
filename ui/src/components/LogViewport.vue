@@ -223,11 +223,17 @@ function onViewportScroll() {
   }
   viewportScrollTop.value = el.scrollTop
   props.tab.scrollTop.value = el.scrollTop
+  // Follow-tail tracks the user's intent via proximity to the end: drifting
+  // away from the bottom turns it off, settling back at the bottom turns it
+  // on again. The scrollbar, the minimap drag and the jump-to-bottom button
+  // all route through here, so the rule lives in one place.
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   if (props.tab.followTail.value) {
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     if (distance > ROW_HEIGHT * 4) {
       props.tab.followTail.value = false
     }
+  } else if (distance <= ROW_HEIGHT) {
+    props.tab.followTail.value = true
   }
 }
 
@@ -1008,8 +1014,15 @@ const minimapIndicator = computed(() => {
   if (total <= 0 || total - h < 1) {
     return { top: 0, height: h, visible: false }
   }
-  const top = (viewportScrollTop.value / total) * h
   const height = Math.max(8, (h / total) * h)
+  // While following, pin the handle to the bottom. Otherwise the indicator
+  // briefly jumps upward each time the tail watcher grows `totalSize`
+  // before the deferred scroll-to-bottom catches up, which reads as a
+  // distracting jitter on a live log.
+  if (props.tab.followTail.value) {
+    return { top: h - height, height, visible: true }
+  }
+  const top = (viewportScrollTop.value / total) * h
   return { top, height, visible: true }
 })
 

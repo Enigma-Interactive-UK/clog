@@ -45,6 +45,13 @@ function formatBytes(n: number): string {
   <footer class="status-bar">
     <span class="slot left">
       <span v-if="tab?.file.value.cache_hit" class="cache-hint" title="Records loaded from the on-disk index cache">cached</span>
+      <span
+        v-if="tab?.tailing.value && tab?.followTail.value"
+        class="follow-hint"
+        title="Following the tail - new records will scroll into view automatically"
+      >
+        <span class="follow-dot" aria-hidden="true" />following
+      </span>
     </span>
     <span class="slot right">
       <template v-if="tab">
@@ -107,6 +114,25 @@ function formatBytes(n: number): string {
     text-transform: uppercase;
   }
 
+  .follow-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-button);
+    color: var(--fg-default);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .follow-dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: #f59e0b;
+    animation: follow-pulse 1.4s ease-in-out infinite;
+  }
   .font-size-hint { color: var(--fg-dim); }
 
   .theme-toggle {
@@ -140,6 +166,19 @@ function formatBytes(n: number): string {
     cursor: pointer;
 
     &:hover { background: var(--bg-button-hover); }
+  }
+}
+
+@keyframes follow-pulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.7);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0.35rem rgba(245, 158, 11, 0);
   }
 }
 </style>

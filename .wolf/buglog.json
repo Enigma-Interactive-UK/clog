@@ -4,6 +4,14 @@
     {
       "date": "2026-05-24",
       "phase": "post-v1",
+      "error_message": "Minimap indicator handle briefly jumps upward each time new records arrive while tailing, producing a distracting jitter on a live log",
+      "root_cause": "When line_count grows, the virtualizer's totalSize updates reactively before the deferred jumpToBottom RAF callback fires. minimapIndicator computes top = scrollTop / total * h with the old scrollTop against the new (larger) total, so the handle slides upward for a frame before the scroll catches up.",
+      "fix": "In minimapIndicator, when props.tab.followTail.value is true, pin the handle to the bottom (top = h - height) instead of computing it from scrollTop. Independently improved follow UX: onViewportScroll now auto-enables followTail when the user lands within ROW_HEIGHT of the end via any path (scrollbar, minimap drag, jump-to-bottom button), matching the 'at the end = following' mental model.",
+      "tags": ["ui", "vue", "minimap", "tail", "follow-tail", "jitter"]
+    },
+    {
+      "date": "2026-05-24",
+      "phase": "post-v1",
       "error_message": "Toggling the speed rail off and back on via Settings -> Slow requests -> Show speed rail leaves the rail blank after it remounts",
       "root_cause": "The rail is rendered with `v-if=\"speedRailVisible\"`, which destroys the canvas DOM node when the toggle goes off and remounts a fresh blank one when it goes back on. The grid data stays in memory but nothing re-triggers paintSpeedRail on remount -- paintSpeedRail is only called from fetchSpeedGrid / fetchSpeedThresholds / themeObserver, none of which fire on a pure visibility flip.",
       "fix": "Added a `watch(speedRailVisible, ...)` in LogViewport that, when the computed flips to true, schedules a paintSpeedRail() in the next animation frame so Vue has finished re-mounting the canvas and the template ref is populated. Mirrors the pattern used for the minimap heatmap-blend repaint watcher.",
