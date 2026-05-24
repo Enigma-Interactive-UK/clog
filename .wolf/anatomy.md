@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T10:51:07.071Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T11:00:00.443Z
 > Files: 91 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -23,10 +23,6 @@
 
 - `openwolf.md` (~313 tok)
 
-## C:/Users/septi/.claude/
-
-- `CLAUDE.md` — Approach (~642 tok)
-
 ## crates/clog-app/
 
 - `build.rs` (~12 tok)
@@ -47,9 +43,9 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~35465 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37998 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~994 tok)
-- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4461 tok)
+- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4780 tok)
 
 ## crates/clog-core/
 
@@ -63,7 +59,7 @@
 
 - `idx_cache.rs` — Persistent on-disk cache of the `(LineIndex, Vec<RecordHeader>)` produced (~2765 tok)
 - `index.rs` — In-memory line offset index. (~782 tok)
-- `lib.rs` — Clog engine. No Tauri deps. (~2827 tok)
+- `lib.rs` — Clog engine. No Tauri deps. (~2861 tok)
 - `pattern.rs` — log4j2 `PatternLayout` compiler. (~9536 tok)
 - `record.rs` — Record header type and scanner. (~2236 tok)
 - `regex_scanner.rs` — Regex escape hatch. (~1269 tok)
@@ -71,6 +67,7 @@
 - `slow_requests.rs` — Slow-request detection, aggregation, and speed-grid builder. (~9320 tok)
 - `source.rs` — Line-source abstraction. The v1 impl streams a local file via `BufReader`; (~946 tok)
 - `tail.rs` — Polling tail loop + rotation detection. (~4417 tok)
+- `thread_groups.rs` — Thread-name classification into a fixed five-group taxonomy + Other. (~2294 tok)
 
 ## crates/clog-core/tests/
 
@@ -133,18 +130,18 @@
 
 ## ui/src/components/
 
-- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1010 tok)
+- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1112 tok)
 - `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1247 tok)
 - `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
 - `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
-- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10699 tok)
+- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10753 tok)
 - `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~19828 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2413 tok)
-- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~5851 tok)
+- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~5804 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1118 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 

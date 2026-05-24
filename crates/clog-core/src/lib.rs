@@ -13,6 +13,7 @@ pub mod record;
 pub mod regex_scanner;
 pub mod search;
 pub mod slow_requests;
+pub mod thread_groups;
 pub mod source;
 pub mod tail;
 
@@ -29,6 +30,7 @@ pub use pattern::{
 pub use record::{scan_records, Level, LooseScanner, RecordHeader, RecordScanner};
 pub use regex_scanner::{RegexScanner, RegexScannerError};
 pub use search::{search_records, HitRef, LevelMask, SearchError, SearchMode, SearchOptions};
+pub use thread_groups::{classify as classify_thread, group_bit, ThreadGroup, ThreadGroupMask};
 pub use slow_requests::{
     build_speed_grid, extract_slow_requests, normalise_path, PathMode, SlowRequestEntry,
     SlowRequestOccurrence, SlowRequestSummary, SlowRequestThresholds, SpeedBucket, SpeedGrid,
