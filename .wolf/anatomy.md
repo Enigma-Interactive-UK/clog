@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T08:56:16.701Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T09:26:22.558Z
 > Files: 89 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -123,7 +123,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~3082 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~3093 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 2 rules, 158 vars (~4034 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~5483 tok)
@@ -132,19 +132,19 @@
 ## ui/src/components/
 
 - `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1010 tok)
-- `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1414 tok)
+- `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1247 tok)
 - `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
 - `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
-- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~6892 tok)
-- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~18892 tok)
+- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10239 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~18880 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2413 tok)
 - `SettingsModal.vue` — Settings modal split into three tabs: General (appearance / behaviour / (~4586 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1118 tok)
-- `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3295 tok)
+- `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 
 ## ui/src/composables/
 

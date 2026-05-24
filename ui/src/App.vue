@@ -235,21 +235,22 @@ onBeforeUnmount(() => {
     <AppHeader
       :busy="busy"
       :has-file="!!currentTab"
-      :insights-active="currentTab?.insightsOpen.value ?? false"
       @pick-file="pickFile"
       @open-settings="openSettings"
       @open-about="openAbout"
-      @toggle-insights="onToggleInsights"
       @error="(msg) => (error = msg)"
     />
 
     <TabStrip
       :tabs="tabs"
       :active-tab-id="activeTabId"
+      :insights-active="currentTab?.insightsOpen.value ?? false"
+      :insights-available="!!currentTab"
       @switch="activateTab"
       @close="closeTab"
       @new-tab="pickFile"
       @reorder="reorderTab"
+      @toggle-insights="onToggleInsights"
     />
 
     <section v-if="error" class="error" role="alert">

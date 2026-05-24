@@ -1552,7 +1552,6 @@ defineExpose({
     <InsightsDrawer
       v-if="tab.insightsOpen.value"
       :tab="tab"
-      @close="tab.insightsOpen.value = false"
       @jump="jumpToLine"
       @thresholds-changed="fetchSpeedThresholds"
     />

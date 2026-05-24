@@ -20,6 +20,8 @@ import type { Tab } from '../tab'
 defineProps<{
   tabs: Tab[]
   activeTabId: number | null
+  insightsActive?: boolean
+  insightsAvailable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +29,7 @@ const emit = defineEmits<{
   (e: 'close', localId: number): void
   (e: 'new-tab'): void
   (e: 'reorder', sourceId: number, targetId: number, placeBefore: boolean): void
+  (e: 'toggle-insights'): void
 }>()
 
 const tabStripEl = ref<HTMLElement | null>(null)
@@ -197,6 +200,22 @@ onBeforeUnmount(() => {
       aria-label="New tab"
       @click="emit('new-tab')"
     >+</button>
+    <button
+      v-if="insightsAvailable"
+      type="button"
+      class="insights-pull"
+      :class="{ 'is-active': insightsActive }"
+      :title="insightsActive ? 'Hide slow-request insights' : 'Show slow-request insights'"
+      :aria-label="insightsActive ? 'Hide insights drawer' : 'Show insights drawer'"
+      :aria-pressed="insightsActive"
+      @click="emit('toggle-insights')"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="13" width="4" height="8" fill="currentColor" />
+        <rect x="10" y="8" width="4" height="13" fill="currentColor" />
+        <rect x="17" y="3" width="4" height="18" fill="currentColor" />
+      </svg>
+    </button>
   </nav>
 </template>
 
@@ -352,6 +371,52 @@ onBeforeUnmount(() => {
   &.has-unread:not(.is-active) .tab-name {
     color: var(--fg-default);
     font-weight: 600;
+  }
+}
+
+/* Drawer pullout tab anchored to the right edge of the strip, above the
+   minimap. margin-left: auto pushes it past the new-tab button to the
+   far right; rounded only on the top-left corner so it reads as a tab
+   pulling out from the right edge. */
+.insights-pull {
+  margin-left: auto;
+  /* Counter the strip's 0.4rem right padding so the pullout sits flush
+     against the window edge, aligning with the minimap below. */
+  margin-right: -0.4rem;
+  align-self: stretch;
+  margin-top: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.7rem;
+  background: var(--bg-app);
+  color: var(--fg-muted);
+  border: 1px solid var(--border-default);
+  border-right: none;
+  border-bottom: none;
+  border-top: 2px solid transparent;
+  border-radius: var(--radius-sm) 0 0 0;
+  cursor: pointer;
+  line-height: 1;
+
+  &:hover {
+    background: var(--bg-button-hover);
+    color: var(--fg-default);
+  }
+
+  &.is-active {
+    background: var(--bg-viewport);
+    color: var(--fg-default);
+    border-color: var(--border-default);
+    border-right: none;
+    border-top-color: var(--accent);
+    box-shadow: 0 1px 0 0 var(--bg-viewport);
+    z-index: 1;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
 }
 

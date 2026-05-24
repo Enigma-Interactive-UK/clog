@@ -9,12 +9,11 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useTemplat
 import { invoke } from '@tauri-apps/api/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { Tab } from '../tab'
-import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds } from '../types'
+import type { EffectiveThresholds, SlowRequestEntry, SlowRequestSummary, SlowRequestThresholds, SpeedGrid } from '../types'
 
 const props = defineProps<{ tab: Tab }>()
 
 const emit = defineEmits<{
-  (e: 'close'): void
   (e: 'jump', line: number): void
   (e: 'thresholds-changed'): void
 }>()
@@ -77,6 +76,259 @@ async function refresh() {
   } finally {
     loading.value = false
   }
+  void fetchSpeedGrid()
+}
+
+// --- Horizontal speed chart ------------------------------------------------
+//
+// Per-bucket average request time across the file's line range, painted as
+// a bar chart in the drawer header area. Clicking a bar jumps the log
+// viewport to the line at the centre of that bucket. Backed by the same
+// build_speed_grid IPC the vertical speed rail uses, so paint logic and
+// auto/threshold colouring stay consistent.
+
+const chartEl = useTemplateRef<HTMLCanvasElement>('chartEl')
+const speedGrid = ref<SpeedGrid | null>(null)
+const CHART_HEIGHT = 67
+// Gutters reserved for axis labels (CSS px). LEFT_PAD fits a ms label
+// like "12s" or "999ms"; BOTTOM_PAD fits a single line of x-axis labels
+// with breathing room from the host's border.
+const LEFT_PAD = 36
+const RIGHT_PAD = 8
+const TOP_PAD = 12
+const BOTTOM_PAD = 20
+const chartTooltip = ref<{ visible: boolean; x: number; text: string }>({
+  visible: false,
+  x: 0,
+  text: '',
+})
+const chartCrosshair = ref<{ visible: boolean; x: number; y: number }>({
+  visible: false,
+  x: 0,
+  y: 0,
+})
+
+async function fetchSpeedGrid() {
+  const canvas = chartEl.value
+  if (!canvas) return
+  const w = canvas.clientWidth
+  if (w <= 0) return
+  // One bucket per 4 CSS px across the plotting area (excluding axis
+  // gutters) gives a readable bar chart without sending an absurd
+  // payload for narrow drawers. Clamped to >=1 for safety.
+  const plotW = Math.max(1, w - LEFT_PAD - RIGHT_PAD)
+  const bucketCount = Math.max(1, Math.floor(plotW / 4))
+  try {
+    const payload = await invoke<SpeedGrid>('get_slow_request_speeds', {
+      fileId: props.tab.file.value.file_id,
+      bucketCount,
+    })
+    speedGrid.value = payload
+    paintChart()
+  } catch {
+    // non-fatal; chart simply stays blank
+  }
+}
+
+function readCssColour(varName: string): string {
+  const styles = globalThis.getComputedStyle?.(document.documentElement)
+  const v = styles?.getPropertyValue(varName).trim()
+  return v && v.length > 0 ? v : '#15803d'
+}
+
+function resolveToRgb(colour: string): [number, number, number] {
+  const probe = document.createElement('span')
+  probe.style.color = colour
+  probe.style.display = 'none'
+  document.body.appendChild(probe)
+  const computed = globalThis.getComputedStyle(probe).color
+  probe.remove()
+  const m = computed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+  if (!m) return [0, 0, 0]
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+function lerpColour(a: string, b: string, t: number): string {
+  const ca = resolveToRgb(a)
+  const cb = resolveToRgb(b)
+  const r = Math.round(ca[0] + (cb[0] - ca[0]) * t)
+  const g = Math.round(ca[1] + (cb[1] - ca[1]) * t)
+  const bb = Math.round(ca[2] + (cb[2] - ca[2]) * t)
+  return `rgb(${r}, ${g}, ${bb})`
+}
+
+function colourFor(avgMs: number, maxMs: number, fast: number, slow: number, auto: boolean): string {
+  const fastC = readCssColour('--speed-fast')
+  const midC = readCssColour('--speed-mid')
+  const slowC = readCssColour('--speed-slow')
+  if (auto) {
+    const score = (avgMs + maxMs) / 2
+    if (slow <= 0 || score >= slow) return slowC
+    return lerpColour(midC, slowC, Math.max(0, score) / slow)
+  }
+  if (avgMs <= fast || slow <= fast) return fastC
+  if (avgMs >= slow) return slowC
+  const t = (avgMs - fast) / (slow - fast)
+  if (t < 0.5) return lerpColour(fastC, midC, t * 2)
+  return lerpColour(midC, slowC, (t - 0.5) * 2)
+}
+
+function niceCeil(value: number): number {
+  if (value <= 0) return 1
+  const exp = Math.pow(10, Math.floor(Math.log10(value)))
+  const norm = value / exp
+  let nice: number
+  if (norm <= 1) nice = 1
+  else if (norm <= 2) nice = 2
+  else if (norm <= 5) nice = 5
+  else nice = 10
+  return nice * exp
+}
+
+function formatLine(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return String(n)
+}
+
+function paintChart() {
+  const canvas = chartEl.value
+  const grid = speedGrid.value
+  if (!canvas || !grid) return
+  const w = canvas.clientWidth
+  const h = CHART_HEIGHT
+  if (w <= 0) return
+  const dpr = globalThis.devicePixelRatio || 1
+  canvas.width = Math.floor(w * dpr)
+  canvas.height = Math.floor(h * dpr)
+  canvas.style.height = `${h}px`
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+
+  const plotX = LEFT_PAD
+  const plotY = TOP_PAD
+  const plotW = Math.max(1, w - LEFT_PAD - RIGHT_PAD)
+  const plotH = Math.max(1, h - TOP_PAD - BOTTOM_PAD)
+
+  const axisColour = readCssColour('--border-default')
+  const labelColour = readCssColour('--fg-muted')
+  ctx.font = '9px var(--font-sans, sans-serif)'
+  ctx.textBaseline = 'middle'
+
+  // Axes.
+  ctx.fillStyle = axisColour
+  ctx.fillRect(plotX, plotY + plotH, plotW, 1)          // x-axis
+  ctx.fillRect(plotX - 1, plotY, 1, plotH + 1)          // y-axis
+
+  const bc = grid.buckets.length
+  const maxAvgRaw = grid.max_avg_ms
+  const yMax = niceCeil(Math.max(1, maxAvgRaw))
+  const eff = props.tab.slowRequestThresholds.value?.effective
+  const fast = eff ? eff.fast_ms : 0
+  const slow = eff ? Math.max(eff.slow_ms, fast + 1) : 6000
+  const auto = (props.tab.slowRequestThresholds.value?.source ?? 'auto') === 'auto'
+
+  // Y-axis ticks at 0, mid, max.
+  ctx.fillStyle = labelColour
+  ctx.textAlign = 'right'
+  const yTicks: number[] = [0, yMax / 2, yMax]
+  for (const t of yTicks) {
+    const ty = plotY + plotH - (t / yMax) * plotH
+    ctx.fillStyle = axisColour
+    ctx.fillRect(plotX - 3, Math.round(ty), 3, 1)
+    ctx.fillStyle = labelColour
+    ctx.fillText(formatMs(Math.round(t)), plotX - 5, ty)
+  }
+
+  // X-axis ticks: start, middle, end of file (line count).
+  const lc = props.tab.file.value.line_count
+  if (lc > 0) {
+    const xTicks: Array<{ frac: number; align: CanvasTextAlign; line: number }> = [
+      { frac: 0, align: 'left', line: 1 },
+      { frac: 0.5, align: 'center', line: Math.max(1, Math.round(lc / 2)) },
+      { frac: 1, align: 'right', line: lc },
+    ]
+    for (const t of xTicks) {
+      const tx = plotX + t.frac * plotW
+      ctx.fillStyle = axisColour
+      ctx.fillRect(Math.round(tx), plotY + plotH + 1, 1, 3)
+      ctx.fillStyle = labelColour
+      ctx.textAlign = t.align
+      ctx.fillText(formatLine(t.line), tx, plotY + plotH + 9)
+    }
+  }
+
+  // Bars.
+  if (bc > 0) {
+    for (let i = 0; i < bc; i++) {
+      const b = grid.buckets[i]
+      if (b.count === 0) continue
+      const heightFrac = Math.min(1, b.avg_ms / yMax)
+      const barH = Math.max(1, Math.round(heightFrac * plotH))
+      const x = plotX + Math.floor((i * plotW) / bc)
+      const xNext = plotX + Math.floor(((i + 1) * plotW) / bc)
+      const rectW = Math.max(1, xNext - x)
+      ctx.fillStyle = colourFor(b.avg_ms, b.max_ms, fast, slow, auto)
+      ctx.fillRect(x, plotY + plotH - barH, rectW, barH)
+    }
+  }
+}
+
+function bucketAtX(clientX: number): { index: number; line: number } | null {
+  const canvas = chartEl.value
+  const grid = speedGrid.value
+  if (!canvas || !grid || grid.buckets.length === 0) return null
+  const rect = canvas.getBoundingClientRect()
+  const plotW = Math.max(1, rect.width - LEFT_PAD - RIGHT_PAD)
+  const x = clientX - rect.left - LEFT_PAD
+  if (x < 0 || x > plotW) return null
+  const bc = grid.buckets.length
+  const idx = Math.max(0, Math.min(bc - 1, Math.floor((x / plotW) * bc)))
+  const lc = props.tab.file.value.line_count
+  const line = lc > 0 ? Math.floor(((idx + 0.5) * lc) / bc) : 0
+  return { index: idx, line }
+}
+
+function onChartMove(ev: PointerEvent) {
+  const hit = bucketAtX(ev.clientX)
+  const grid = speedGrid.value
+  const canvas = chartEl.value
+  if (!hit || !grid || !canvas) {
+    chartTooltip.value = { visible: false, x: 0, text: '' }
+    chartCrosshair.value = { visible: false, x: 0, y: 0 }
+    return
+  }
+  const rect = canvas.getBoundingClientRect()
+  const localX = ev.clientX - rect.left
+  const localY = ev.clientY - rect.top
+  // Clamp crosshair to the plot region so the lines never paint over the
+  // axis gutters.
+  const plotLeft = LEFT_PAD
+  const plotRight = rect.width - RIGHT_PAD
+  const plotTop = TOP_PAD
+  const plotBottom = rect.height - BOTTOM_PAD
+  const cx = Math.max(plotLeft, Math.min(plotRight, localX))
+  const cy = Math.max(plotTop, Math.min(plotBottom, localY))
+  chartCrosshair.value = { visible: true, x: cx, y: cy }
+
+  const b = grid.buckets[hit.index]
+  const text = b.count === 0
+    ? `line ${hit.line + 1} - no slow requests in this slice`
+    : `line ${hit.line + 1} - avg ${formatMs(b.avg_ms)} (max ${formatMs(b.max_ms)}, ${b.count} hits)`
+  chartTooltip.value = { visible: true, x: localX, text }
+}
+
+function onChartLeave() {
+  chartTooltip.value = { visible: false, x: 0, text: '' }
+  chartCrosshair.value = { visible: false, x: 0, y: 0 }
+}
+
+function onChartClick(ev: PointerEvent) {
+  const hit = bucketAtX(ev.clientX)
+  if (!hit) return
+  emit('jump', hit.line)
 }
 
 const fastInput = ref('')
@@ -149,6 +401,23 @@ if (settingsVersion) {
 }
 
 watch(() => props.tab.slowRequestMode.value, refresh)
+
+// Repaint the chart when the effective thresholds change (auto/global/
+// per-file) so the colour bands update without a full re-fetch.
+watch(() => props.tab.slowRequestThresholds.value, () => {
+  paintChart()
+}, { deep: true })
+
+// Drawer resize changes bucket count; refetch with a small debounce so
+// dragging doesn't fire an IPC every frame.
+let widthRefetchTimer: ReturnType<typeof setTimeout> | null = null
+watch(drawerWidth, () => {
+  if (widthRefetchTimer !== null) clearTimeout(widthRefetchTimer)
+  widthRefetchTimer = setTimeout(() => {
+    widthRefetchTimer = null
+    void fetchSpeedGrid()
+  }, 150)
+})
 
 // Tail-driven refreshes are debounced. A tailing file emits a line_count
 // change roughly every 250 ms; refreshing the drawer on each tick means
@@ -289,6 +558,25 @@ function formatMs(ms: number): string {
   return `${(ms / 60_000).toFixed(1)}m`
 }
 
+// Compact label for the currently selected sort stat, shown next to the
+// hit count on each row. Returns null when the sort field is itself the
+// hit count (no point repeating) or when sorting by path (no stat).
+function sortStatLabel(e: SlowRequestEntry): string | null {
+  switch (props.tab.slowRequestSort.value.field) {
+    case 'total': return `total ${formatMs(e.total_ms)}`
+    case 'avg':   return `avg ${formatMs(e.avg_ms)}`
+    case 'p95':   return `p95 ${formatMs(e.p95_ms)}`
+    case 'max':   return `max ${formatMs(e.max_ms)}`
+    case 'count':
+    case 'path':
+    default:      return null
+  }
+}
+
+function entryStatTitle(e: SlowRequestEntry): string {
+  return `${e.count} hits . total ${formatMs(e.total_ms)} . avg ${formatMs(e.avg_ms)} . p95 ${formatMs(e.p95_ms)} . max ${formatMs(e.max_ms)}`
+}
+
 function toggleExpanded(path: string) {
   const s = expanded.value
   if (s.has(path)) s.delete(path)
@@ -324,19 +612,32 @@ function jumpTo(line: number) {
     />
     <header class="drawer-head">
       <span class="title">Slow requests</span>
-      <button
-        type="button"
-        class="btn-dismiss drawer-close"
-        title="Close insights drawer"
-        aria-label="Close insights drawer"
-        @click="emit('close')"
-      >
-        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-        </svg>
-      </button>
     </header>
     <div class="drawer-totals">{{ totals }}</div>
+    <div class="chart-host">
+      <canvas
+        ref="chartEl"
+        class="chart-canvas"
+        @pointermove="onChartMove"
+        @pointerleave="onChartLeave"
+        @click="onChartClick"
+      />
+      <div
+        v-show="chartCrosshair.visible"
+        class="chart-crosshair-v"
+        :style="{ left: chartCrosshair.x + 'px' }"
+      />
+      <div
+        v-show="chartCrosshair.visible"
+        class="chart-crosshair-h"
+        :style="{ top: chartCrosshair.y + 'px' }"
+      />
+      <div
+        v-if="chartTooltip.visible"
+        class="chart-tooltip"
+        :style="{ left: chartTooltip.x + 'px' }"
+      >{{ chartTooltip.text }}</div>
+    </div>
     <div class="threshold-row">
       <span
         class="threshold-chip"
@@ -354,14 +655,33 @@ function jumpTo(line: number) {
     <details class="threshold-editor">
       <summary>Override for this file</summary>
       <div class="threshold-fields">
-        <label>Fast (ms) <input v-model="fastInput" type="number" min="0" max="600000" /></label>
-        <label>Slow (ms) <input v-model="slowInput" type="number" min="0" max="600000" /></label>
+        <label class="field">
+          <span class="field-label">Fast (ms)</span>
+          <input v-model="fastInput" type="number" min="0" max="600000" step="100" />
+        </label>
+        <label class="field">
+          <span class="field-label">Slow (ms)</span>
+          <input v-model="slowInput" type="number" min="0" max="600000" step="100" />
+        </label>
+        <button
+          type="button"
+          class="save-btn"
+          :disabled="!!validationError"
+          @click="savePerFile"
+        >Save</button>
+        <button
+          type="button"
+          class="btn-dismiss clear-override"
+          title="Clear override"
+          aria-label="Clear override"
+          @click="clearPerFile"
+        >
+          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          </svg>
+        </button>
       </div>
       <div v-if="validationError" class="threshold-error">{{ validationError }}</div>
-      <div class="threshold-actions">
-        <button type="button" :disabled="!!validationError" @click="savePerFile">Save</button>
-        <button type="button" class="muted" @click="clearPerFile">Clear override</button>
-      </div>
     </details>
     <div class="drawer-toolbar">
       <fieldset class="mode-toggle">
@@ -447,10 +767,8 @@ function jumpTo(line: number) {
               <span class="entry-path" :title="filteredEntries[vRow.index].path" @click.stop="jumpTo(filteredEntries[vRow.index].longest_line)">
                 {{ filteredEntries[vRow.index].path }}
               </span>
-              <span class="entry-stats">
-                {{ filteredEntries[vRow.index].count }} hits . total {{ formatMs(filteredEntries[vRow.index].total_ms) }} .
-                avg {{ formatMs(filteredEntries[vRow.index].avg_ms) }} . p95 {{ formatMs(filteredEntries[vRow.index].p95_ms) }} .
-                max {{ formatMs(filteredEntries[vRow.index].max_ms) }}
+              <span class="entry-stats" :title="entryStatTitle(filteredEntries[vRow.index])">
+                {{ filteredEntries[vRow.index].count }} hits<template v-if="sortStatLabel(filteredEntries[vRow.index])"> . {{ sortStatLabel(filteredEntries[vRow.index]) }}</template>
               </span>
               <span class="entry-expand" :class="{ open: expanded.has(filteredEntries[vRow.index].path) }" aria-hidden="true">
                 <svg viewBox="0 0 16 16" focusable="false">
@@ -760,6 +1078,61 @@ function jumpTo(line: number) {
   }
 }
 
+.chart-host {
+  position: relative;
+  flex: 0 0 auto;
+  height: 67px;
+  margin: 0 0.6rem 0.4rem;
+  background: var(--bg-viewport);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chart-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.chart-crosshair-v,
+.chart-crosshair-h {
+  position: absolute;
+  pointer-events: none;
+  background: var(--fg-default);
+  opacity: 0.25;
+  z-index: 2;
+}
+
+.chart-crosshair-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.chart-crosshair-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.chart-tooltip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--fg-default);
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
 .threshold-row {
   display: flex;
   align-items: center;
@@ -792,26 +1165,31 @@ function jumpTo(line: number) {
 
 .threshold-fields {
   display: flex;
-  gap: 0.6rem;
-  margin: 0.4rem 0;
+  align-items: flex-end;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.2rem;
+
+  & .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  & .field-label {
+    font-size: 0.7rem;
+    color: var(--fg-muted);
+  }
 
   & input {
-    width: 6rem;
+    width: 5rem;
     background: var(--bg-viewport);
     border: 1px solid var(--border-button);
     color: var(--fg-default);
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
   }
-}
 
-.threshold-error { color: var(--level-error); margin: 0.2rem 0; }
-
-.threshold-actions {
-  display: flex;
-  gap: 0.4rem;
-
-  & button {
+  & .save-btn {
     background: transparent;
     border: 1px solid var(--border-button);
     color: var(--fg-default);
@@ -819,8 +1197,15 @@ function jumpTo(line: number) {
     border-radius: 3px;
     cursor: pointer;
 
-    &.muted { color: var(--fg-muted); }
     &:disabled { opacity: 0.4; cursor: not-allowed; }
   }
+
+  & .clear-override {
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+  }
 }
+
+.threshold-error { color: var(--level-error); margin: 0.2rem 0; font-size: 0.75rem; }
 </style>

@@ -12,14 +12,12 @@ import { useWindowChrome } from '../composables/useWindowChrome'
 defineProps<{
   busy: boolean
   hasFile: boolean
-  insightsActive?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'pick-file'): void
   (e: 'open-settings'): void
   (e: 'open-about'): void
-  (e: 'toggle-insights'): void
   (e: 'error', msg: string): void
 }>()
 
@@ -42,20 +40,6 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
     </h1>
     <button :disabled="busy" @click="emit('pick-file')">
       {{ busy ? 'Reading...' : 'Open file...' }}
-    </button>
-    <button
-      type="button"
-      class="settings-btn"
-      :class="{ 'is-active': insightsActive }"
-      title="Toggle slow-request insights"
-      aria-label="Toggle insights drawer"
-      @click="emit('toggle-insights')"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3" y="13" width="4" height="8" fill="currentColor" />
-        <rect x="10" y="8" width="4" height="13" fill="currentColor" />
-        <rect x="17" y="3" width="4" height="18" fill="currentColor" />
-      </svg>
     </button>
     <button
       type="button"
