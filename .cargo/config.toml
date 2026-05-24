@@ -1,2 +1,3 @@
 [alias]
 dev = "tauri dev --config crates/clog-app/tauri.conf.json"
+dist = "tauri build --config crates/clog-app/tauri.conf.json"

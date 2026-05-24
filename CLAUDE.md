@@ -59,9 +59,12 @@ cargo test --workspace
 # UI unit tests (vitest)
 npm --prefix ui run test
 
-# Release artefacts (NSIS installer + portable zip)
-cargo tauri build --config crates/clog-app/tauri.conf.json
-.\scripts\make-portable-zip.ps1
+# Release artefacts (NSIS installer + portable zip) -- one-shot
+.\scripts\release.ps1
+
+# Or run the steps individually:
+cargo dist                           # alias for: cargo tauri build --config crates/clog-app/tauri.conf.json
+.\scripts\make-portable-zip.ps1      # accepts -SkipBuild to reuse an existing build
 ```
 
 **Tauri config gotcha:** `beforeDevCommand` runs with cwd set to the frontend root (`ui/`), not the workspace root and not the tauri.conf.json dir. Keep it as `npm run dev` / `npm run build`. Prefixing with `--prefix ui` double-paths to `ui/ui/`.

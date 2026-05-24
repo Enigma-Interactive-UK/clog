@@ -1,19 +1,19 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T11:54:56.802Z
-> Files: 92 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T11:59:42.187Z
+> Files: 93 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
 - `.gitignore` — Git ignore rules (~98 tok)
 - `Cargo.toml` — Rust package manifest (~111 tok)
-- `CLAUDE.md` — CLAUDE.md (~1269 tok)
+- `CLAUDE.md` — CLAUDE.md (~1313 tok)
 - `clog.code-workspace` (~16 tok)
 - `README.md` — Project documentation (~783 tok)
 
 ## .cargo/
 
-- `config.toml` (~20 tok)
+- `config.toml` (~35 tok)
 
 ## .claude/
 
@@ -106,6 +106,7 @@
 ## scripts/
 
 - `make-portable-zip.ps1` — make-portable-zip.ps1 (~805 tok)
+- `release.ps1` — release.ps1 (~288 tok)
 
 ## ui/
 
