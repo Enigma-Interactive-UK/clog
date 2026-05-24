@@ -640,7 +640,7 @@ function buildFilteredMinimap(
 // Physical line indices the user has bookmarked, projected to the
 // visible (possibly filter-mode) virtual index. Filter-mode bookmarks
 // whose line is hidden by the level mask or hit set are excluded from
-// the minimap but stay persisted on the tab.
+// the marker rail but stay persisted on the tab.
 interface BookmarkVisual {
   lineIdx: number
   virtualIdx: number
@@ -736,6 +736,139 @@ const bookmarkVisuals = computed<BookmarkVisual[]>(() => {
   return out
 })
 
+// Combined rail items (auto markers + user bookmarks), sorted by virtual
+// index. Clustering merges items whose pixel positions overlap so a dense
+// region of markers does not produce stacked unclickable icons.
+interface RailItem {
+  kind: string // 'bookmark' | marker kind (e.g. 'restart')
+  lineIdx: number
+  virtualIdx: number
+  label: string
+}
+
+type RailCluster =
+  | { type: 'single'; item: RailItem; topPx: number }
+  | { type: 'cluster'; items: RailItem[]; topPx: number; dominantKind: string; extra: number }
+
+const CLUSTER_GAP_PX = 10
+
+const railClusters = computed<RailCluster[]>(() => {
+  const eff = effectiveCount.value
+  const h = viewportHeightPx.value
+  if (eff <= 0 || h <= 0) return []
+  const items: RailItem[] = []
+  for (const m of markerVisuals.value) {
+    items.push({ kind: m.kind, lineIdx: m.lineIdx, virtualIdx: m.virtualIdx, label: markerLabel(m.kind) })
+  }
+  for (const bm of bookmarkVisuals.value) {
+    items.push({ kind: 'bookmark', lineIdx: bm.lineIdx, virtualIdx: bm.virtualIdx, label: 'Bookmark' })
+  }
+  items.sort((a, b) => a.virtualIdx - b.virtualIdx)
+  const out: RailCluster[] = []
+  let i = 0
+  while (i < items.length) {
+    const first = items[i]
+    const firstY = (first.virtualIdx / eff) * h
+    let j = i + 1
+    let lastY = firstY
+    while (j < items.length) {
+      const y = (items[j].virtualIdx / eff) * h
+      if (y - lastY > CLUSTER_GAP_PX) break
+      lastY = y
+      j++
+    }
+    if (j - i === 1) {
+      out.push({ type: 'single', item: first, topPx: firstY })
+    } else {
+      const group = items.slice(i, j)
+      // Tally by kind preserving first-encounter order so ties resolve to
+      // the kind that appeared first in the group.
+      const order: string[] = []
+      const counts = new Map<string, number>()
+      for (const it of group) {
+        if (!counts.has(it.kind)) {
+          counts.set(it.kind, 0)
+          order.push(it.kind)
+        }
+        counts.set(it.kind, (counts.get(it.kind) ?? 0) + 1)
+      }
+      let dominantKind = order[0]
+      let dominantCount = counts.get(dominantKind) ?? 0
+      for (const k of order) {
+        const c = counts.get(k) ?? 0
+        if (c > dominantCount) {
+          dominantKind = k
+          dominantCount = c
+        }
+      }
+      out.push({
+        type: 'cluster',
+        items: group,
+        topPx: (firstY + lastY) / 2,
+        dominantKind,
+        extra: group.length - 1,
+      })
+    }
+    i = j
+  }
+  return out
+})
+
+interface ClusterPopover {
+  visible: boolean
+  top: number
+  left: number
+  items: RailItem[]
+}
+const clusterPopover = ref<ClusterPopover>({ visible: false, top: 0, left: 0, items: [] })
+
+function openClusterPopover(items: RailItem[], ev: MouseEvent) {
+  const target = ev.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  clusterPopover.value = {
+    visible: true,
+    top: rect.top + rect.height / 2,
+    left: rect.left,
+    items: items.slice(),
+  }
+}
+
+function closeClusterPopover() {
+  if (clusterPopover.value.visible) {
+    clusterPopover.value = { visible: false, top: 0, left: 0, items: [] }
+  }
+}
+
+function onClusterItemClick(item: RailItem) {
+  jumpToLine(item.lineIdx)
+  closeClusterPopover()
+}
+
+function onClusterItemContextMenu(item: RailItem, ev: MouseEvent) {
+  if (item.kind !== 'bookmark') return
+  ev.preventDefault()
+  props.tab.removeBookmark(item.lineIdx)
+  const remaining = clusterPopover.value.items.filter(
+    (x) => !(x.kind === 'bookmark' && x.lineIdx === item.lineIdx),
+  )
+  if (remaining.length === 0) {
+    closeClusterPopover()
+  } else {
+    clusterPopover.value = { ...clusterPopover.value, items: remaining }
+  }
+}
+
+function onDocumentPointerDown(ev: PointerEvent) {
+  if (!clusterPopover.value.visible) return
+  const t = ev.target as HTMLElement | null
+  if (t && t.closest('.cluster-popover, .marker-cluster')) return
+  closeClusterPopover()
+}
+
+function onDocumentKey(ev: KeyboardEvent) {
+  if (ev.key === 'Escape') closeClusterPopover()
+}
+
 function hotColour(level: string, heat: number, max: number): string | null {
   if (heat <= 0 || max <= 0) return null
   const template = LEVEL_HOT[level]
@@ -802,31 +935,6 @@ function paintMinimap() {
     }
   }
 
-  paintBookmarkMarkers(ctx, h)
-}
-
-function currentAccent(): string {
-  const styles = globalThis.getComputedStyle?.(document.documentElement)
-  const fromVar = styles?.getPropertyValue('--accent').trim()
-  return fromVar && fromVar.length > 0 ? fromVar : '#de6826'
-}
-
-function paintBookmarkMarkers(ctx: CanvasRenderingContext2D, h: number) {
-  const visuals = bookmarkVisuals.value
-  const eff = effectiveCount.value
-  if (visuals.length === 0 || eff === 0 || h === 0) return
-  const accent = currentAccent()
-  ctx.fillStyle = accent
-  // Dashed stripe: 3px dash, 2px gap. Pure fillRect rather than setLineDash
-  // so the dashes align to whole device pixels regardless of dpr scaling.
-  const DASH = 3
-  const GAP = 2
-  for (const bm of visuals) {
-    const y = Math.min(h - 1, Math.floor((bm.virtualIdx * h) / eff))
-    for (let x = 0; x < MINIMAP_WIDTH; x += DASH + GAP) {
-      ctx.fillRect(x, y, Math.min(DASH, MINIMAP_WIDTH - x), 2)
-    }
-  }
 }
 
 const minimapIndicator = computed(() => {
@@ -974,33 +1082,9 @@ function onMinimapPointerLeave() {
   }
 }
 let minimapDragging = false
-function bookmarkVirtualIdxAtY(clientY: number): number | null {
-  const visuals = bookmarkVisuals.value
-  if (visuals.length === 0) return null
-  const canvas = minimapEl.value
-  if (!canvas) return null
-  const rect = canvas.getBoundingClientRect()
-  const eff = effectiveCount.value
-  if (rect.height <= 0 || eff === 0) return null
-  // Match the stripe Y projection used in paintBookmarkMarkers.
-  const HIT_TOLERANCE_PX = 4
-  let best: { v: number; dist: number } | null = null
-  for (const bm of visuals) {
-    const y = rect.top + Math.min(rect.height - 1, Math.floor((bm.virtualIdx * rect.height) / eff))
-    const dist = Math.abs(clientY - y)
-    if (dist > HIT_TOLERANCE_PX) continue
-    if (!best || dist < best.dist) best = { v: bm.virtualIdx, dist }
-  }
-  return best ? best.v : null
-}
 
 function onMinimapPointerDown(ev: PointerEvent) {
   props.tab.followTail.value = false
-  const bookmarkV = bookmarkVirtualIdxAtY(ev.clientY)
-  if (bookmarkV !== null) {
-    virtualizer.value.scrollToIndex(bookmarkV, { align: 'center' })
-    return
-  }
   minimapDragging = true
   ;(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId)
   scrollToMinimapY(ev.clientY)
@@ -1019,12 +1103,6 @@ function onMinimapPointerUp(ev: PointerEvent) {
 watch(filteredSourceRecords, () => {
   scheduleMinimapFetch(true)
 })
-
-// Repaint when bookmarks change so the accent stripes refresh.
-watch(
-  () => props.tab.bookmarks.value,
-  () => paintMinimap(),
-)
 
 watch(
   () => props.tab.pages.value,
@@ -1107,6 +1185,9 @@ onMounted(() => {
     attributes: true,
     attributeFilter: ['data-theme'],
   })
+
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  document.addEventListener('keydown', onDocumentKey)
 })
 
 onBeforeUnmount(() => {
@@ -1121,6 +1202,9 @@ onBeforeUnmount(() => {
   // Save current scroll into the tab so a return tab-switch restores it.
   const el = scrollEl.value
   if (el) props.tab.scrollTop.value = el.scrollTop
+
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  document.removeEventListener('keydown', onDocumentKey)
 })
 
 // --- Rendering ---
@@ -1347,19 +1431,79 @@ defineExpose({
       </button>
     </div>
     <div class="marker-rail" aria-hidden="false">
+      <template v-for="(c, ci) in railClusters" :key="ci">
+        <button
+          v-if="c.type === 'single' && c.item.kind === 'bookmark'"
+          type="button"
+          class="bookmark-pin"
+          :style="{ top: `${c.topPx}px` }"
+          :title="`Bookmark - line ${c.item.lineIdx + 1}`"
+          @click="jumpToLine(c.item.lineIdx)"
+          @contextmenu.prevent="tab.removeBookmark(c.item.lineIdx)"
+        >
+          <svg viewBox="0 0 8 10" aria-hidden="true" focusable="false">
+            <path d="M0 0 H8 V10 L4 7 L0 10 Z" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          v-else-if="c.type === 'single'"
+          type="button"
+          class="marker-triangle"
+          :class="`marker-${c.item.kind}`"
+          :style="{ top: `${c.topPx}px`, borderLeftColor: markerColourVar(c.item.kind) }"
+          :title="`${c.item.label} - line ${c.item.lineIdx + 1}`"
+          @click="jumpToLine(c.item.lineIdx)"
+        />
+        <button
+          v-else
+          type="button"
+          class="marker-cluster"
+          :style="{ top: `${c.topPx}px` }"
+          :title="`${c.items.length} markers - click to expand`"
+          @click="openClusterPopover(c.items, $event)"
+        >
+          <span
+            class="cluster-dominant"
+            :style="{ color: c.dominantKind === 'bookmark' ? 'var(--accent)' : markerColourVar(c.dominantKind) }"
+          >
+            <svg v-if="c.dominantKind === 'bookmark'" viewBox="0 0 8 10" aria-hidden="true" focusable="false">
+              <path d="M0 0 H8 V10 L4 7 L0 10 Z" fill="currentColor" />
+            </svg>
+            <svg v-else viewBox="0 0 8 10" aria-hidden="true" focusable="false">
+              <path d="M0 0 L8 5 L0 10 Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="cluster-plus">+{{ c.extra }}</span>
+        </button>
+      </template>
+    </div>
+    <div
+      v-if="clusterPopover.visible"
+      class="cluster-popover"
+      :style="{ top: `${clusterPopover.top}px`, left: `${clusterPopover.left}px` }"
+    >
       <button
-        v-for="m in markerVisuals"
-        :key="`${m.kind}-${m.lineIdx}`"
+        v-for="(it, ii) in clusterPopover.items"
+        :key="`${it.kind}-${it.lineIdx}-${ii}`"
         type="button"
-        class="marker-triangle"
-        :class="`marker-${m.kind}`"
-        :style="{
-          top: `${effectiveCount > 0 ? (m.virtualIdx / effectiveCount) * viewportHeightPx : 0}px`,
-          borderLeftColor: markerColourVar(m.kind),
-        }"
-        :title="`${markerLabel(m.kind)} - line ${m.lineIdx + 1}`"
-        @click="jumpToLine(m.lineIdx)"
-      />
+        class="cluster-item"
+        @click="onClusterItemClick(it)"
+        @contextmenu="onClusterItemContextMenu(it, $event)"
+      >
+        <span
+          class="cluster-glyph"
+          :style="{ color: it.kind === 'bookmark' ? 'var(--accent)' : markerColourVar(it.kind) }"
+        >
+          <svg v-if="it.kind === 'bookmark'" viewBox="0 0 8 10" aria-hidden="true" focusable="false">
+            <path d="M0 0 H8 V10 L4 7 L0 10 Z" fill="currentColor" />
+          </svg>
+          <svg v-else viewBox="0 0 8 10" aria-hidden="true" focusable="false">
+            <path d="M0 0 L8 5 L0 10 Z" fill="currentColor" />
+          </svg>
+        </span>
+        <span class="cluster-label">{{ it.label }}</span>
+        <span class="cluster-line">line {{ it.lineIdx + 1 }}</span>
+      </button>
     </div>
     <div
       class="minimap"
@@ -1467,14 +1611,14 @@ defineExpose({
 
 .marker-rail {
   flex: 0 0 auto;
-  width: 10px;
+  width: 20px;
   position: relative;
   background: var(--bg-viewport);
   pointer-events: auto;
 
   .marker-triangle {
     position: absolute;
-    left: 0;
+    right: 0;
     /* Right-pointing triangle: a zero-width box with a coloured left
        border and transparent top/bottom borders. The tip sits on the
        right edge so it aims at the minimap canvas. */
@@ -1494,12 +1638,148 @@ defineExpose({
     transition: opacity 120ms ease-out, filter 120ms ease-out;
   }
 
+  /* Expanded transparent hit area - the visible glyph is tiny, so the
+     pseudo-element gives the pointer something fatter to land on. */
+  .marker-triangle::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    bottom: -8px;
+    right: -6px;
+    left: -14px;
+  }
+
   .marker-triangle:hover,
   .marker-triangle:focus-visible {
     opacity: 1;
     filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
     outline: none;
   }
+
+  .bookmark-pin {
+    position: absolute;
+    right: 1px;
+    width: 8px;
+    height: 10px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: var(--accent);
+    transform: translateY(-5px);
+    cursor: pointer;
+    opacity: 0.9;
+    transition: opacity 120ms ease-out, filter 120ms ease-out;
+
+    & svg { display: block; width: 8px; height: 10px; position: relative; }
+  }
+
+  .bookmark-pin::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    right: -2px;
+    left: -12px;
+  }
+
+  .bookmark-pin:hover,
+  .bookmark-pin:focus-visible {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
+    outline: none;
+  }
+
+  /* Cluster: just the dominant glyph with a small "+N" beside it. No
+     chrome - reads as a hovering decoration, not a button. */
+  .marker-cluster {
+    position: absolute;
+    right: 0;
+    transform: translateY(-5px);
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 4px 2px 4px 6px;
+    margin: -4px -2px -4px -6px;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1;
+    z-index: 2;
+
+    & .cluster-dominant {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 8px;
+      height: 10px;
+    }
+    & .cluster-dominant svg { display: block; width: 8px; height: 10px; }
+    & .cluster-plus {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--fg-muted);
+      transition: color 120ms ease-out;
+    }
+  }
+
+  .marker-cluster:hover .cluster-plus,
+  .marker-cluster:focus-visible .cluster-plus {
+    color: var(--accent);
+  }
+  .marker-cluster:focus-visible { outline: none; }
+}
+
+/* Cluster popover: list of items belonging to a clicked cluster. Same
+   visual language as the minimap tooltip but interactive. */
+.cluster-popover {
+  position: fixed;
+  transform: translate(calc(-100% - 6px), -50%);
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 0.25rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--fg-default);
+
+  .cluster-item {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.2rem 0.4rem;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .cluster-item:hover,
+  .cluster-item:focus-visible {
+    background: var(--bg-button-hover, rgba(255, 255, 255, 0.08));
+    outline: none;
+  }
+  .cluster-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 10px;
+    height: 12px;
+  }
+  .cluster-glyph svg { display: block; width: 8px; height: 10px; }
+  .cluster-label { color: var(--fg-default); }
+  .cluster-line { color: var(--fg-muted); }
 }
 
 .minimap {
