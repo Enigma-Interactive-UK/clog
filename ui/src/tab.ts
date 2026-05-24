@@ -355,12 +355,17 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
 
   // --- Search --------------------------------------------------------------
 
+  // 50ms barely debounced anything - a fast typist fires a search per
+  // keystroke. 200ms lets a normal typing burst settle before the
+  // backend is asked to run, but still feels live when you pause.
+  const SEARCH_DEBOUNCE_MS = 200
+
   function scheduleSearch() {
     if (pendingSearchTimer !== null) globalThis.clearTimeout(pendingSearchTimer)
     pendingSearchTimer = globalThis.setTimeout(() => {
       pendingSearchTimer = null
       void runSearch()
-    }, 50)
+    }, SEARCH_DEBOUNCE_MS)
   }
 
   async function runSearch(): Promise<void> {

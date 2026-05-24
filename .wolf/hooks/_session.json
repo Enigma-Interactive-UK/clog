@@ -1,90 +1,94 @@
 {
-  "session_id": "session-2026-05-24-1233",
-  "started": "2026-05-24T11:33:09.337Z",
+  "session_id": "session-2026-05-24-1240",
+  "started": "2026-05-24T11:40:36.204Z",
   "files_read": {
     "e:/Work/clog/.wolf/anatomy.md": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-05-24T11:35:23.397Z"
+      "first_read": "2026-05-24T11:41:38.646Z"
     },
     "e:/Work/clog/ui/src/components/LogViewport.vue": {
-      "count": 4,
-      "tokens": 0,
-      "first_read": "2026-05-24T11:35:32.420Z"
+      "count": 5,
+      "tokens": 20439,
+      "first_read": "2026-05-24T11:41:50.635Z"
     },
-    "e:/Work/clog/.wolf/memory.md": {
+    "e:/Work/clog/ui/src/components/useTabs.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-05-24T11:37:27.089Z"
+      "first_read": "2026-05-24T11:42:05.720Z"
     },
-    "e:/Work/clog/.wolf/buglog.json": {
+    "e:/Work/clog/ui/src/composables/useTabs.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-05-24T11:37:34.686Z"
+      "first_read": "2026-05-24T11:42:11.593Z"
     },
-    "e:/Work/clog/ui/src/components/StatusBar.vue": {
+    "e:/Work/clog/ui/src/tab.ts": {
+      "count": 2,
+      "tokens": 0,
+      "first_read": "2026-05-24T11:42:23.095Z"
+    },
+    "e:/Work/clog/ui/src/types.ts": {
+      "count": 2,
+      "tokens": 0,
+      "first_read": "2026-05-24T11:42:30.400Z"
+    },
+    "e:/Work/clog/ui/src/style.css": {
       "count": 3,
-      "tokens": 1329,
-      "first_read": "2026-05-24T11:37:54.532Z"
+      "tokens": 0,
+      "first_read": "2026-05-24T11:43:12.672Z"
+    },
+    "e:/Work/clog/ui/src/components/SearchBar.vue": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-24T11:47:53.995Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
+      "file": "e:/Work/clog/ui/src/style.css",
       "action": "edit",
-      "tokens": 185,
-      "at": "2026-05-24T11:37:02.329Z"
+      "tokens": 109,
+      "at": "2026-05-24T11:43:27.872Z"
     },
     {
       "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 166,
-      "at": "2026-05-24T11:37:09.969Z"
+      "tokens": 410,
+      "at": "2026-05-24T11:43:45.881Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 126,
-      "at": "2026-05-24T11:38:12.809Z"
+      "tokens": 102,
+      "at": "2026-05-24T11:43:52.585Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 255,
-      "at": "2026-05-24T11:38:22.944Z"
+      "tokens": 197,
+      "at": "2026-05-24T11:45:57.642Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 13,
-      "at": "2026-05-24T11:38:58.007Z"
+      "tokens": 76,
+      "at": "2026-05-24T11:46:03.583Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
+      "file": "e:/Work/clog/ui/src/tab.ts",
       "action": "edit",
-      "tokens": 43,
-      "at": "2026-05-24T11:39:06.123Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
-      "action": "edit",
-      "tokens": 47,
-      "at": "2026-05-24T11:39:24.936Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/StatusBar.vue",
-      "action": "edit",
-      "tokens": 71,
-      "at": "2026-05-24T11:39:32.189Z"
+      "tokens": 140,
+      "at": "2026-05-24T11:48:12.380Z"
     }
   ],
   "edit_counts": {
-    "ui/src/components/LogViewport.vue": 2,
-    "ui/src/components/StatusBar.vue": 6
+    "ui/src/style.css": 1,
+    "ui/src/components/LogViewport.vue": 4,
+    "ui/src/tab.ts": 1
   },
-  "anatomy_hits": 0,
-  "anatomy_misses": 5,
-  "repeated_reads_warned": 5,
+  "anatomy_hits": 1,
+  "anatomy_misses": 7,
+  "repeated_reads_warned": 8,
   "cerebrum_warnings": 0,
   "stop_count": 3
 }

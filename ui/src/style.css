@@ -125,6 +125,10 @@
      and as a coloured top-border + label on the marker row). One token
      per `MarkerKind` variant on the Rust side. */
   --marker-restart: var(--green-500);
+  /* Transient marker used for active search hits in the rail; tracks
+     the search-highlight background so light/colour-blind themes pick
+     up the right hue automatically. */
+  --marker-search: var(--hl-search-bg);
 
   /* Speed-rail palette - three HSL stops driving the continuous
      green-to-amber-to-red gradient over per-bucket avg slow-request

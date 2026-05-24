@@ -712,7 +712,46 @@ const markerLineLookup = computed<Map<number, string>>(() => {
 
 const MARKER_LABEL: Record<string, string> = {
   restart: 'Site restart',
+  search: 'Search match',
 }
+
+// Transient rail markers for active search hits. Use the record's first
+// physical line - if it falls outside the active filter projection we
+// drop it, matching how persistent markers and bookmarks behave.
+const searchHitVisuals = computed<MarkerVisual[]>(() => {
+  const tab = props.tab
+  if (tab.searchQuery.value.trim().length === 0) return []
+  const order = tab.hitOrder.value
+  if (order.length === 0) return []
+  const hits = tab.hits.value
+  const filt = filteredLineIndices.value
+  const out: MarkerVisual[] = []
+  if (filt) {
+    const lookup = new Map<number, number>()
+    for (let v = 0; v < filt.length; v++) lookup.set(filt[v], v)
+    for (const recIdx of order) {
+      const h = hits.get(recIdx)
+      if (!h) continue
+      const v = lookup.get(h.record_first_line)
+      if (v !== undefined) out.push({ lineIdx: h.record_first_line, virtualIdx: v, kind: 'search' })
+    }
+  } else {
+    const lc = props.tab.file.value.line_count
+    for (const recIdx of order) {
+      const h = hits.get(recIdx)
+      if (!h) continue
+      if (h.record_first_line >= 0 && h.record_first_line < lc) {
+        out.push({
+          lineIdx: h.record_first_line,
+          virtualIdx: h.record_first_line,
+          kind: 'search',
+        })
+      }
+    }
+  }
+  out.sort((a, b) => a.virtualIdx - b.virtualIdx)
+  return out
+})
 
 function markerLabel(kind: string): string {
   return MARKER_LABEL[kind] ?? kind
@@ -773,7 +812,11 @@ type RailCluster =
   | { type: 'single'; item: RailItem; topPx: number }
   | { type: 'cluster'; items: RailItem[]; topPx: number; dominantKind: string; extra: number }
 
-const CLUSTER_GAP_PX = 10
+// Maximum vertical span a single cluster can cover before the next
+// marker starts a new cluster. Anchored on the cluster's first marker
+// (not the previous one) so dense runs break into several small
+// clusters spread along the rail.
+const CLUSTER_SPAN_PX = 12
 
 const railClusters = computed<RailCluster[]>(() => {
   const eff = effectiveCount.value
@@ -782,6 +825,9 @@ const railClusters = computed<RailCluster[]>(() => {
   const items: RailItem[] = []
   for (const m of markerVisuals.value) {
     items.push({ kind: m.kind, lineIdx: m.lineIdx, virtualIdx: m.virtualIdx, label: markerLabel(m.kind) })
+  }
+  for (const sh of searchHitVisuals.value) {
+    items.push({ kind: sh.kind, lineIdx: sh.lineIdx, virtualIdx: sh.virtualIdx, label: markerLabel(sh.kind) })
   }
   for (const bm of bookmarkVisuals.value) {
     items.push({ kind: 'bookmark', lineIdx: bm.lineIdx, virtualIdx: bm.virtualIdx, label: 'Bookmark' })
@@ -794,9 +840,15 @@ const railClusters = computed<RailCluster[]>(() => {
     const firstY = (first.virtualIdx / eff) * h
     let j = i + 1
     let lastY = firstY
+    // Bound each cluster's span against the first marker's Y, not the
+    // previous marker's. The previous approach chained: a long line of
+    // markers each within CLUSTER_GAP_PX of the one before collapsed into
+    // one cluster spanning the whole rail. Anchoring on `firstY` caps
+    // each cluster at CLUSTER_SPAN_PX and lets dense regions break into
+    // several smaller clusters spread along the rail.
     while (j < items.length) {
       const y = (items[j].virtualIdx / eff) * h
-      if (y - lastY > CLUSTER_GAP_PX) break
+      if (y - firstY > CLUSTER_SPAN_PX) break
       lastY = y
       j++
     }
