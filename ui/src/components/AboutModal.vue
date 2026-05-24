@@ -57,12 +57,12 @@ defineExpose({ ensureLoaded })
       A collaboration of meat and metal, built with blood, sweat and oil using <a class="link-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">Claude</a> Opus 4.7 🦀 
     </p>
 
-    <h3>Built with</h3>
+    <h3>Guest starring</h3>
     <ul class="dep-list">
-      <li><strong>Rust</strong>: the engine, parser, search and tail loop.</li>
-      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <a href="https://tauri.app/" class="link-btn" target="_blank" rel="noopener noreferrer">tauri.app</a></li>
-      <li><strong>Vue 3</strong> + <strong>Vite</strong> + <strong>TypeScript</strong>: the UI shell.</li>
-      <li><strong>@tanstack/vue-virtual</strong>: virtualised line viewer.</li>
+      <li><strong>Rust</strong>: the speedy engine, parser, search and tail loop.</li>
+      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <a href="https://tauri.app/" class="link-btn" target="_blank" rel="noopener noreferrer">tauri.app</a> - the native UI wrapper</li>
+      <li><strong>Vue 3</strong> + <strong>Vite</strong> + <strong>TypeScript</strong>: the UI framework.</li>
+      <li><strong>@tanstack/vue-virtual</strong>: virtualised line viewer to make big logs go brrrr.</li>
       <li><strong>rayon</strong>: parallel record search.</li>
     </ul>
 
@@ -73,7 +73,7 @@ defineExpose({ ensureLoaded })
 </template>
 
 <style scoped>
-:deep(.about-modal) { max-width: 500px; }
+:deep(.about-modal) { max-width: 500px; line-height: 1.5 }
 
 h3 {
   margin: 1.2rem 0 0.4rem;
