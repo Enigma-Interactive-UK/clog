@@ -713,14 +713,12 @@ function jumpTo(line: number) {
         >Save</button>
         <button
           type="button"
-          class="btn-dismiss clear-override"
+          class="reset-btn"
           title="Clear override"
           aria-label="Clear override"
           @click="clearPerFile"
         >
-          <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-            <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-          </svg>
+          Reset
         </button>
       </div>
       <div v-if="validationError" class="threshold-error">{{ validationError }}</div>
@@ -1042,6 +1040,10 @@ function jumpTo(line: number) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    --outer-glow: var(--bg-viewport);
+    filter: drop-shadow(0 0 1px var(--outer-glow)) drop-shadow(0 0 1px var(--outer-glow)) drop-shadow(0 0 1px var(--outer-glow));
+    position: relative;
+    z-index: 10;
   }
 
   & .entry-stats { color: var(--fg-muted); font-size: 0.8rem; white-space: nowrap; }
@@ -1223,7 +1225,7 @@ function jumpTo(line: number) {
   }
 
   & input {
-    width: 5rem;
+    width: 100%;
     background: var(--bg-viewport);
     border: 1px solid var(--border-button);
     color: var(--fg-default);
@@ -1232,6 +1234,7 @@ function jumpTo(line: number) {
   }
 
   & .save-btn {
+    margin-left: auto;
     background: transparent;
     border: 1px solid var(--border-button);
     color: var(--fg-default);
@@ -1240,6 +1243,15 @@ function jumpTo(line: number) {
     cursor: pointer;
 
     &:disabled { opacity: 0.4; cursor: not-allowed; }
+  }
+
+  & .reset-btn {
+    background: transparent;
+    border: 1px solid var(--level-error);
+    color: var(--level-error);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    cursor: pointer;
   }
 
   & .clear-override {
