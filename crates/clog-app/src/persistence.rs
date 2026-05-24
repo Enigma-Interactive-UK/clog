@@ -183,6 +183,8 @@ pub struct RestoredFile {
     pub follow_tail: bool,
     #[serde(default = "default_full_mask")]
     pub level_mask: u32,
+    #[serde(default = "default_full_thread_group_mask")]
+    pub thread_group_mask: u32,
     #[serde(default)]
     pub filter_text: String,
     /// `"smart"` | `"regex"`.
@@ -200,6 +202,9 @@ pub struct RestoredFile {
 
 fn default_full_mask() -> u32 {
     0xFFFF_FFFF
+}
+fn default_full_thread_group_mask() -> u32 {
+    0x3F
 }
 fn default_smart() -> String {
     "smart".to_string()
@@ -441,6 +446,32 @@ mod tests {
 mod thresholds_tests {
     use super::*;
     use clog_core::SlowRequestThresholds;
+
+    #[test]
+    fn restored_file_loads_old_payload_without_thread_group_mask() {
+        let raw = r#"{"path":"/x","scroll_top":0,"follow_tail":true,"level_mask":63,"filter_text":"","search_mode":"smart","search_case_sensitive":false,"filter_mode":false}"#;
+        let r: RestoredFile = serde_json::from_str(raw).expect("v1 RestoredFile decodes");
+        assert_eq!(r.thread_group_mask, 0x3F);
+    }
+
+    #[test]
+    fn restored_file_round_trips_thread_group_mask() {
+        let r = RestoredFile {
+            path: "/x".into(),
+            scroll_top: 0.0,
+            follow_tail: true,
+            level_mask: 63,
+            thread_group_mask: 0x0B,
+            filter_text: String::new(),
+            search_mode: "smart".into(),
+            search_case_sensitive: false,
+            filter_mode: false,
+            bookmarks: vec![],
+        };
+        let json = serde_json::to_string(&r).expect("serialises");
+        let back: RestoredFile = serde_json::from_str(&json).expect("round-trips");
+        assert_eq!(back.thread_group_mask, 0x0B);
+    }
 
     #[test]
     fn settings_loads_old_file_without_threshold_field() {
