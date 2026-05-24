@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T10:13:22.100Z
-> Files: 89 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T10:51:07.071Z
+> Files: 91 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -90,11 +90,13 @@
 
 - `2026-05-23-minimap-heatmap.md` — Minimap heatmap implementation plan (~8500 tok)
 - `2026-05-23-slow-request-insights.md` — Slow request insights implementation plan (~30761 tok)
+- `2026-05-24-thread-insights.md` — Thread insights + consolidated filter flyout implementation plan (~11303 tok)
 
 ## docs/superpowers/specs/
 
 - `2026-05-23-minimap-heatmap-design.md` — Minimap heatmap upgrade - design (~1642 tok)
 - `2026-05-23-slow-request-insights-design.md` — Slow request insights - design (~9472 tok)
+- `2026-05-24-thread-insights-design.md` — Thread insights + consolidated filter flyout - design (~3328 tok)
 
 ## research/
 

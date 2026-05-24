@@ -45,22 +45,22 @@ defineExpose({ ensureLoaded })
     <div class="about-hero">
       <img src="/clog-icon.png" alt="" class="about-icon" />
       <div>
-        <h3 class="about-name">{{ aboutInfo?.name ?? 'Clog' }}</h3>
+        <h3 class="about-name">{{ aboutInfo?.name ?? 'Clog' }} 👞</h3>
         <p class="about-tag muted">The Core log viewer: tail, search and filter your logs.</p>
         <p class="about-version">Version <code>{{ aboutInfo?.version ?? '...' }}</code></p>
       </div>
     </div>
-
+    <br>
     <h3>Credits</h3>
     <p>
-      Built by Lewis Lane. Source and issue tracker on
-      <button type="button" class="link-btn" @click="openUrl('https://github.com/lewster32/clog')">GitHub</button>.
+      Vibed by <a href="https://github.com/lewster32/" class="link-btn" target="_blank" rel="noopener noreferrer">Lewis Lane</a> for <a href="https://www.enigma-interactive.co.uk" class="link-btn" target="_blank" rel="noopener noreferrer">Enigma Interactive</a>.
+      A collaboration of meat and metal, built with blood, sweat and oil using <a class="link-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">Claude</a> Opus 4.7 🦀 
     </p>
 
     <h3>Built with</h3>
     <ul class="dep-list">
       <li><strong>Rust</strong>: the engine, parser, search and tail loop.</li>
-      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <button type="button" class="link-btn" @click="openUrl('https://tauri.app/')">tauri.app</button></li>
+      <li><strong>Tauri</strong> v{{ aboutInfo?.tauri ?? '2.x' }}: <a href="https://tauri.app/" class="link-btn" target="_blank" rel="noopener noreferrer">tauri.app</a></li>
       <li><strong>Vue 3</strong> + <strong>Vite</strong> + <strong>TypeScript</strong>: the UI shell.</li>
       <li><strong>@tanstack/vue-virtual</strong>: virtualised line viewer.</li>
       <li><strong>rayon</strong>: parallel record search.</li>
