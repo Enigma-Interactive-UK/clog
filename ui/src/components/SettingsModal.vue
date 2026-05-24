@@ -219,6 +219,18 @@ function onResetAll() {
         </span>
       </div>
 
+      <div class="row-grid">
+        <label for="colour-blind" class="row-label">Colour-blind mode</label>
+        <span class="control-cell">
+          <input
+            id="colour-blind"
+            type="checkbox"
+            :checked="!!settings.colour_blind"
+            @change="(e: Event) => emit('update', { colour_blind: (e.target as HTMLInputElement).checked })"
+          />
+        </span>
+      </div>
+
       <h3>Behaviour</h3>
       <div class="row-grid">
         <label for="follow-tail-default">Follow tail by default</label>
@@ -512,6 +524,7 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 .reset-grid { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0; }
 
 .hint { margin-bottom: 0.5rem; }
+.hint-inline { font-size: 0.78rem; line-height: 1.35; max-width: 26rem; }
 .threshold-grid {
   display: flex;
   gap: 0.8rem;

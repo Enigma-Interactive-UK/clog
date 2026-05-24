@@ -1177,13 +1177,19 @@ onMounted(() => {
     scheduleMinimapFetch(true)
   }
 
-  // Repaint the minimap whenever the theme attribute on <html> flips.
+  // Repaint the minimap and speed rail whenever the theme or colour-blind
+  // attribute on <html> flips - both canvases sample CSS custom properties
+  // at paint time, so the attribute swap leaves stale pixels until the
+  // next data refresh.
   themeObserver = new MutationObserver(() => {
-    requestAnimationFrame(() => paintMinimap())
+    requestAnimationFrame(() => {
+      paintMinimap()
+      paintSpeedRail()
+    })
   })
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-theme'],
+    attributeFilter: ['data-theme', 'data-colour-blind'],
   })
 
   document.addEventListener('pointerdown', onDocumentPointerDown, true)

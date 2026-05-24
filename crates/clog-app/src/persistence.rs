@@ -44,6 +44,12 @@ pub struct Settings {
     /// Absent / `None` means slow-request detection is disabled.
     #[serde(default)]
     pub slow_request_thresholds: Option<SlowRequestThresholds>,
+    /// When true, swap the diagnostic colour tokens (speed rail, level
+    /// palette, marker rail, user highlight palette) for the Wong
+    /// colour-blind safe palette so red/green deficiencies can still tell
+    /// the stops apart.
+    #[serde(default)]
+    pub colour_blind: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +61,7 @@ impl Default for Settings {
             recent_files: Vec::new(),
             follow_tail_default: true,
             slow_request_thresholds: None,
+            colour_blind: false,
         }
     }
 }

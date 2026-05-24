@@ -34,6 +34,7 @@ function defaultSettings(): Settings {
     font_size: 13,
     recent_files: [],
     follow_tail_default: true,
+    colour_blind: false,
   }
 }
 
@@ -58,6 +59,11 @@ export function useSettings() {
     document.documentElement.setAttribute('data-theme', wantDark ? 'dark' : 'light')
   }
 
+  function applyColourBlind(on: boolean) {
+    if (on) document.documentElement.dataset.colourBlind = 'on'
+    else delete document.documentElement.dataset.colourBlind
+  }
+
   function applyFontSize(px: number) {
     const clamped = Math.max(9, Math.min(24, Math.round(px)))
     document.documentElement.style.setProperty('--font-size-base', `${clamped}px`)
@@ -69,9 +75,11 @@ export function useSettings() {
       settings.value = s
       applyTheme(s.theme)
       applyFontSize(s.font_size)
+      applyColourBlind(!!s.colour_blind)
     } catch {
       applyTheme('system')
       applyFontSize(13)
+      applyColourBlind(false)
     }
   }
 
@@ -82,6 +90,7 @@ export function useSettings() {
       settingsVersion.value++
       if (patch.theme !== undefined) applyTheme(s.theme)
       if (patch.font_size !== undefined) applyFontSize(s.font_size)
+      if (patch.colour_blind !== undefined) applyColourBlind(!!s.colour_blind)
       return null
     } catch (e) {
       return (e as IpcError).message ?? String(e)

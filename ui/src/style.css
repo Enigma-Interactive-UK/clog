@@ -252,6 +252,100 @@
   --fg-on-accent: var(--enigma-white);
 }
 
+/* --- Colour-blind safe palette ---------------------------------------
+   Opt-in via Settings -> General -> Appearance. Activated by App.vue
+   setting `data-colour-blind="on"` on the root element. Overrides the
+   diagnostic tokens (speed rail, level palette, marker rail, user
+   highlight palette) with Bang Wong's colour-blind safe stops (Nature
+   Methods, 2011) so red/green deficiencies can still rank fast-vs-slow
+   and tell ERROR from WARN. Theme-independent: the same stops read
+   correctly on dark and light backgrounds because they were picked for
+   luminance separation, not just hue. */
+:root[data-colour-blind="on"] {
+  /* Wong stops used below:
+       blue          #0072B2
+       sky blue      #56B4E9
+       bluish green  #009E73
+       yellow        #F0E442
+       vermillion    #D55E00
+       redd-purple   #CC79A7
+       orange        #E69F00
+     Gradient stops swap green->yellow->red for blue->yellow->vermillion
+     so the perceived ordering survives deutan/protan. */
+  --speed-fast: #0072B2;
+  --speed-mid:  #F0E442;
+  --speed-slow: #D55E00;
+
+  --level-trace: #8a8f99;
+  --level-debug: #56B4E9;
+  --level-info:  #0072B2;
+  --level-warn:  #F0E442;
+  --level-error: #D55E00;
+  --level-fatal: #CC79A7;
+  --level-off:   #6b7280;
+  --level-all:   #009E73;
+  --level-unknown: var(--slate-700);
+
+  --marker-restart: #009E73;
+
+  /* Axis-2 highlight roles: keep the role distinctions but swap any
+     green/red pair to bluish-green/vermillion. */
+  --hl-exception-fg: #D55E00;
+  --hl-caused-by-fg: #E69F00;
+  --hl-stack-fqn-fg: #56B4E9;
+  --hl-stack-file-fg: #009E73;
+  --hl-stack-line-fg: #E69F00;
+  --hl-path-fg: #009E73;
+  --hl-url-fg: #0072B2;
+
+  /* User-rule palette: 8 slots remapped to the nearest Wong stop so the
+     palette stays distinguishable for users authoring their own rules. */
+  --h-user-red:     #D55E00;
+  --h-user-amber:   #E69F00;
+  --h-user-yellow:  #F0E442;
+  --h-user-green:   #009E73;
+  --h-user-cyan:    #56B4E9;
+  --h-user-blue:    #0072B2;
+  --h-user-magenta: #CC79A7;
+  --h-user-pink:    #CC79A7;
+}
+
+/* Light-theme variant: same hues, slightly darker variants so they sit
+   on white without washing out. */
+:root[data-theme="light"][data-colour-blind="on"] {
+  --speed-fast: #005f8a;
+  --speed-mid:  #b8a300;
+  --speed-slow: #a14600;
+
+  --level-trace: #5a6068;
+  --level-debug: #1b6fa3;
+  --level-info:  #005f8a;
+  --level-warn:  #8a7300;
+  --level-error: #a14600;
+  --level-fatal: #9a4f7a;
+  --level-off:   #6b7280;
+  --level-all:   #00715a;
+
+  --marker-restart: #00715a;
+
+  --hl-exception-fg: #a14600;
+  --hl-caused-by-fg: #a8730a;
+  --hl-stack-fqn-fg: #1b6fa3;
+  --hl-stack-file-fg: #00715a;
+  --hl-stack-line-fg: #a8730a;
+  --hl-path-fg: #00715a;
+  --hl-url-fg: #005f8a;
+
+  --h-user-red:     #a14600;
+  --h-user-amber:   #a8730a;
+  --h-user-yellow:  #8a7300;
+  --h-user-green:   #00715a;
+  --h-user-cyan:    #1b6fa3;
+  --h-user-blue:    #005f8a;
+  --h-user-magenta: #9a4f7a;
+  --h-user-pink:    #9a4f7a;
+}
+
 /* --- Dismiss-button family --------------------------------------------
    One visual treatment for every "close / dismiss / clear" button across
    the UI: modal close, tab close, search-clear, recent-file forget. The

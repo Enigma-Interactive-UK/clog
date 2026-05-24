@@ -421,6 +421,10 @@ if (settingsVersion) {
   watch(settingsVersion, () => {
     void refreshThresholds()
     emit('thresholds-changed')
+    // Force a repaint so a colour-blind palette swap takes effect even
+    // when the thresholds payload comes back identical (deep watcher
+    // wouldn't fire on an unchanged shape).
+    paintChart()
   })
 }
 

@@ -97,6 +97,7 @@ export interface Settings {
   recent_files: string[]
   follow_tail_default: boolean
   slow_request_thresholds?: SlowRequestThresholds | null
+  colour_blind?: boolean
 }
 
 export interface RestoredFile {
