@@ -16,11 +16,11 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use clog_core::{
-    auto_detect, index_file, sample_lines, scan_records, search_records, CacheFingerprint,
-    CompiledPattern, CoreError, HeaderFields, HitRef, Level, LevelMask, LineSource, LoadOutcome,
-    LooseScanner, PatternError, RecordHeader, RecordScanner, RegexScanner, RegexScannerError,
-    SearchError, SearchMode, SearchOptions, StreamedFile, TailEvent, TailState, BUILTIN_PATTERNS,
-    DEFAULT_POLL_INTERVAL_MS,
+    auto_detect, classify_thread, index_file, sample_lines, scan_records, search_records,
+    CacheFingerprint, CompiledPattern, CoreError, HeaderFields, HitRef, Level, LevelMask,
+    LineSource, LoadOutcome, LooseScanner, PatternError, RecordHeader, RecordScanner, RegexScanner,
+    RegexScannerError, SearchError, SearchMode, SearchOptions, StreamedFile, TailEvent, TailState,
+    ThreadGroup, ThreadGroupMask, BUILTIN_PATTERNS, DEFAULT_POLL_INTERVAL_MS,
 };
 use persistence::{
     HighlightRulesFile, PatternOverride, PatternsFile, PerFileRulesFile, Session, Settings,
@@ -1169,25 +1169,38 @@ struct RecordRefsPayload {
 }
 
 /// Return every record's `(record_idx, first_line, line_count)` whose
-/// level passes `level_mask`. The UI uses this to build `filteredLineIndices`
-/// when the search query is empty -- the level mask alone narrows the view
+/// level passes `level_mask` AND whose thread group passes
+/// `thread_group_mask`. The UI uses this to build `filteredLineIndices`
+/// when the search query is empty -- the masks alone narrow the view
 /// without needing a fake "match all" search.
 #[tauri::command]
-fn list_records_by_level(
+fn list_records_by_filters(
     state: State<'_, AppState>,
     file_id: u64,
     level_mask: u32,
+    thread_group_mask: u32,
 ) -> Result<RecordRefsPayload, IpcError> {
     let guard = state.files.lock().expect("files mutex poisoned");
     let file = guard
         .get(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
-    let mask = LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF));
+    let lmask = LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF));
+    let tmask = ThreadGroupMask(u8::try_from(thread_group_mask & 0xFF).unwrap_or(0x3F));
+    let bytes = &file.bytes;
     let refs = file
         .records
         .iter()
         .enumerate()
-        .filter(|(_, r)| mask.allows(r.level))
+        .filter(|(_, r)| {
+            if !lmask.allows(r.level) {
+                return false;
+            }
+            if tmask == ThreadGroupMask::ALL {
+                return true;
+            }
+            let group = thread_group_of(r, bytes);
+            tmask.allows(group)
+        })
         .map(|(i, r)| RecordRef {
             record_idx: i as u64,
             record_first_line: u64::from(r.line_offset),
@@ -1196,6 +1209,22 @@ fn list_records_by_level(
         })
         .collect();
     Ok(RecordRefsPayload { refs })
+}
+
+fn thread_group_of(rec: &clog_core::RecordHeader, bytes: &[u8]) -> ThreadGroup {
+    match rec.fields.thread {
+        Some((s, e)) => {
+            let base = usize::try_from(rec.byte_offset).unwrap_or(usize::MAX);
+            let start = base.saturating_add(s as usize);
+            let end = base.saturating_add(e as usize).min(bytes.len());
+            if start > end || start >= bytes.len() {
+                ThreadGroup::Other
+            } else {
+                classify_thread(&bytes[start..end])
+            }
+        }
+        None => ThreadGroup::Other,
+    }
 }
 
 #[tauri::command]
@@ -1236,6 +1265,15 @@ pub struct SearchRequest {
     case_sensitive: bool,
     /// Bitmask of allowed levels. Bit ordering matches `clog_core::search::level_bit`.
     level_mask: u32,
+    /// Bitmask of allowed thread groups. Bit ordering matches `clog_core::group_bit`.
+    /// Defaults to ALL (0x3F) when absent so older session-restored payloads
+    /// still decode.
+    #[serde(default = "default_full_thread_group_mask")]
+    thread_group_mask: u32,
+}
+
+fn default_full_thread_group_mask() -> u32 {
+    0x3F
 }
 
 /// Start (or restart) a search across `file_id`. Any previous in-flight
@@ -1254,6 +1292,7 @@ fn start_search(
         query,
         case_sensitive,
         level_mask,
+        thread_group_mask,
     } = request;
     let search_mode = match mode.as_str() {
         "smart" => SearchMode::Smart,
@@ -1271,6 +1310,7 @@ fn start_search(
     let opts = SearchOptions {
         case_sensitive,
         level_mask: LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF)),
+        thread_group_mask: ThreadGroupMask(u8::try_from(thread_group_mask & 0xFF).unwrap_or(0x3F)),
     };
     if matches!(search_mode, SearchMode::Smart) && query.split_ascii_whitespace().next().is_none() {
         return Err(IpcError::EmptyQuery);
@@ -2107,7 +2147,7 @@ fn main() {
             save_slow_request_thresholds,
             start_search,
             cancel_search,
-            list_records_by_level,
+            list_records_by_filters,
             get_data_dir,
             open_data_dir,
             get_settings,
