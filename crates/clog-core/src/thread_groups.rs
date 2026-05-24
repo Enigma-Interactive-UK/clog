@@ -24,12 +24,12 @@ pub enum ThreadGroup {
 #[must_use]
 pub fn group_bit(group: ThreadGroup) -> u8 {
     match group {
-        ThreadGroup::Requests  => 1 << 0,
-        ThreadGroup::Jobs      => 1 << 1,
+        ThreadGroup::Requests => 1 << 0,
+        ThreadGroup::Jobs => 1 << 1,
         ThreadGroup::Scheduler => 1 << 2,
-        ThreadGroup::System    => 1 << 3,
-        ThreadGroup::Infra     => 1 << 4,
-        ThreadGroup::Other     => 1 << 5,
+        ThreadGroup::System => 1 << 3,
+        ThreadGroup::Infra => 1 << 4,
+        ThreadGroup::Other => 1 << 5,
     }
 }
 
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn classifies_play_request_workers() {
-        assert_eq!(classify(b"play-thread-1"),  ThreadGroup::Requests);
+        assert_eq!(classify(b"play-thread-1"), ThreadGroup::Requests);
         assert_eq!(classify(b"play-thread-20"), ThreadGroup::Requests);
     }
 
@@ -192,38 +192,52 @@ mod tests {
 
     #[test]
     fn classifies_quartz_workers() {
-        assert_eq!(classify(b"DefaultQuartzScheduler_Worker-10"), ThreadGroup::Scheduler);
-        assert_eq!(classify(b"quartz-scheduler-1"),               ThreadGroup::Scheduler);
-        assert_eq!(classify(b"MyQuartzScheduler_Worker-3"),       ThreadGroup::Scheduler);
+        assert_eq!(
+            classify(b"DefaultQuartzScheduler_Worker-10"),
+            ThreadGroup::Scheduler
+        );
+        assert_eq!(classify(b"quartz-scheduler-1"), ThreadGroup::Scheduler);
+        assert_eq!(
+            classify(b"MyQuartzScheduler_Worker-3"),
+            ThreadGroup::Scheduler
+        );
     }
 
     #[test]
     fn classifies_system_threads() {
-        assert_eq!(classify(b"main"),       ThreadGroup::System);
-        assert_eq!(classify(b"Thread-16"),  ThreadGroup::System);
-        assert_eq!(classify(b"Thread-1"),   ThreadGroup::System);
+        assert_eq!(classify(b"main"), ThreadGroup::System);
+        assert_eq!(classify(b"Thread-16"), ThreadGroup::System);
+        assert_eq!(classify(b"Thread-1"), ThreadGroup::System);
     }
 
     #[test]
     fn classifies_infra_threads() {
-        assert_eq!(classify(b"pool-3-thread-1"),       ThreadGroup::Infra);
-        assert_eq!(classify(b"pool-6-thread-1"),       ThreadGroup::Infra);
-        assert_eq!(classify(b"New I/O worker #1"),     ThreadGroup::Infra);
-        assert_eq!(classify(b"New I/O worker #63"),    ThreadGroup::Infra);
-        assert_eq!(classify(b"New I/O boss #132"),     ThreadGroup::Infra);
-        assert_eq!(classify(b"I/O dispatcher 1"),      ThreadGroup::Infra);
-        assert_eq!(classify(b"jgroups-12,solo.prod,solo-webapp-001-27322"), ThreadGroup::Infra);
-        assert_eq!(classify(b"Memcached IO over {MemcachedConnection to /127.0.0.1:11211} - SHUTTING DOWN"), ThreadGroup::Infra);
+        assert_eq!(classify(b"pool-3-thread-1"), ThreadGroup::Infra);
+        assert_eq!(classify(b"pool-6-thread-1"), ThreadGroup::Infra);
+        assert_eq!(classify(b"New I/O worker #1"), ThreadGroup::Infra);
+        assert_eq!(classify(b"New I/O worker #63"), ThreadGroup::Infra);
+        assert_eq!(classify(b"New I/O boss #132"), ThreadGroup::Infra);
+        assert_eq!(classify(b"I/O dispatcher 1"), ThreadGroup::Infra);
+        assert_eq!(
+            classify(b"jgroups-12,solo.prod,solo-webapp-001-27322"),
+            ThreadGroup::Infra
+        );
+        assert_eq!(
+            classify(
+                b"Memcached IO over {MemcachedConnection to /127.0.0.1:11211} - SHUTTING DOWN"
+            ),
+            ThreadGroup::Infra
+        );
     }
 
     #[test]
     fn classifies_unknown_as_other() {
-        assert_eq!(classify(b""),                      ThreadGroup::Other);
-        assert_eq!(classify(b"some-other-thread"),     ThreadGroup::Other);
-        assert_eq!(classify(b"play-thread-"),          ThreadGroup::Other); // empty digit tail
-        assert_eq!(classify(b"play-thread-abc"),       ThreadGroup::Other); // non-digit tail
-        assert_eq!(classify(b"jobs-thread-1a"),        ThreadGroup::Other);
-        assert_eq!(classify(b"\xff\xfe\x00"),          ThreadGroup::Other); // garbage bytes
+        assert_eq!(classify(b""), ThreadGroup::Other);
+        assert_eq!(classify(b"some-other-thread"), ThreadGroup::Other);
+        assert_eq!(classify(b"play-thread-"), ThreadGroup::Other); // empty digit tail
+        assert_eq!(classify(b"play-thread-abc"), ThreadGroup::Other); // non-digit tail
+        assert_eq!(classify(b"jobs-thread-1a"), ThreadGroup::Other);
+        assert_eq!(classify(b"\xff\xfe\x00"), ThreadGroup::Other); // garbage bytes
     }
 
     #[test]
