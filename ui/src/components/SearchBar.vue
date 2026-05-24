@@ -139,10 +139,10 @@ defineExpose({
       type="button"
       class="filter-toggle"
       :class="{ 'is-on': tab.filterMode.value }"
-      :title="tab.filterMode.value ? 'Showing only matching records -- click to show all' : 'Filter to matching records'"
+      :title="tab.filterMode.value ? 'Showing only matching records -- click to show all' : 'Filter log to matching records'"
       @click="toggleFilterMode"
     >
-      {{ tab.filterMode.value ? 'Filter on' : 'Filter' }}
+      {{ tab.filterMode.value ? 'Filter log on' : 'Filter log' }}
     </button>
     <span class="filters-anchor">
       <button
@@ -150,10 +150,14 @@ defineExpose({
         class="filters-toggle"
         :class="{ 'is-on': filtersOpen, 'has-active': hasNonDefaultFilters }"
         :title="filtersSummary"
+        :aria-label="`Filters (${filtersSummary})`"
         :aria-pressed="filtersOpen"
         @click="filtersOpen = !filtersOpen"
       >
-        Filters<span v-if="hasNonDefaultFilters" class="filters-badge" aria-hidden="true" />
+        <svg class="filters-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M2 3 H14 L10 8.5 V13 L6 11 V8.5 Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none" />
+        </svg>
+        <span v-if="hasNonDefaultFilters" class="filters-badge" aria-hidden="true" />
       </button>
       <FiltersPopover
         v-if="filtersOpen"
@@ -321,11 +325,21 @@ defineExpose({
 
   .filters-toggle {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.4rem;
 
     &.has-active {
       border-color: var(--accent);
       color: var(--accent);
     }
+  }
+
+  .filters-glyph {
+    width: 0.95rem;
+    height: 0.95rem;
+    display: block;
   }
 
   .filters-badge {
