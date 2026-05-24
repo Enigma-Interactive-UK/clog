@@ -47,6 +47,11 @@
 - **Error-rate sparkline** for the visible window, with anomaly markers.
 - **"Show similar records"** - cluster records by msg shape (mask numbers,
   hex, UUIDs) so repeating noise collapses.
+- **Custom user-defined thread groups** - v1 ships a fixed taxonomy
+  (Requests / Jobs / Scheduler / System / Infra / Other). Power users on
+  unusual stacks may want to define their own regex-based groups in
+  Settings. Plumbing is in place: the classifier is one swap away from
+  being driven by user rules.
 
 ## Ergonomics
 
