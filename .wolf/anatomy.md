@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T09:26:22.558Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T09:34:03.092Z
 > Files: 89 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -47,7 +47,7 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37830 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~35310 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~994 tok)
 - `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4338 tok)
 
@@ -138,11 +138,11 @@
 - `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
-- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10239 tok)
+- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10643 tok)
 - `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~18880 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2413 tok)
-- `SettingsModal.vue` — Settings modal split into three tabs: General (appearance / behaviour / (~4586 tok)
+- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~4843 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1118 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 

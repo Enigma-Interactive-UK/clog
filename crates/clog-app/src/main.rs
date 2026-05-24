@@ -984,7 +984,7 @@ fn get_slow_request_thresholds(
         // "non-empty buckets start at mid (yellow), not green" so a
         // single hit is immediately visible regardless of its duration.
         (
-            clog_core::SlowRequestThresholds::new(0, 10_000).expect("0/10000 is valid"),
+            clog_core::SlowRequestThresholds::new(2_000, 10_000).expect("2000/10000 is valid"),
             "auto",
         )
     };

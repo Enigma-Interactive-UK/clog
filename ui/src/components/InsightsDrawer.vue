@@ -334,12 +334,27 @@ function onChartClick(ev: PointerEvent) {
 const fastInput = ref('')
 const slowInput = ref('')
 
+// Defaults presented when no per-file override is set: whatever's currently
+// in effect (auto or global). A blank input on save falls back to these
+// so the user can tweak one side without typing the other.
+function effectiveFastDefault(): number {
+  return props.tab.slowRequestThresholds.value?.effective.fast_ms ?? 2000
+}
+function effectiveSlowDefault(): number {
+  return props.tab.slowRequestThresholds.value?.effective.slow_ms ?? 10000
+}
+
+function resolvedInput(input: string, fallback: number): number | null {
+  if (input === '') return fallback
+  const n = Number(input)
+  if (Number.isNaN(n)) return null
+  return n
+}
+
 const validationError = computed<string | null>(() => {
-  const fast = Number(fastInput.value)
-  const slow = Number(slowInput.value)
-  if (fastInput.value === '' && slowInput.value === '') return null
-  if (fastInput.value === '' || slowInput.value === '') return 'Both fields required'
-  if (Number.isNaN(fast) || Number.isNaN(slow)) return 'Numbers only'
+  const fast = resolvedInput(fastInput.value, effectiveFastDefault())
+  const slow = resolvedInput(slowInput.value, effectiveSlowDefault())
+  if (fast === null || slow === null) return 'Numbers only'
   if (fast >= slow) return 'fast must be less than slow'
   if (slow > 600_000) return 'slow capped at 600,000 (10 min)'
   return null
@@ -351,8 +366,11 @@ async function refreshThresholds() {
       fileId: props.tab.file.value.file_id,
     })
     props.tab.slowRequestThresholds.value = payload
-    fastInput.value = String(payload.per_file?.fast_ms ?? '')
-    slowInput.value = String(payload.per_file?.slow_ms ?? '')
+    // Pre-populate the inputs with whatever is currently in effect (either
+    // the existing per-file override, or the auto/global default) so the
+    // user can immediately tweak.
+    fastInput.value = String(payload.per_file?.fast_ms ?? payload.effective.fast_ms)
+    slowInput.value = String(payload.per_file?.slow_ms ?? payload.effective.slow_ms)
   } catch {
     // non-fatal
   }
@@ -360,12 +378,9 @@ async function refreshThresholds() {
 
 async function savePerFile() {
   if (validationError.value) return
-  const fast = Number(fastInput.value)
-  const slow = Number(slowInput.value)
-  const t: SlowRequestThresholds | null =
-    fastInput.value === '' && slowInput.value === ''
-      ? null
-      : { fast_ms: fast, slow_ms: slow }
+  const fast = resolvedInput(fastInput.value, effectiveFastDefault()) ?? effectiveFastDefault()
+  const slow = resolvedInput(slowInput.value, effectiveSlowDefault()) ?? effectiveSlowDefault()
+  const t: SlowRequestThresholds = { fast_ms: fast, slow_ms: slow }
   try {
     await invoke<void>('save_slow_request_thresholds', {
       fileId: props.tab.file.value.file_id,
@@ -379,9 +394,18 @@ async function savePerFile() {
 }
 
 async function clearPerFile() {
-  fastInput.value = ''
-  slowInput.value = ''
-  await savePerFile()
+  // Wipe the per-file override server-side; the next refreshThresholds
+  // will repopulate the inputs from the auto/global fallback.
+  try {
+    await invoke<void>('save_slow_request_thresholds', {
+      fileId: props.tab.file.value.file_id,
+      thresholds: null,
+    })
+    await refreshThresholds()
+    emit('thresholds-changed')
+  } catch (e) {
+    error.value = String((e as { message?: string })?.message ?? e)
+  }
 }
 
 onMounted(() => {
@@ -657,11 +681,25 @@ function jumpTo(line: number) {
       <div class="threshold-fields">
         <label class="field">
           <span class="field-label">Fast (ms)</span>
-          <input v-model="fastInput" type="number" min="0" max="600000" step="100" />
+          <input
+            v-model="fastInput"
+            type="number"
+            min="0"
+            max="600000"
+            step="100"
+            :placeholder="String(tab.slowRequestThresholds.value?.effective.fast_ms ?? 2000)"
+          />
         </label>
         <label class="field">
           <span class="field-label">Slow (ms)</span>
-          <input v-model="slowInput" type="number" min="0" max="600000" step="100" />
+          <input
+            v-model="slowInput"
+            type="number"
+            min="0"
+            max="600000"
+            step="100"
+            :placeholder="String(tab.slowRequestThresholds.value?.effective.slow_ms ?? 10000)"
+          />
         </label>
         <button
           type="button"

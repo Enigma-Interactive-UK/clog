@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * Settings modal split into three tabs: General (appearance / behaviour /
- * recent files), Highlighting (global rule editor + reset), Advanced (data
- * folder + per-scope reset buttons). The active tab is local state; close
- * resets nothing else.
+ * Settings modal split into four tabs: General (appearance / behaviour /
+ * recent files), Slow requests (global fast/slow thresholds), Highlighting
+ * (global rule editor + reset), Advanced (data folder + per-scope reset
+ * buttons). The active tab is local state; close resets nothing else.
  */
 
 import { computed, ref, watchEffect } from 'vue'
@@ -31,29 +31,41 @@ const emit = defineEmits<{
   (e: 'save-global-rules', rules: UserHighlightRule[]): void
 }>()
 
-type TabId = 'general' | 'highlighting' | 'advanced'
+type TabId = 'general' | 'slow-requests' | 'highlighting' | 'advanced'
 const activeTab = ref<TabId>('general')
 
 // --- Slow request thresholds (global) ------------------------------------
+
+// Auto-tier defaults, mirrored from the Rust side. A blank input on save
+// falls back to these so the user can tweak one side without having to
+// type out both.
+const DEFAULT_FAST_MS = 2000
+const DEFAULT_SLOW_MS = 10000
 
 const fastInput = ref('')
 const slowInput = ref('')
 
 // Sync the inputs whenever the upstream settings.slow_request_thresholds
-// changes (e.g. modal opened, or a reset hit). Blank inputs represent
-// "no global override" so the auto/per-file resolution takes over.
+// changes (e.g. modal opened, or a reset hit). When no global override is
+// set, pre-populate with the auto defaults so the user can immediately
+// tweak rather than having to look up the starting values.
 watchEffect(() => {
   const t = props.settings.slow_request_thresholds
-  fastInput.value = t ? String(t.fast_ms) : ''
-  slowInput.value = t ? String(t.slow_ms) : ''
+  fastInput.value = t ? String(t.fast_ms) : String(DEFAULT_FAST_MS)
+  slowInput.value = t ? String(t.slow_ms) : String(DEFAULT_SLOW_MS)
 })
 
+function resolvedThreshold(input: string, fallback: number): number | null {
+  if (input === '') return fallback
+  const n = Number(input)
+  if (Number.isNaN(n)) return null
+  return n
+}
+
 const thresholdError = computed<string | null>(() => {
-  if (fastInput.value === '' && slowInput.value === '') return null
-  if (fastInput.value === '' || slowInput.value === '') return 'Both fields required'
-  const f = Number(fastInput.value)
-  const s = Number(slowInput.value)
-  if (Number.isNaN(f) || Number.isNaN(s)) return 'Numbers only'
+  const f = resolvedThreshold(fastInput.value, DEFAULT_FAST_MS)
+  const s = resolvedThreshold(slowInput.value, DEFAULT_SLOW_MS)
+  if (f === null || s === null) return 'Numbers only'
   if (f >= s) return 'fast must be less than slow'
   if (s > 600_000) return 'slow capped at 600,000 (10 min)'
   return null
@@ -61,23 +73,17 @@ const thresholdError = computed<string | null>(() => {
 
 function saveGlobalThresholds() {
   if (thresholdError.value) return
-  if (fastInput.value === '' && slowInput.value === '') {
-    // Sending `null` clears the global override server-side via the custom
-    // Option<Option<...>> deserialiser; auto-detection takes over again.
-    emit('update', { slow_request_thresholds: null })
-    return
-  }
+  const fast = resolvedThreshold(fastInput.value, DEFAULT_FAST_MS) ?? DEFAULT_FAST_MS
+  const slow = resolvedThreshold(slowInput.value, DEFAULT_SLOW_MS) ?? DEFAULT_SLOW_MS
   emit('update', {
-    slow_request_thresholds: {
-      fast_ms: Number(fastInput.value),
-      slow_ms: Number(slowInput.value),
-    },
+    slow_request_thresholds: { fast_ms: fast, slow_ms: slow },
   })
 }
 
 function resetGlobalThresholds() {
-  fastInput.value = ''
-  slowInput.value = ''
+  // Sending `null` clears the global override server-side via the custom
+  // Option<Option<...>> deserialiser; auto-detection takes over again.
+  // The watchEffect re-populates the inputs with the auto defaults.
   emit('update', { slow_request_thresholds: null })
 }
 
@@ -166,6 +172,14 @@ function onResetAll() {
         type="button"
         role="tab"
         class="tab-btn"
+        :class="{ 'is-on': activeTab === 'slow-requests' }"
+        :aria-selected="activeTab === 'slow-requests'"
+        @click="activeTab = 'slow-requests'"
+      >Slow requests</button>
+      <button
+        type="button"
+        role="tab"
+        class="tab-btn"
         :class="{ 'is-on': activeTab === 'highlighting' }"
         :aria-selected="activeTab === 'highlighting'"
         @click="activeTab = 'highlighting'"
@@ -218,27 +232,6 @@ function onResetAll() {
         </span>
       </div>
 
-      <h3>Slow requests</h3>
-      <p class="muted hint">
-        Pin the speed-rail gradient anchors. Both values required; fast must be
-        less than slow; both capped at 600,000 ms (10 minutes). Per-file overrides
-        from the insights drawer take precedence over these.
-      </p>
-      <div class="threshold-grid">
-        <label>Fast (ms) <input v-model="fastInput" type="number" min="0" max="600000" /></label>
-        <label>Slow (ms) <input v-model="slowInput" type="number" min="0" max="600000" /></label>
-      </div>
-      <div v-if="thresholdError" class="threshold-error">{{ thresholdError }}</div>
-      <div class="threshold-actions">
-        <button
-          type="button"
-          class="seg-btn"
-          :disabled="!!thresholdError"
-          @click="saveGlobalThresholds"
-        >Save</button>
-        <button type="button" class="seg-btn" @click="resetGlobalThresholds">Reset to default</button>
-      </div>
-
       <h3>Recent files</h3>
       <ul v-if="settings.recent_files.length > 0" class="recent-list">
         <li v-for="p in settings.recent_files" :key="p">
@@ -252,6 +245,31 @@ function onResetAll() {
         </li>
       </ul>
       <p v-else class="muted">No recent files yet. Open a log to populate this list.</p>
+    </section>
+
+    <!-- Slow requests -->
+    <section v-if="activeTab === 'slow-requests'" class="tab-panel" role="tabpanel">
+      <h3>Global thresholds</h3>
+      <p class="muted hint">
+        Set the thresholds for slow requests; values less than or equal to 'fast' show <span style="color: var(--speed-fast);">green</span>,
+        values greater than or equal to 'slow' show <span style="color: var(--speed-slow);">red</span>, and in between blend through <span style="color: var(--speed-mid);">yellow</span>.
+        Both capped at 600,000 ms (10 minutes). Per-file overrides
+        from the insights drawer take precedence over these.
+      </p>
+      <div class="threshold-grid">
+        <label>Fast (ms) <input v-model="fastInput" type="number" min="0" max="600000" step="100" placeholder="2000" /></label>
+        <label>Slow (ms) <input v-model="slowInput" type="number" min="0" max="600000" step="100" placeholder="10000" /></label>
+      </div>
+      <div v-if="thresholdError" class="threshold-error">{{ thresholdError }}</div>
+      <div class="threshold-actions">
+        <button
+          type="button"
+          class="seg-btn"
+          :disabled="!!thresholdError"
+          @click="saveGlobalThresholds"
+        >Save</button>
+        <button type="button" class="seg-btn" @click="resetGlobalThresholds">Reset to default</button>
+      </div>
     </section>
 
     <!-- Highlighting -->
@@ -322,7 +340,7 @@ function onResetAll() {
 </template>
 
 <style scoped>
-:deep(.settings-modal) { width: min(860px, 94vw); max-height: 86vh; }
+:deep(.settings-modal) { width: min(720px, 94vw); max-height: 86vh; }
 
 .settings-tabs {
   display: flex;
