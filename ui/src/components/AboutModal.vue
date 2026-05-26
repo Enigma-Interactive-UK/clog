@@ -4,13 +4,30 @@
  * first open and caches the result for the lifetime of the window.
  */
 
-import { ref } from 'vue'
+import { inject, ref } from 'vue'
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app'
 import BaseModal from './BaseModal.vue'
 
 defineProps<{ open: boolean }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+// Provided by App.vue. Calls the Rust check with force=true so the result
+// surfaces via the update banner or the up-to-date toast regardless of
+// the 24h silent-check cadence.
+const triggerUpdateCheck = inject<(() => void) | undefined>('checkForUpdates', undefined)
+const checkingUpdate = ref(false)
+async function onCheckUpdates() {
+  if (!triggerUpdateCheck) return
+  checkingUpdate.value = true
+  try {
+    triggerUpdateCheck()
+  } finally {
+    // The check is async inside the composable; just gate the button
+    // briefly so a double-click doesn't fire two requests.
+    setTimeout(() => { checkingUpdate.value = false }, 800)
+  }
+}
 
 const aboutInfo = ref<{ name: string; version: string; tauri: string } | null>(null)
 
@@ -46,7 +63,16 @@ defineExpose({ ensureLoaded })
       <div>
         <h3 class="about-name">{{ aboutInfo?.name ?? 'Clog' }} 👞</h3>
         <p class="about-tag muted">The Core log viewer: tail, search and filter your logs.</p>
-        <p class="about-version">Version <code>{{ aboutInfo?.version ?? '...' }}</code></p>
+        <p class="about-version">
+          Version <code>{{ aboutInfo?.version ?? '...' }}</code>
+          <button
+            type="button"
+            class="check-update-btn"
+            :disabled="checkingUpdate || !triggerUpdateCheck"
+            title="Check for a newer release"
+            @click="onCheckUpdates"
+          >{{ checkingUpdate ? 'Checking...' : 'Check for updates' }}</button>
+        </p>
       </div>
     </div>
     <br>
@@ -98,8 +124,26 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   margin: 0;
   font-size: 0.85rem;
   color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 
   code { color: var(--fg-default); font-family: var(--font-mono); }
+}
+
+.check-update-btn {
+  background: var(--bg-button);
+  color: var(--fg-default);
+  border: 1px solid var(--border-button);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: var(--font-sans);
+
+  &:hover:not(:disabled) { background: var(--bg-button-hover); }
+  &:disabled { opacity: 0.6; cursor: progress; }
 }
 .dep-list { padding-left: 1.2rem; font-size: 0.85rem; line-height: 1.5; }
 .link-btn {

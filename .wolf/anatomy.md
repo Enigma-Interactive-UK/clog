@@ -1,11 +1,11 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T18:18:53.939Z
-> Files: 98 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T19:26:01.485Z
+> Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
-- `.gitignore` — Git ignore rules (~98 tok)
+- `.gitignore` — Git ignore rules (~115 tok)
 - `Cargo.toml` — Rust package manifest (~111 tok)
 - `CLAUDE.md` — CLAUDE.md (~1313 tok)
 - `clog.code-workspace` (~16 tok)
@@ -25,17 +25,17 @@
 
 ## .claude/skills/release/
 
-- `SKILL.md` — Release (~993 tok)
+- `SKILL.md` — Release (~1813 tok)
 
 ## crates/clog-app/
 
 - `build.rs` (~12 tok)
-- `Cargo.toml` — Rust package manifest (~228 tok)
-- `tauri.conf.json` (~456 tok)
+- `Cargo.toml` — Rust package manifest (~235 tok)
+- `tauri.conf.json` (~579 tok)
 
 ## crates/clog-app/capabilities/
 
-- `default.json` (~142 tok)
+- `default.json` (~148 tok)
 
 ## crates/clog-app/gen/schemas/
 
@@ -47,9 +47,10 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~36348 tok)
-- `paths.rs` — Filesystem layout for clog's persistent data. (~994 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37763 tok)
+- `paths.rs` — Filesystem layout for clog's persistent data. (~1020 tok)
 - `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4899 tok)
+- `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1862 tok)
 
 ## crates/clog-core/
 
@@ -85,7 +86,7 @@
 
 - `build-phases.md` — Clog v1 — Build phases (~4689 tok)
 - `design.md` — Clog v1 — Design (~5493 tok)
-- `future-ideas.md` — Clog - Future ideas (~999 tok)
+- `future-ideas.md` — Clog - Future ideas (~1084 tok)
 
 ## docs/superpowers/plans/
 
@@ -98,6 +99,7 @@
 - `2026-05-23-minimap-heatmap-design.md` — Minimap heatmap upgrade - design (~1642 tok)
 - `2026-05-23-slow-request-insights-design.md` — Slow request insights - design (~9472 tok)
 - `2026-05-24-thread-insights-design.md` — Thread insights + consolidated filter flyout - design (~3328 tok)
+- `2026-05-26-auto-update-design.md` — Auto-update - design (~4102 tok)
 
 ## research/
 
@@ -109,8 +111,14 @@
 
 ## scripts/
 
-- `make-portable-zip.ps1` — make-portable-zip.ps1 (~805 tok)
+- `make-latest-json.ps1` — make-latest-json.ps1 (~1274 tok)
+- `make-portable-zip.ps1` — make-portable-zip.ps1 (~808 tok)
 - `release.ps1` — release.ps1 (~288 tok)
+
+## tmp/update-stub/
+
+- `Clog_1.0.1_x64-setup.exe` (~12 tok)
+- `latest.json` (~193 tok)
 
 ## ui/
 
@@ -127,7 +135,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4537 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~5162 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 218 vars (~5770 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
@@ -135,7 +143,7 @@
 
 ## ui/src/components/
 
-- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1130 tok)
+- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1522 tok)
 - `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1247 tok)
 - `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
@@ -152,6 +160,7 @@
 - `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7388 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1382 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
+- `UpdateBanner.vue` — Non-modal banner that surfaces an available update. Sits at the bottom (~1396 tok)
 
 ## ui/src/composables/
 
@@ -162,6 +171,7 @@
 - `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~2237 tok)
 - `useStartupPaths.ts` — CLI argv + single-instance forward handler. (~450 tok)
 - `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
+- `useUpdateBanner.ts` — Update-banner state machine. Talks to the Rust shim (`check_for_update`, (~1321 tok)
 - `useWindowChrome.ts` — Window chrome: maximize/restore tracking + the three title-bar buttons. (~443 tok)
 
 ## ui/src/highlight/

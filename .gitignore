@@ -11,6 +11,9 @@ research/
 # Tauri generated files (regenerated each build)
 /crates/clog-app/gen/
 
+# Local-only scratch dir (smoke-test update stubs, etc.)
+/tmp/
+
 # OpenWolf ephemeral state
 .wolf/memory.md
 .wolf/daemon.log

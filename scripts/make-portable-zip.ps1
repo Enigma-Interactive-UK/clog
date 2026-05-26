@@ -68,7 +68,7 @@ Quick start:
 
 To "uninstall", just delete the folder. Nothing is written outside it.
 
-Project home: https://github.com/lewster32/clog
+Project home: https://github.com/Enigma-Interactive-UK/clog
 "@
 
 $readmePath = Join-Path $stageDir "README.txt"

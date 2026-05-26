@@ -6,6 +6,7 @@
 mod channels;
 mod paths;
 mod persistence;
+mod update;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -1982,9 +1983,7 @@ fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
         s.speed_rail_enabled = b;
     }
     if let Some(opt) = patch.mono_font_family {
-        s.mono_font_family = opt
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty());
+        s.mono_font_family = opt.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     }
     s.save().map_err(|e| IpcError::Io {
         message: e.to_string(),
@@ -2125,6 +2124,154 @@ fn reset_data(req: ResetRequest) -> Result<(), IpcError> {
     Ok(())
 }
 
+// --- updater -------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct UpdateStatus {
+    /// True when `latest.json` advertised a version higher than the running
+    /// binary AND we are not currently snoozing that version.
+    available: bool,
+    /// Currently-running app version. Always populated.
+    current_version: String,
+    /// Advertised version (only present when `available` is true).
+    available_version: Option<String>,
+    /// One-line summary lifted from `latest.json`'s `notes` field. Trimmed
+    /// of trailing whitespace; rendered verbatim by the UI.
+    notes: Option<String>,
+    /// `"installer"` for installed builds, `"portable"` for portable builds.
+    /// The UI uses this to swap the `Update now` button for a `Download`
+    /// link to the release page when running portably.
+    mode: &'static str,
+    /// True when the silent-cadence guard kept us from making an HTTP
+    /// request this call. The UI uses this only to decide whether to log
+    /// telemetry; the `available` flag is the actual signal.
+    skipped_by_cadence: bool,
+    /// True when the user has snoozed the advertised version. The IPC
+    /// still returns the version + notes so callers can show "you're
+    /// snoozing 1.2.3" if they want; `available` is forced to false.
+    snoozed: bool,
+}
+
+#[tauri::command]
+async fn check_for_update(force: bool, app: AppHandle) -> Result<UpdateStatus, IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current_version = app.package_info().version.to_string();
+    let mode = if paths::is_portable() {
+        "portable"
+    } else {
+        "installer"
+    };
+
+    let mut state = update::UpdateState::load();
+    let now = std::time::SystemTime::now();
+
+    if !force && !state.should_silent_check(now) {
+        return Ok(UpdateStatus {
+            available: false,
+            current_version,
+            available_version: None,
+            notes: None,
+            mode,
+            skipped_by_cadence: true,
+            snoozed: false,
+        });
+    }
+
+    let updater = app.updater().map_err(|e| IpcError::BadPattern {
+        message: format!("updater unavailable: {e}"),
+    })?;
+
+    // mark_checked before the network call so a hung endpoint still
+    // counts as "checked today" and we don't hammer a flaky server on
+    // every launch.
+    state.mark_checked(now);
+    let _ = state.save();
+
+    let check_result = updater.check().await;
+    match check_result {
+        Ok(Some(u)) => {
+            let version = u.version.clone();
+            let notes = u.body.as_ref().and_then(|b| {
+                let trimmed = b.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.lines().next().unwrap_or(trimmed).to_string())
+                }
+            });
+            let snoozed = !force && state.is_snoozed(&version, now);
+            Ok(UpdateStatus {
+                available: !snoozed,
+                current_version,
+                available_version: Some(version),
+                notes,
+                mode,
+                skipped_by_cadence: false,
+                snoozed,
+            })
+        }
+        Ok(None) => Ok(UpdateStatus {
+            available: false,
+            current_version,
+            available_version: None,
+            notes: None,
+            mode,
+            skipped_by_cadence: false,
+            snoozed: false,
+        }),
+        Err(e) => {
+            tracing::warn!(target: "clog::update", error = %e, "update check failed");
+            Err(IpcError::BadPattern {
+                message: format!("update check failed: {e}"),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+async fn install_update_now(app: AppHandle) -> Result<(), IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    if paths::is_portable() {
+        return Err(IpcError::BadPattern {
+            message: "portable installs do not auto-update; open the release page".to_string(),
+        });
+    }
+
+    let updater = app.updater().map_err(|e| IpcError::BadPattern {
+        message: format!("updater unavailable: {e}"),
+    })?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| IpcError::BadPattern {
+            message: format!("update check failed: {e}"),
+        })?
+        .ok_or(IpcError::BadPattern {
+            message: "no update available".to_string(),
+        })?;
+
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| IpcError::BadPattern {
+            message: format!("update install failed: {e}"),
+        })?;
+    Ok(())
+}
+
+#[tauri::command]
+fn snooze_update(version: String) -> Result<(), IpcError> {
+    let mut state = update::UpdateState::load();
+    state.snooze(&version, std::time::SystemTime::now());
+    state.save().map_err(|e| IpcError::Io {
+        message: e.to_string(),
+        path: paths::update_state_path().display().to_string(),
+    })
+}
+
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     let logs = paths::logs_dir();
     let appender = tracing_appender::rolling::daily(&logs, "clog.log");
@@ -2175,6 +2322,7 @@ fn main() {
         .manage(state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             open_file,
             get_records,
@@ -2211,6 +2359,9 @@ fn main() {
             forget_per_file_rules,
             reset_data,
             take_startup_paths,
+            check_for_update,
+            install_update_now,
+            snooze_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

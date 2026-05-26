@@ -28,12 +28,12 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "lewster32",
-    "copyright": "Copyright (c) 2026 lewster32",
+    "publisher": "Enigma Interactive",
+    "copyright": "Copyright (c) 2026 Enigma Interactive",
     "category": "DeveloperTool",
     "shortDescription": "Viewer for log4j2-formatted Play 1.x logs",
     "longDescription": "Clog (Core Log) is a Windows desktop application for viewing, tailing, searching and filtering log4j2-formatted log files produced by Play 1.x Java applications.",
-    "homepage": "https://github.com/lewster32/clog",
+    "homepage": "https://github.com/Enigma-Interactive-UK/clog",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -54,6 +54,17 @@
         "languages": ["English"],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Enigma-Interactive-UK/clog/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE2NzUzNTE5N0RERkIwNjAKUldSZ3NOOTlHVFYxRmxNOC9GVFJrRFVVMnlvWjlXdE81Z1ZWelpjWGlRUnZybVIxYnpBZjFaMDcK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

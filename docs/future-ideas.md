@@ -79,6 +79,13 @@
 - **Auto-pause tail on scroll up, resume on jump-to-bottom** - the toggle
   exists; making it automatic-with-override is friendlier.
 
+## Distribution
+
+- **Auto-update via `tauri-plugin-updater`** - design called for this in v1
+  (`design.md §16`) but it was deferred out of P10. Design spec:
+  [docs/superpowers/specs/2026-05-26-auto-update-design.md](superpowers/specs/2026-05-26-auto-update-design.md).
+  Sliced into P11.A (plumbing) and P11.B (signed end-to-end).
+
 ## Top picks for v1.1
 
 If forced to pick three, these compound on each other and on the existing

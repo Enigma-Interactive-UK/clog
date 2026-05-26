@@ -61,8 +61,20 @@ fn per_user_root() -> PathBuf {
     std::env::temp_dir().join("clog")
 }
 
+/// True when the running executable is in portable mode (a `clog-data\`
+/// folder sits beside it). Used by the updater to branch on whether
+/// in-place installer updates are appropriate.
+#[must_use]
+pub fn is_portable() -> bool {
+    portable_root().is_some()
+}
+
 pub fn settings_path() -> PathBuf {
     data_dir().join("settings.json")
+}
+
+pub fn update_state_path() -> PathBuf {
+    data_dir().join("update.json")
 }
 
 pub fn session_path() -> PathBuf {
