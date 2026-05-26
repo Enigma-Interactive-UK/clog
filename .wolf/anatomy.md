@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T18:13:42.069Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T18:18:53.939Z
 > Files: 98 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -129,7 +129,7 @@
 
 - `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4537 tok)
 - `main.ts` (~32 tok)
-- `style.css` — Styles: 214 vars (~5725 tok)
+- `style.css` — Styles: 218 vars (~5770 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
 - `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2402 tok)
 
@@ -166,7 +166,7 @@
 
 ## ui/src/highlight/
 
-- `default-rules.json` (~358 tok)
+- `default-rules.json` (~558 tok)
 - `engine.test.ts` — HighlightRulesFile: findCls (~1401 tok)
 - `engine.ts` — Reactive version counter. Bumped on every `setRules()` call so any Vue (~3424 tok)
 - `record-render.ts` — Render a log line's text into LeafSpans, applying axis-1 header field (~804 tok)

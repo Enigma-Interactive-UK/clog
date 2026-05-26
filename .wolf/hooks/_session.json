@@ -1,38 +1,95 @@
 {
-  "session_id": "session-2026-05-26-1912",
-  "started": "2026-05-26T18:12:56.249Z",
+  "session_id": "session-2026-05-26-1915",
+  "started": "2026-05-26T18:15:05.212Z",
   "files_read": {
-    "e:/Work/clog/ui/src/composables/useAppShortcuts.ts": {
+    "e:/Work/clog/ui/src/highlight/engine.ts": {
       "count": 1,
-      "tokens": 769,
-      "first_read": "2026-05-26T18:13:23.876Z"
+      "tokens": 3424,
+      "first_read": "2026-05-26T18:15:26.609Z"
     },
-    "e:/Work/clog/ui/src/App.vue": {
+    "e:/Work/clog/ui/src/highlight/user-rule.ts": {
       "count": 1,
-      "tokens": 4537,
-      "first_read": "2026-05-26T18:13:28.888Z"
+      "tokens": 460,
+      "first_read": "2026-05-26T18:15:35.308Z"
+    },
+    "e:/Work/clog/ui/src/composables/useHighlightRules.ts": {
+      "count": 1,
+      "tokens": 1118,
+      "first_read": "2026-05-26T18:15:38.031Z"
+    },
+    "e:/Work/clog/ui/src/highlight/default-rules.json": {
+      "count": 1,
+      "tokens": 358,
+      "first_read": "2026-05-26T18:15:40.853Z"
+    },
+    "e:/Work/clog/ui/src/style.css": {
+      "count": 4,
+      "tokens": 5725,
+      "first_read": "2026-05-26T18:15:47.220Z"
+    },
+    "e:/Work/clog/ui/src/highlight/engine.test.ts": {
+      "count": 1,
+      "tokens": 1401,
+      "first_read": "2026-05-26T18:16:42.795Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/composables/useAppShortcuts.ts",
+      "file": "e:/Work/clog/ui/src/highlight/default-rules.json",
       "action": "edit",
-      "tokens": 45,
-      "at": "2026-05-26T18:13:37.263Z"
+      "tokens": 210,
+      "at": "2026-05-26T18:17:02.488Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/composables/useAppShortcuts.ts",
+      "file": "e:/Work/clog/ui/src/style.css",
       "action": "edit",
-      "tokens": 30,
-      "at": "2026-05-26T18:13:42.088Z"
+      "tokens": 39,
+      "at": "2026-05-26T18:17:07.276Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/style.css",
+      "action": "edit",
+      "tokens": 28,
+      "at": "2026-05-26T18:17:12.701Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/style.css",
+      "action": "edit",
+      "tokens": 42,
+      "at": "2026-05-26T18:17:18.323Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/style.css",
+      "action": "edit",
+      "tokens": 21,
+      "at": "2026-05-26T18:17:23.075Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/style.css",
+      "action": "edit",
+      "tokens": 29,
+      "at": "2026-05-26T18:17:28.144Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/highlight/default-rules.json",
+      "action": "edit",
+      "tokens": 126,
+      "at": "2026-05-26T18:18:18.445Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/highlight/default-rules.json",
+      "action": "edit",
+      "tokens": 126,
+      "at": "2026-05-26T18:18:53.949Z"
     }
   ],
   "edit_counts": {
-    "ui/src/composables/useAppShortcuts.ts": 2
+    "ui/src/highlight/default-rules.json": 3,
+    "ui/src/style.css": 5
   },
-  "anatomy_hits": 2,
+  "anatomy_hits": 6,
   "anatomy_misses": 0,
-  "repeated_reads_warned": 0,
+  "repeated_reads_warned": 3,
   "cerebrum_warnings": 0,
   "stop_count": 1
 }

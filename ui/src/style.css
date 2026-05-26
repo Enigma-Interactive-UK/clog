@@ -118,6 +118,7 @@
   --hl-stack-line-fg: var(--amber-500);
   --hl-path-fg: var(--green-500);
   --hl-url-fg: var(--blue-500);
+  --hl-ip-fg: var(--purple-500);
   --hl-search-bg: var(--amber-500);
   --hl-search-fg: var(--slate-950);
 
@@ -225,6 +226,7 @@
   --hl-stack-line-fg: #b97509;
   --hl-path-fg: #15803d;
   --hl-url-fg: #1d4ed8;
+  --hl-ip-fg: #7e22ce;
   --hl-search-bg: #fde68a;
   --hl-search-fg: #14181f;
 
@@ -301,6 +303,7 @@
   --hl-stack-line-fg: #E69F00;
   --hl-path-fg: #009E73;
   --hl-url-fg: #0072B2;
+  --hl-ip-fg: #CC79A7;
 
   /* User-rule palette: 8 slots remapped to the nearest Wong stop so the
      palette stays distinguishable for users authoring their own rules. */
@@ -339,6 +342,7 @@
   --hl-stack-line-fg: #a8730a;
   --hl-path-fg: #00715a;
   --hl-url-fg: #005f8a;
+  --hl-ip-fg: #9a4f7a;
 
   --h-user-red:     #a14600;
   --h-user-amber:   #a8730a;
@@ -536,6 +540,7 @@ textarea,
   cursor: pointer;
 }
 .h-url:hover { text-decoration-thickness: 2px; }
+.h-ip { color: var(--hl-ip-fg); font-weight: 600; }
 .h-search-match {
   background: var(--hl-search-bg);
   color: var(--hl-search-fg);
