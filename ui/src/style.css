@@ -490,3 +490,56 @@ textarea,
 .h-user-bold { font-weight: 700 !important; }
 .h-user-italic { font-style: italic !important; }
 .h-user-underline { text-decoration: underline !important; }
+
+/* --- Shared log-line span styling --------------------------------------
+   Axis-1 (header field slicing), axis-2 highlight engine classes, and
+   level colouring on the level segment. Lives here so both the main
+   viewport rows and the record-modal lines render identically. Row-
+   level decoration (gradient washes, current-hit, bookmarked, marker
+   rails) stays in LogViewport's scoped block - the modal intentionally
+   omits those to stay distraction-free. */
+.s-level { font-weight: 600; }
+.level-trace { color: var(--level-trace); }
+.level-debug { color: var(--level-debug); }
+.level-info { color: var(--level-info); }
+.level-warn { color: var(--level-warn); }
+.level-error { color: var(--level-error); }
+.level-fatal { color: var(--level-fatal); }
+.level-off { color: var(--level-off); }
+.level-all { color: var(--level-all); }
+.level-unknown { color: var(--level-unknown); }
+
+.s-timestamp { color: var(--fg-timestamp); }
+.s-thread { color: var(--fg-thread); }
+.s-logger { color: var(--fg-logger); font-style: italic; }
+.s-message { color: var(--fg-message); }
+.s-sep { color: var(--fg-separator-dash); }
+
+.h-exception { color: var(--hl-exception-fg); font-weight: 700; }
+.h-caused-by { color: var(--hl-caused-by-fg); font-weight: 700; }
+.h-stack-frame { color: var(--fg-message); }
+.h-stack-fqn { color: var(--hl-stack-fqn-fg); font-weight: 600; }
+.h-stack-file {
+  color: var(--hl-stack-file-fg);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.h-stack-line { color: var(--hl-stack-line-fg); }
+.h-path {
+  color: var(--hl-path-fg);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.h-url {
+  color: var(--hl-url-fg);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.h-url:hover { text-decoration-thickness: 2px; }
+.h-search-match {
+  background: var(--hl-search-bg);
+  color: var(--hl-search-fg);
+  font-weight: 600;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--hl-search-bg);
+}

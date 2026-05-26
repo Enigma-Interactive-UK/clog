@@ -568,6 +568,27 @@ fn get_lines(
     build_lines_payload(file, start, end)
 }
 
+#[tauri::command]
+fn get_record_lines(
+    state: State<'_, AppState>,
+    file_id: u64,
+    record_idx: u64,
+) -> Result<LinesPayload, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    let total = file.records.len() as u64;
+    if record_idx >= total {
+        return Err(IpcError::OutOfRange);
+    }
+    let rec_usz = usize::try_from(record_idx).unwrap_or(usize::MAX);
+    let rec = &file.records[rec_usz];
+    let start = u64::from(rec.line_offset);
+    let end = start + u64::from(rec.line_count);
+    build_lines_payload(file, start, end)
+}
+
 /// Pure helper that builds the page payload from an `OpenedFile`. Split out
 /// so tests can exercise the line/record/byte invariants without going
 /// through Tauri state.
@@ -2158,6 +2179,7 @@ fn main() {
             open_file,
             get_records,
             get_lines,
+            get_record_lines,
             close_file,
             test_pattern,
             set_pattern,

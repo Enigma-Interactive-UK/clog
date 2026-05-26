@@ -17,12 +17,12 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, useTemplateRef, watc
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useVirtualizer } from '@tanstack/vue-virtual'
-import { highlightsFor, overlay, rulesVersionRef, type LeafSpan } from '../highlight/engine'
+import { rulesVersionRef, type LeafSpan } from '../highlight/engine'
+import { renderLineSpans } from '../highlight/record-render'
 import {
   OVERSCAN,
   PAGE_SIZE,
   type BucketStat,
-  type HeaderFields,
   type HitRef,
   type LevelMinimapPayload,
   type LineRow,
@@ -34,6 +34,7 @@ import {
 } from '../types'
 import type { Tab } from '../tab'
 import InsightsDrawer from './InsightsDrawer.vue'
+import { useContextMenu, type MenuItem } from '../composables/useContextMenu'
 
 const props = defineProps<{
   tab: Tab
@@ -1395,68 +1396,12 @@ onBeforeUnmount(() => {
 })
 
 // --- Rendering ---
-function headerBaseSpans(
-  text: string,
-  fields: HeaderFields,
-): Array<{ start: number; end: number; cls: string }> {
-  type Mark = { start: number; end: number; cls: string }
-  const marks: Mark[] = []
-  if (fields.level) marks.push({ start: fields.level[0], end: fields.level[1], cls: 'level' })
-  if (fields.timestamp)
-    marks.push({ start: fields.timestamp[0], end: fields.timestamp[1], cls: 'timestamp' })
-  if (fields.thread) marks.push({ start: fields.thread[0], end: fields.thread[1], cls: 'thread' })
-  if (fields.logger) marks.push({ start: fields.logger[0], end: fields.logger[1], cls: 'logger' })
-  if (fields.message) marks.push({ start: fields.message[0], end: fields.message[1], cls: 'message' })
-  marks.sort((a, b) => a.start - b.start)
-  const out: Mark[] = []
-  let cursor = 0
-  for (const m of marks) {
-    if (m.start > cursor) out.push({ start: cursor, end: m.start, cls: 'sep' })
-    out.push(m)
-    cursor = m.end
-  }
-  if (cursor < text.length) out.push({ start: cursor, end: text.length, cls: 'sep' })
-  return out
-}
-
-function searchSpansForLine(row: LineRow): { start: number; end: number; cls: string }[] {
-  const hit = props.tab.hits.value.get(row.record_idx)
-  if (!hit) return []
-  const boff = row.byte_offset_in_record
-  const len = row.text.length
-  const out: { start: number; end: number; cls: string }[] = []
-  for (const [s, e] of hit.ranges) {
-    const ls = Math.max(0, s - boff)
-    const le = Math.min(len, e - boff)
-    if (le > ls) out.push({ start: ls, end: le, cls: 'h-search-match' })
-  }
-  return out
-}
-
 function renderLine(row: LineRow): LeafSpan[] {
   // Register reactive dep on the engine's rule version so saved rule edits
   // re-render the viewport without needing a scroll or tab switch.
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   rulesVersionRef.value
-  const search = searchSpansForLine(row)
-  if (row.fields) {
-    const base = headerBaseSpans(row.text, row.fields)
-    const axis2 = highlightsFor(row.text)
-    const combined = search.length === 0 ? axis2 : [...search, ...axis2]
-    const leaves = overlay(row.text, base, combined)
-    return decorateLevels(leaves, row.level)
-  }
-  const base = [{ start: 0, end: row.text.length, cls: 'message' }]
-  const axis2 = highlightsFor(row.text)
-  const combined = search.length === 0 ? axis2 : [...axis2, ...search]
-  return overlay(row.text, base, combined)
-}
-
-function decorateLevels(leaves: LeafSpan[], level: string): LeafSpan[] {
-  if (!leaves.some((l) => l.cls.includes('s-level'))) return leaves
-  return leaves.map((l) =>
-    l.cls.includes('s-level') ? { ...l, cls: l.cls + ' level-' + level } : l,
-  )
+  return renderLineSpans(row, props.tab.hits.value.get(row.record_idx))
 }
 
 async function onSpanClick(span: LeafSpan, ev: MouseEvent) {
@@ -1496,6 +1441,75 @@ function onIdxContextMenu(lineIdx: number, ev: MouseEvent) {
   props.tab.removeBookmark(lineIdx)
 }
 
+const { show: showRowContextMenu } = useContextMenu()
+const buildUniversalItems = inject<(() => MenuItem[]) | null>('buildUniversalContextItems', null)
+
+interface RecordRenderedLine { level: string; isHeader: boolean; spans: LeafSpan[]; text: string }
+const openRecordModal = inject<((args: { recordIdx: number; lines: RecordRenderedLine[]; rawText: string }) => void) | null>('openRecordModal', null)
+const openRecordModalLoading = inject<((recordIdx: number) => number) | null>('openRecordModalLoading', null)
+const failRecordModal = inject<((gen: number, recordIdx: number, message: string) => void) | null>('failRecordModal', null)
+const isCurrentRecordModalGen = inject<((gen: number) => boolean) | null>('isCurrentRecordModalGen', null)
+
+interface RecordHeaderLite { line_offset: number; line_count: number }
+interface RecordsResponse { headers: RecordHeaderLite[] }
+interface LinesResponse { lines: LineRow[] }
+
+async function fetchAndShowRecord(recordIdx: number) {
+  const fileId = props.tab.file.value.file_id
+  const hit = props.tab.hits.value.get(recordIdx) ?? null
+  const gen = openRecordModalLoading?.(recordIdx) ?? 0
+  try {
+    const recPayload = await invoke<RecordsResponse>('get_records', {
+      fileId,
+      start: recordIdx,
+      end: recordIdx + 1,
+    })
+    if (isCurrentRecordModalGen && !isCurrentRecordModalGen(gen)) return
+    const header = recPayload.headers[0]
+    if (!header) throw new Error('record not found')
+    const start = header.line_offset
+    const end = start + header.line_count
+    const linesPayload = await invoke<LinesResponse>('get_lines', {
+      fileId,
+      start,
+      end,
+    })
+    if (isCurrentRecordModalGen && !isCurrentRecordModalGen(gen)) return
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    rulesVersionRef.value
+    const lines: RecordRenderedLine[] = linesPayload.lines.map((row) => ({
+      level: row.level,
+      isHeader: row.line_within_record === 0,
+      spans: renderLineSpans(row, hit),
+      text: row.text,
+    }))
+    const rawText = linesPayload.lines.map((l) => l.text).join('\n')
+    openRecordModal?.({ recordIdx, lines, rawText })
+  } catch (e) {
+    const err = e as { message?: string } | string
+    const message = typeof err === 'string' ? err : (err.message ?? String(e))
+    failRecordModal?.(gen, recordIdx, message)
+  }
+}
+
+function onRowContextMenu(row: LineRow | null, ev: MouseEvent) {
+  if (!row) return
+  ev.preventDefault()
+  ev.stopPropagation()
+  const items: MenuItem[] = [
+    {
+      kind: 'action',
+      label: 'Show full record',
+      onSelect: () => { void fetchAndShowRecord(row.record_idx) },
+    },
+  ]
+  const universal = buildUniversalItems?.() ?? []
+  if (universal.length > 0) {
+    items.push({ kind: 'separator' }, ...universal)
+  }
+  showRowContextMenu({ clientX: ev.clientX, clientY: ev.clientY }, items)
+}
+
 function heatLine(error: number, warn: number): string {
   const parts: string[] = []
   if (error > 0) parts.push(`${error} ${error === 1 ? 'error' : 'errors'}`)
@@ -1533,6 +1547,7 @@ defineExpose({
             { 'is-bookmarked': tab.isBookmarked(stickyHeader.lineIndex) },
           ]"
           :style="{ '--gutter-color': levelGutterVar(stickyHeader.row.level) }"
+          @contextmenu="onRowContextMenu(stickyHeader.row, $event)"
         >
           <span class="gutter" />
           <button
@@ -1581,6 +1596,7 @@ defineExpose({
             :data-marker-label="markerLineLookup.get(actualLineIndex(vrow.index))
               ? markerLabel(markerLineLookup.get(actualLineIndex(vrow.index))!)
               : null"
+            @contextmenu="onRowContextMenu(lineRowVirtual(vrow.index), $event)"
           >
             <span class="gutter" />
             <span
@@ -2200,63 +2216,10 @@ defineExpose({
       color: var(--fg-message);
     }
 
-    .s-level { font-weight: 600; }
-    .level-trace { color: var(--level-trace); }
-    .level-debug { color: var(--level-debug); }
-    .level-info { color: var(--level-info); }
-    .level-warn { color: var(--level-warn); }
-    .level-error { color: var(--level-error); }
-    .level-fatal { color: var(--level-fatal); }
-    .level-off { color: var(--level-off); }
-    .level-all { color: var(--level-all); }
-    .level-unknown { color: var(--level-unknown); }
-
-    .s-timestamp { color: var(--fg-timestamp); }
-    .s-thread { color: var(--fg-thread); }
-    .s-logger { color: var(--fg-logger); font-style: italic; }
-    .s-message { color: var(--fg-message); }
-    .s-sep { color: var(--fg-separator-dash); }
-
-    .continuation { color: var(--fg-message); }
-
-    .h-exception {
-      color: var(--hl-exception-fg);
-      font-weight: 700;
-    }
-    .h-caused-by {
-      color: var(--hl-caused-by-fg);
-      font-weight: 700;
-    }
-    .h-stack-frame { color: var(--fg-message); }
-    .h-stack-fqn {
-      color: var(--hl-stack-fqn-fg);
-      font-weight: 600;
-    }
-    .h-stack-file {
-      color: var(--hl-stack-file-fg);
-      text-decoration: underline;
-      text-decoration-style: dotted;
-    }
-    .h-stack-line { color: var(--hl-stack-line-fg); }
-    .h-path {
-      color: var(--hl-path-fg);
-      text-decoration: underline;
-      text-decoration-style: dotted;
-    }
-    .h-url {
-      color: var(--hl-url-fg);
-      text-decoration: underline;
-      cursor: pointer;
-
-      &:hover { text-decoration-thickness: 2px; }
-    }
-    .h-search-match {
-      background: var(--hl-search-bg);
-      color: var(--hl-search-fg);
-      font-weight: 600;
-      border-radius: 2px;
-      box-shadow: 0 0 0 1px var(--hl-search-bg);
-    }
+    /* Span-level styling for axis-1 fields, level colouring, and axis-2
+       highlight classes lives in style.css so the record modal can reuse
+       it. Row-layout decoration (gradients, current-hit, bookmarks,
+       markers) stays scoped to the viewport. */
 
     &.level-row-warn {
       background-image: linear-gradient(

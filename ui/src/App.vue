@@ -19,6 +19,7 @@ import ContextMenu from './components/ContextMenu.vue'
 import DropOverlay from './components/DropOverlay.vue'
 import LogViewport from './components/LogViewport.vue'
 import PatternModal from './components/PatternModal.vue'
+import RecordModal, { type RecordRenderedLine } from './components/RecordModal.vue'
 import SearchBar from './components/SearchBar.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -38,6 +39,24 @@ const settingsOpen = ref(false)
 const aboutOpen = ref(false)
 const patternOpen = ref(false)
 const dragHover = ref(false)
+
+interface RecordModalState {
+  open: boolean
+  recordIdx: number
+  lines: RecordRenderedLine[]
+  rawText: string
+  loading: boolean
+  error: string | null
+}
+const recordModal = ref<RecordModalState>({
+  open: false,
+  recordIdx: 0,
+  lines: [],
+  rawText: '',
+  loading: false,
+  error: null,
+})
+let recordModalGen = 0
 
 const viewportRef = useTemplateRef<InstanceType<typeof LogViewport>>('viewportRef')
 const aboutRef = useTemplateRef<InstanceType<typeof AboutModal>>('aboutRef')
@@ -254,6 +273,59 @@ function buildMinimapItems(): MenuItem[] {
   return [blendItem, opacityItem, speedRailItem]
 }
 
+interface OpenRecordModalArgs {
+  recordIdx: number
+  lines: RecordRenderedLine[]
+  rawText: string
+}
+
+function openRecordModal(args: OpenRecordModalArgs) {
+  recordModalGen++
+  recordModal.value = {
+    open: true,
+    recordIdx: args.recordIdx,
+    lines: args.lines,
+    rawText: args.rawText,
+    loading: false,
+    error: null,
+  }
+}
+
+function openRecordModalLoading(recordIdx: number) {
+  const gen = ++recordModalGen
+  recordModal.value = {
+    open: true,
+    recordIdx,
+    lines: [],
+    rawText: '',
+    loading: true,
+    error: null,
+  }
+  return gen
+}
+
+function failRecordModal(gen: number, recordIdx: number, message: string) {
+  if (gen !== recordModalGen) return
+  recordModal.value = {
+    open: true,
+    recordIdx,
+    lines: [],
+    rawText: '',
+    loading: false,
+    error: message,
+  }
+}
+
+function isCurrentRecordModalGen(gen: number) {
+  return gen === recordModalGen
+}
+
+provide('buildUniversalContextItems', buildUniversalItems)
+provide('openRecordModal', openRecordModal)
+provide('openRecordModalLoading', openRecordModalLoading)
+provide('failRecordModal', failRecordModal)
+provide('isCurrentRecordModalGen', isCurrentRecordModalGen)
+
 function onAppContextMenu(ev: MouseEvent) {
   // Inner elements that handle their own right-click (bookmark pin,
   // line-number gutter, cluster popover) call preventDefault + stop
@@ -423,6 +495,16 @@ onBeforeUnmount(() => {
       ref="aboutRef"
       :open="aboutOpen"
       @close="aboutOpen = false"
+    />
+
+    <RecordModal
+      v-if="recordModal.open"
+      :record-idx="recordModal.recordIdx"
+      :lines="recordModal.lines"
+      :raw-text="recordModal.rawText"
+      :loading="recordModal.loading"
+      :error="recordModal.error"
+      @close="recordModal = { ...recordModal, open: false }"
     />
 
     <ContextMenu />
