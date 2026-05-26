@@ -1,12 +1,12 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T19:26:01.485Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T19:30:38.602Z
 > Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
 - `.gitignore` — Git ignore rules (~115 tok)
-- `Cargo.toml` — Rust package manifest (~111 tok)
+- `Cargo.toml` — Rust package manifest (~104 tok)
 - `CLAUDE.md` — CLAUDE.md (~1313 tok)
 - `clog.code-workspace` (~16 tok)
 - `README.md` — Project documentation (~783 tok)

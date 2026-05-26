@@ -121,6 +121,16 @@
       "count": 1,
       "tokens": 0,
       "first_read": "2026-05-26T19:24:11.327Z"
+    },
+    "e:/Work/clog/Cargo.toml": {
+      "count": 1,
+      "tokens": 111,
+      "first_read": "2026-05-26T19:30:27.546Z"
+    },
+    "e:/Work/clog/ui/package.json": {
+      "count": 1,
+      "tokens": 195,
+      "first_read": "2026-05-26T19:30:27.744Z"
     }
   },
   "files_written": [
@@ -525,12 +535,30 @@
       "action": "edit",
       "tokens": 194,
       "at": "2026-05-26T19:26:01.494Z"
+    },
+    {
+      "file": "e:/Work/clog/crates/clog-app/tauri.conf.json",
+      "action": "edit",
+      "tokens": 6,
+      "at": "2026-05-26T19:30:19.550Z"
+    },
+    {
+      "file": "e:/Work/clog/Cargo.toml",
+      "action": "edit",
+      "tokens": 5,
+      "at": "2026-05-26T19:30:37.060Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/package.json",
+      "action": "edit",
+      "tokens": 6,
+      "at": "2026-05-26T19:30:38.610Z"
     }
   ],
   "edit_counts": {
     "docs/superpowers/specs/2026-05-26-auto-update-design.md": 7,
     "docs/future-ideas.md": 1,
-    "crates/clog-app/tauri.conf.json": 10,
+    "crates/clog-app/tauri.conf.json": 11,
     "scripts/make-portable-zip.ps1": 1,
     "crates/clog-app/Cargo.toml": 1,
     "crates/clog-app/capabilities/default.json": 1,
@@ -545,9 +573,11 @@
     "tmp/update-stub/latest.json": 2,
     ".gitignore": 1,
     "scripts/make-latest-json.ps1": 3,
-    ".claude/skills/release/SKILL.md": 7
+    ".claude/skills/release/SKILL.md": 7,
+    "Cargo.toml": 1,
+    "ui/package.json": 1
   },
-  "anatomy_hits": 18,
+  "anatomy_hits": 20,
   "anatomy_misses": 6,
   "repeated_reads_warned": 11,
   "cerebrum_warnings": 0,
