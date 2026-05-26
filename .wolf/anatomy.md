@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:43:08.035Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:46:05.212Z
 > Files: 96 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -148,7 +148,7 @@
 - `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~21375 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2888 tok)
-- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7177 tok)
+- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7388 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1382 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 

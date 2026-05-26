@@ -299,7 +299,8 @@ function onResetAll() {
     </div>
 
     <!-- General -->
-    <section v-if="activeTab === 'general'" class="tab-panel" role="tabpanel">
+    <div class="tab-stack">
+    <section class="tab-panel" :class="{ 'is-active': activeTab === 'general' }" role="tabpanel" :aria-hidden="activeTab !== 'general'">
       <h3>Appearance</h3>
       <div class="row-grid">
         <span class="row-label">Theme</span>
@@ -436,7 +437,7 @@ function onResetAll() {
     </section>
 
     <!-- Slow requests -->
-    <section v-if="activeTab === 'slow-requests'" class="tab-panel" role="tabpanel">
+    <section class="tab-panel" :class="{ 'is-active': activeTab === 'slow-requests' }" role="tabpanel" :aria-hidden="activeTab !== 'slow-requests'">
       <h3>Display</h3>
       <div class="row-grid">
         <label for="speed-rail-enabled" class="row-label">Show speed rail</label>
@@ -478,7 +479,7 @@ function onResetAll() {
     </section>
 
     <!-- Highlighting -->
-    <section v-if="activeTab === 'highlighting'" class="tab-panel" role="tabpanel">
+    <section class="tab-panel" :class="{ 'is-active': activeTab === 'highlighting' }" role="tabpanel" :aria-hidden="activeTab !== 'highlighting'">
       <HighlightRulesEditor
         :model-value="globalRules"
         scope="global"
@@ -496,13 +497,12 @@ function onResetAll() {
         </span>
       </div>
       <p class="footer-note muted">
-        Built-in highlights (Java exceptions, <code>Caused by:</code>, stack frames, file paths, URLs)
-        always apply. User rules layer on top by priority; per-file rules layer on top of global ones.
+        User rules layer on top by priority; per-file rules layer on top of global ones.
       </p>
     </section>
 
     <!-- Advanced -->
-    <section v-if="activeTab === 'advanced'" class="tab-panel" role="tabpanel">
+    <section class="tab-panel" :class="{ 'is-active': activeTab === 'advanced' }" role="tabpanel" :aria-hidden="activeTab !== 'advanced'">
       <h3>Data folder</h3>
       <div class="row-grid">
         <span class="row-label">Location</span>
@@ -541,6 +541,7 @@ function onResetAll() {
         Automatic update checks are planned for a later milestone.
       </p>
     </section>
+    </div>
   </BaseModal>
 </template>
 
@@ -574,13 +575,29 @@ function onResetAll() {
   }
 }
 
-.tab-panel {
-  /* Pin a stable working height so switching tabs doesn't reflow the
-     modal up and down. Internal scroll picks up whatever overflows. */
-  height: 62vh;
-  overflow-y: auto;
+/* Stack all four tab panels into the same grid cell so the cell sizes
+   itself to the tallest panel's natural height. Switching tabs therefore
+   never reflows the modal: each tab gets the same height (the max of
+   all four), regardless of which is active. visibility:hidden keeps the
+   inactive panels in the layout (so their size still participates in
+   the cell sizing) while removing them from interaction and tab order. */
+.tab-stack {
+  display: grid;
+  grid-template-columns: 1fr;
   padding-right: 0.4rem;
-  animation: tab-fade 120ms ease-out;
+}
+.tab-panel {
+  grid-row: 1;
+  grid-column: 1;
+  overflow-y: auto;
+  visibility: hidden;
+  pointer-events: none;
+
+  &.is-active {
+    visibility: visible;
+    pointer-events: auto;
+    animation: tab-fade 120ms ease-out;
+  }
 }
 @keyframes tab-fade {
   from { opacity: 0; transform: translateY(2px); }

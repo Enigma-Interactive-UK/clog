@@ -28,8 +28,8 @@
       "first_read": "2026-05-26T17:24:53.703Z"
     },
     "e:/Work/clog/ui/src/components/SettingsModal.vue": {
-      "count": 7,
-      "tokens": 7022,
+      "count": 10,
+      "tokens": 7250,
       "first_read": "2026-05-26T17:24:58.111Z"
     },
     "e:/Work/clog/crates/clog-app/src/main.rs": {
@@ -310,6 +310,42 @@
       "action": "edit",
       "tokens": 164,
       "at": "2026-05-26T17:43:08.043Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 47,
+      "at": "2026-05-26T17:45:21.341Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 43,
+      "at": "2026-05-26T17:45:32.986Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 42,
+      "at": "2026-05-26T17:45:38.200Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 40,
+      "at": "2026-05-26T17:45:43.427Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 44,
+      "at": "2026-05-26T17:45:54.600Z"
+    },
+    {
+      "file": "e:/Work/clog/ui/src/components/SettingsModal.vue",
+      "action": "edit",
+      "tokens": 248,
+      "at": "2026-05-26T17:46:05.220Z"
     }
   ],
   "edit_counts": {
@@ -318,13 +354,13 @@
     "crates/clog-app/src/main.rs": 5,
     "ui/src/types.ts": 2,
     "ui/src/composables/useSettings.ts": 6,
-    "ui/src/components/SettingsModal.vue": 18,
+    "ui/src/components/SettingsModal.vue": 24,
     "ui/src/components/LogViewport.vue": 5,
     "ui/src/App.vue": 3
   },
   "anatomy_hits": 9,
   "anatomy_misses": 2,
-  "repeated_reads_warned": 13,
+  "repeated_reads_warned": 16,
   "cerebrum_warnings": 0,
-  "stop_count": 8
+  "stop_count": 10
 }
