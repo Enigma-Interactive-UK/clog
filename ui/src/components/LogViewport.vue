@@ -1082,12 +1082,20 @@ const minimapIndicator = computed(() => {
   return { top, height, visible: true }
 })
 
-function scrollToMinimapY(clientY: number) {
+// Scroll so the indicator handle's top sits at `clientY - rect.top - grabOffset`.
+// grabOffset is the distance from the handle's top edge to the pointer at the
+// moment the drag started; for clicks that land outside the handle the caller
+// passes half the handle height, which centres the handle on the click.
+function scrollToMinimapY(clientY: number, grabOffset: number) {
   const canvas = minimapEl.value
   const el = scrollEl.value
   if (!canvas || !el) return
   const rect = canvas.getBoundingClientRect()
-  const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+  const indicator = minimapIndicator.value
+  const trackPx = Math.max(0, rect.height - indicator.height)
+  if (trackPx <= 0) return
+  const handleTop = clientY - rect.top - grabOffset
+  const ratio = Math.max(0, Math.min(1, handleTop / trackPx))
   const total = el.scrollHeight - el.clientHeight
   el.scrollTop = ratio * total
 }
@@ -1208,17 +1216,36 @@ function onMinimapPointerLeave() {
   }
 }
 let minimapDragging = false
+let minimapGrabOffset = 0
 
 function onMinimapPointerDown(ev: PointerEvent) {
+  const canvas = minimapEl.value
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  const indicator = minimapIndicator.value
+  const localY = ev.clientY - rect.top
+  // If the click lands on the handle, preserve the grab offset so the handle
+  // tracks the pointer from where it was grabbed. Otherwise centre the handle
+  // on the click - this is the behaviour users expect when clicking the
+  // minimap track outside the pill.
+  if (
+    indicator.visible &&
+    localY >= indicator.top &&
+    localY <= indicator.top + indicator.height
+  ) {
+    minimapGrabOffset = localY - indicator.top
+  } else {
+    minimapGrabOffset = indicator.height / 2
+  }
   props.tab.followTail.value = false
   minimapDragging = true
   ;(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId)
-  scrollToMinimapY(ev.clientY)
+  scrollToMinimapY(ev.clientY, minimapGrabOffset)
 }
 function onMinimapPointerMove(ev: PointerEvent) {
   updateMinimapTooltip(ev)
   if (!minimapDragging) return
-  scrollToMinimapY(ev.clientY)
+  scrollToMinimapY(ev.clientY, minimapGrabOffset)
 }
 function onMinimapPointerUp(ev: PointerEvent) {
   minimapDragging = false
