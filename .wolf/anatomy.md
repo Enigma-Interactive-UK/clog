@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:46:05.212Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:51:55.954Z
 > Files: 96 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -129,7 +129,7 @@
 
 - `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4017 tok)
 - `main.ts` (~32 tok)
-- `style.css` — Styles: 214 vars (~4974 tok)
+- `style.css` — Styles: 214 vars (~5156 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
 - `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2402 tok)
 
@@ -144,7 +144,7 @@
 - `FiltersPopover.vue` — Popover hosting the level mask and thread-group mask toggles. Anchored (~1469 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
-- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10753 tok)
+- `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10874 tok)
 - `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~21375 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2888 tok)

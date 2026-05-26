@@ -1262,4 +1262,20 @@ function jumpTo(line: number) {
 }
 
 .threshold-error { color: var(--level-error); margin: 0.2rem 0; font-size: 0.75rem; }
+
+/* Drawer content is data, not chrome - paths and stats need to be
+   selectable so the user can copy a route, a duration, or a totals
+   line out of the panel. The global `user-select: none` on body still
+   covers the surrounding chrome (header, mode toggle, threshold chip). */
+.drawer-totals,
+.threshold-current,
+.entry-path,
+.entry-stats,
+.occ-ts,
+.occ-dur,
+.occ-line,
+.occ-dup {
+  user-select: text;
+  -webkit-user-select: text;
+}
 </style>

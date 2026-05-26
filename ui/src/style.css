@@ -406,6 +406,27 @@ html, body, #app {
   font-size: var(--font-size-base);
 }
 
+/* This is a desktop app, not a web page. Chrome (buttons, tabs, menus,
+   labels, modals) must not be text-selectable - dragging across a toolbar
+   should not leave a smeared selection trail. Selection is opted back in
+   only for content surfaces the user genuinely needs to copy from: log
+   row text, native form controls, and explicit contenteditable regions. */
+html, body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.viewport .row .txt,
+.sticky-shell .row .txt,
+.user-selectable,
+.user-selectable * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* --- App-wide scrollbar styling ---------------------------------------
    One look for every scrollable surface (tab strip, modals, log viewport,
    etc). The Tauri target is Webview2 (Chromium); we intentionally do
