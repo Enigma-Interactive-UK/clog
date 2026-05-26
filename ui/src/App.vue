@@ -15,6 +15,7 @@ import type { UserHighlightRule } from './types'
 
 import AboutModal from './components/AboutModal.vue'
 import AppHeader from './components/AppHeader.vue'
+import ContextMenu from './components/ContextMenu.vue'
 import DropOverlay from './components/DropOverlay.vue'
 import LogViewport from './components/LogViewport.vue'
 import PatternModal from './components/PatternModal.vue'
@@ -22,6 +23,8 @@ import SearchBar from './components/SearchBar.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import StatusBar from './components/StatusBar.vue'
 import TabStrip from './components/TabStrip.vue'
+
+import { useContextMenu, type MenuItem, type MenuSlider, type MenuToggle } from './composables/useContextMenu'
 
 import { useAppShortcuts } from './composables/useAppShortcuts'
 import { useHighlightRules } from './composables/useHighlightRules'
@@ -178,6 +181,107 @@ async function onResetData(scope: 'settings' | 'session' | 'patterns' | 'index' 
   }
 }
 
+// --- Custom right-click context menu -------------------------------------
+//
+// Replaces the default WebView2 menu everywhere in the window. Universal
+// items (Recent files, Settings) always appear; minimap-specific items
+// appear when the click lands on the minimap canvas or marker rail. The
+// menu surface clamps itself to the viewport via CSS anchor positioning
+// (see ContextMenu.vue), so submenus and the menu itself can't spill
+// over the app edges.
+
+const { show: showContextMenu } = useContextMenu()
+
+function basenameOf(p: string): string {
+  const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))
+  return i >= 0 ? p.slice(i + 1) : p
+}
+
+function buildRecentFilesSubmenu(): MenuItem {
+  const recents = settings.value.recent_files ?? []
+  if (recents.length === 0) {
+    return {
+      kind: 'submenu',
+      label: 'Recent files',
+      children: [{ kind: 'action', label: '(no recent files)', onSelect: () => {}, disabled: true }],
+    }
+  }
+  return {
+    kind: 'submenu',
+    label: 'Recent files',
+    children: recents.map<MenuItem>((p) => ({
+      kind: 'action',
+      label: basenameOf(p),
+      onSelect: () => { void openPath(p) },
+    })),
+  }
+}
+
+function buildUniversalItems(): MenuItem[] {
+  return [
+    { kind: 'action', label: 'Open file...', accel: 'Ctrl+O', onSelect: () => { void pickFile() } },
+    buildRecentFilesSubmenu(),
+    { kind: 'separator' },
+    { kind: 'action', label: 'Settings...', onSelect: () => { void openSettings() } },
+  ]
+}
+
+function buildMinimapItems(): MenuItem[] {
+  const blendItem: MenuSlider = {
+    kind: 'slider',
+    label: 'Level heatmap blend',
+    value: settings.value.minimap_heatmap_blend ?? 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: (v) => `${Math.round(v * 100)}%`,
+    onInput: (v) => {
+      blendItem.value = v
+      void onUpdateSettings({ minimap_heatmap_blend: v })
+    },
+  }
+  const opacityItem: MenuSlider = {
+    kind: 'slider',
+    label: 'Opacity',
+    value: settings.value.minimap_background_opacity ?? 0.5,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: (v) => `${Math.round(v * 100)}%`,
+    onInput: (v) => {
+      opacityItem.value = v
+      void onUpdateSettings({ minimap_background_opacity: v })
+    },
+  }
+  const speedRailItem: MenuToggle = {
+    kind: 'toggle',
+    label: 'Show speed rail',
+    checked: settings.value.speed_rail_enabled !== false,
+    onChange: (next) => {
+      speedRailItem.checked = next
+      void onUpdateSettings({ speed_rail_enabled: next })
+    },
+  }
+  return [blendItem, opacityItem, speedRailItem]
+}
+
+function onAppContextMenu(ev: MouseEvent) {
+  // Inner elements that handle their own right-click (bookmark pin,
+  // line-number gutter, cluster popover) call preventDefault + stop
+  // propagation, so this listener never sees those events. For
+  // everything else we replace the WebView2 default with our menu.
+  ev.preventDefault()
+  const target = ev.target as HTMLElement | null
+  const inMinimap = !!target?.closest('.minimap, .marker-rail')
+
+  const items: MenuItem[] = []
+  if (inMinimap) {
+    items.push(...buildMinimapItems(), { kind: 'separator' })
+  }
+  items.push(...buildUniversalItems())
+  showContextMenu({ clientX: ev.clientX, clientY: ev.clientY }, items)
+}
+
 // --- Hit nav: SearchBar emits, we drive the viewport ---------------------
 
 function onNextHit() { viewportRef.value?.scrollToCurrentHit() }
@@ -235,7 +339,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="shell">
+  <main class="shell" @contextmenu="onAppContextMenu">
     <AppHeader
       :busy="busy"
       :has-file="!!currentTab"
@@ -333,6 +437,8 @@ onBeforeUnmount(() => {
       :open="aboutOpen"
       @close="aboutOpen = false"
     />
+
+    <ContextMenu />
   </main>
 </template>
 

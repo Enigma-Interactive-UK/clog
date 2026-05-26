@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-24T12:20:13.374Z
-> Files: 94 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:18:09.116Z
+> Files: 96 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -13,7 +13,7 @@
 
 ## .cargo/
 
-- `config.toml` (~35 tok)
+- `config.toml` (~37 tok)
 
 ## .claude/
 
@@ -127,7 +127,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~3151 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4101 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 214 vars (~4974 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
@@ -139,12 +139,13 @@
 - `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1247 tok)
 - `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
+- `ContextMenu.vue` — Custom right-click context menu surface. Renders the items in (~3241 tok)
 - `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
 - `FiltersPopover.vue` — Popover hosting the level mask and thread-group mask toggles. Anchored (~1469 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
 - `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10753 tok)
-- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~20617 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~20669 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2888 tok)
 - `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~5804 tok)
@@ -154,6 +155,7 @@
 ## ui/src/composables/
 
 - `useAppShortcuts.ts` — Global keyboard shortcuts wired to the document in capture phase. (~769 tok)
+- `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~470 tok)
 - `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
 - `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1203 tok)
 - `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~1851 tok)

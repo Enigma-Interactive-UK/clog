@@ -920,8 +920,12 @@ function onClusterItemClick(item: RailItem) {
 }
 
 function onClusterItemContextMenu(item: RailItem, ev: MouseEvent) {
-  if (item.kind !== 'bookmark') return
+  // Suppress the app-level custom menu over the cluster popover even
+  // when there is no bookmark to remove -- the popover is its own
+  // contextual surface.
   ev.preventDefault()
+  ev.stopPropagation()
+  if (item.kind !== 'bookmark') return
   props.tab.removeBookmark(item.lineIdx)
   const remaining = clusterPopover.value.items.filter(
     (x) => !(x.kind === 'bookmark' && x.lineIdx === item.lineIdx),
@@ -1584,7 +1588,7 @@ defineExpose({
           :style="{ top: `${c.topPx}px` }"
           :title="`Bookmark - line ${c.item.lineIdx + 1}`"
           @click="jumpToLine(c.item.lineIdx)"
-          @contextmenu.prevent="tab.removeBookmark(c.item.lineIdx)"
+          @contextmenu.prevent.stop="tab.removeBookmark(c.item.lineIdx)"
         >
           <svg viewBox="0 0 8 10" aria-hidden="true" focusable="false">
             <path d="M0 0 H8 V10 L4 7 L0 10 Z" fill="currentColor" />
