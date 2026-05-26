@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T18:11:14.784Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T18:13:42.069Z
 > Files: 98 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -155,7 +155,7 @@
 
 ## ui/src/composables/
 
-- `useAppShortcuts.ts` — Global keyboard shortcuts wired to the document in capture phase. (~769 tok)
+- `useAppShortcuts.ts` — Global keyboard shortcuts wired to the document in capture phase. (~794 tok)
 - `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~470 tok)
 - `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
 - `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1203 tok)

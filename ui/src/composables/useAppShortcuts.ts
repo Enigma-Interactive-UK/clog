@@ -2,6 +2,7 @@
  * Global keyboard shortcuts wired to the document in capture phase.
  *
  *   Ctrl+T          new tab via file picker
+ *   Ctrl+O          new tab via file picker (alias, matches context menu)
  *   Ctrl+W          close active tab
  *   Ctrl+Tab        cycle forward through tabs
  *   Ctrl+Shift+Tab  cycle backward through tabs
@@ -55,7 +56,7 @@ export function useAppShortcuts(opts: UseAppShortcutsOptions) {
         return true
       }
     }
-    if (k === 't') {
+    if (k === 't' || k === 'o') {
       ev.preventDefault()
       void pickFile()
       return true

@@ -1,50 +1,38 @@
 {
-  "session_id": "session-2026-05-26-1848",
-  "started": "2026-05-26T17:48:44.263Z",
+  "session_id": "session-2026-05-26-1912",
+  "started": "2026-05-26T18:12:56.249Z",
   "files_read": {
-    "e:/Work/clog/ui/src/style.css": {
+    "e:/Work/clog/ui/src/composables/useAppShortcuts.ts": {
       "count": 1,
-      "tokens": 4974,
-      "first_read": "2026-05-26T17:49:30.442Z"
+      "tokens": 769,
+      "first_read": "2026-05-26T18:13:23.876Z"
     },
-    "e:/Work/clog/ui/src/components/LogViewport.vue": {
-      "count": 2,
-      "tokens": 21375,
-      "first_read": "2026-05-26T17:49:47.974Z"
-    },
-    "e:/Work/clog/ui/src/components/InsightsDrawer.vue": {
-      "count": 3,
-      "tokens": 10753,
-      "first_read": "2026-05-26T17:51:21.768Z"
+    "e:/Work/clog/ui/src/App.vue": {
+      "count": 1,
+      "tokens": 4537,
+      "first_read": "2026-05-26T18:13:28.888Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/style.css",
+      "file": "e:/Work/clog/ui/src/composables/useAppShortcuts.ts",
       "action": "edit",
-      "tokens": 215,
-      "at": "2026-05-26T17:50:03.784Z"
+      "tokens": 45,
+      "at": "2026-05-26T18:13:37.263Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/style.css",
+      "file": "e:/Work/clog/ui/src/composables/useAppShortcuts.ts",
       "action": "edit",
-      "tokens": 13,
-      "at": "2026-05-26T17:50:27.035Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/InsightsDrawer.vue",
-      "action": "edit",
-      "tokens": 152,
-      "at": "2026-05-26T17:51:55.962Z"
+      "tokens": 30,
+      "at": "2026-05-26T18:13:42.088Z"
     }
   ],
   "edit_counts": {
-    "ui/src/style.css": 2,
-    "ui/src/components/InsightsDrawer.vue": 1
+    "ui/src/composables/useAppShortcuts.ts": 2
   },
-  "anatomy_hits": 3,
+  "anatomy_hits": 2,
   "anatomy_misses": 0,
-  "repeated_reads_warned": 3,
+  "repeated_reads_warned": 0,
   "cerebrum_warnings": 0,
-  "stop_count": 2
+  "stop_count": 1
 }
