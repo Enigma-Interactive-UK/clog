@@ -325,7 +325,7 @@ function onResetAll() {
       </div>
 
       <div class="row-grid">
-        <label for="mono-font-input" class="row-label">Monospace font</label>
+        <label for="mono-font-input" class="row-label">Log text font</label>
         <span class="control-cell mono-font-cell">
           <span class="font-combobox">
             <input
