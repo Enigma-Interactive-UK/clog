@@ -134,6 +134,8 @@ export interface Settings {
   minimap_background_opacity?: number
   /** When false the slow-request speed rail is hidden globally. Default true. */
   speed_rail_enabled?: boolean
+  /** Optional override for the UI monospace font. Null/empty = default stack. */
+  mono_font_family?: string | null
 }
 
 export interface RestoredFile {
@@ -326,5 +328,4 @@ export function newUserRule(name = 'new-rule'): UserHighlightRule {
 }
 
 export const PAGE_SIZE = 256
-export const ROW_HEIGHT = 18
 export const OVERSCAN = 32

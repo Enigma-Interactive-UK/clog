@@ -70,6 +70,33 @@ export function useSettings() {
   function applyFontSize(px: number) {
     const clamped = Math.max(9, Math.min(24, Math.round(px)))
     document.documentElement.style.setProperty('--font-size-base', `${clamped}px`)
+    // Row height tracks font size so larger sizes don't overflow their row.
+    // 1.4x ratio lands at 18px for the default 13px font (matching the
+    // historic constant) and at ~34px at 24px. Keep this formula in sync
+    // with `rowHeight` in LogViewport.vue.
+    document.documentElement.style.setProperty('--row-height', `${rowHeightForFontSize(clamped)}px`)
+  }
+
+  /** Single source of truth for the font-size -> row-height mapping. */
+  function rowHeightForFontSize(fontSize: number): number {
+    return Math.round(fontSize * 1.4)
+  }
+
+  const MONO_FONT_FALLBACK = 'Consolas, ui-monospace, monospace'
+  function applyMonoFont(family?: string | null) {
+    const name = (family ?? '').trim()
+    if (name) {
+      // Quote the family name so multi-word families ("JetBrains Mono")
+      // parse as one token; escape embedded double-quotes defensively.
+      const escaped = name.replaceAll('"', String.raw`\"`)
+      const quoted = `"${escaped}"`
+      document.documentElement.style.setProperty(
+        '--font-mono',
+        `${quoted}, ${MONO_FONT_FALLBACK}`,
+      )
+    } else {
+      document.documentElement.style.removeProperty('--font-mono')
+    }
   }
 
   async function loadSettings(): Promise<void> {
@@ -79,10 +106,12 @@ export function useSettings() {
       applyTheme(s.theme)
       applyFontSize(s.font_size)
       applyColourBlind(!!s.colour_blind)
+      applyMonoFont(s.mono_font_family)
     } catch {
       applyTheme('system')
       applyFontSize(13)
       applyColourBlind(false)
+      applyMonoFont(null)
     }
   }
 
@@ -94,6 +123,7 @@ export function useSettings() {
       if (patch.theme !== undefined) applyTheme(s.theme)
       if (patch.font_size !== undefined) applyFontSize(s.font_size)
       if (patch.colour_blind !== undefined) applyColourBlind(!!s.colour_blind)
+      if (patch.mono_font_family !== undefined) applyMonoFont(s.mono_font_family)
       return null
     } catch (e) {
       return (e as IpcError).message ?? String(e)

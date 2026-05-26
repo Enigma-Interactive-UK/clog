@@ -21,7 +21,6 @@ import { highlightsFor, overlay, rulesVersionRef, type LeafSpan } from '../highl
 import {
   OVERSCAN,
   PAGE_SIZE,
-  ROW_HEIGHT,
   type BucketStat,
   type HeaderFields,
   type HitRef,
@@ -63,6 +62,11 @@ const minimapCanvasOpacity = computed(() =>
   Math.max(0, Math.min(1, settings?.value.minimap_background_opacity ?? 1)),
 )
 const speedRailEnabled = computed(() => settings?.value.speed_rail_enabled !== false)
+
+// Row height scales with the user's font size so larger sizes don't
+// overflow their row. Mirror of `rowHeightForFontSize` in
+// composables/useSettings.ts -- keep the formula identical.
+const rowHeight = computed(() => Math.round((settings?.value.font_size ?? 13) * 1.4))
 
 const speedRailVisible = computed(() => {
   if (!speedRailEnabled.value) return false
@@ -141,7 +145,7 @@ const virtualizer = useVirtualizer(
   computed(() => ({
     count: effectiveCount.value,
     getScrollElement: () => scrollEl.value ?? null,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight.value,
     overscan: OVERSCAN,
   })),
 )
@@ -153,7 +157,14 @@ const atBottom = computed(() => {
   const total = totalSize.value
   const h = viewportHeightPx.value
   if (total <= 0 || h <= 0) return true
-  return viewportScrollTop.value + h >= total - ROW_HEIGHT
+  return viewportScrollTop.value + h >= total - rowHeight.value
+})
+
+// Invalidate the virtualiser's cached row measurements when the row
+// height changes (font-size bump). Without this the existing items keep
+// the old height until they cycle through the overscan window.
+watch(rowHeight, () => {
+  virtualizer.value.measure()
 })
 
 // --- Page fetch driven by visible rows ---
@@ -175,7 +186,7 @@ const stickyHeader = computed<StickyHeader | null>(() => {
   const tab = props.tab
   const total = effectiveCount.value
   if (total === 0) return null
-  const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / ROW_HEIGHT))
+  const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / rowHeight.value))
   const topIdx = actualLineIndex(topVirtual)
   const data = tab.lineRow(topIdx)
   if (!data) return null
@@ -204,7 +215,7 @@ function jumpToStickyStart() {
   } else {
     virtualIdx = sticky.lineIndex
   }
-  el.scrollTop = virtualIdx * ROW_HEIGHT
+  el.scrollTop = virtualIdx * rowHeight.value
 }
 
 // --- Scroll handling ---
@@ -213,9 +224,9 @@ function onViewportScroll() {
   if (!el) return
   const raw = el.scrollTop
   const maxScroll = el.scrollHeight - el.clientHeight
-  const rem = raw % ROW_HEIGHT
+  const rem = raw % rowHeight.value
   if (rem !== 0 && raw < maxScroll - 0.5) {
-    const snapped = Math.round(raw / ROW_HEIGHT) * ROW_HEIGHT
+    const snapped = Math.round(raw / rowHeight.value) * rowHeight.value
     if (snapped !== raw) {
       el.scrollTop = snapped
       return
@@ -229,10 +240,10 @@ function onViewportScroll() {
   // all route through here, so the rule lives in one place.
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   if (props.tab.followTail.value) {
-    if (distance > ROW_HEIGHT * 4) {
+    if (distance > rowHeight.value * 4) {
       props.tab.followTail.value = false
     }
-  } else if (distance <= ROW_HEIGHT) {
+  } else if (distance <= rowHeight.value) {
     props.tab.followTail.value = true
   }
 }
@@ -564,7 +575,7 @@ async function fetchMinimap(force: boolean) {
   const source = filteredSourceRecords.value
   if (source !== null) {
     const eff = effectiveCount.value
-    const contentPx = eff * ROW_HEIGHT
+    const contentPx = eff * rowHeight.value
     const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
     const { buckets, maxErrorWarnSum } = buildFilteredMinimap(source, eff, bucketCount)
     minimapBuckets.value = buckets
@@ -574,7 +585,7 @@ async function fetchMinimap(force: boolean) {
     paintMinimap()
     return
   }
-  const contentPx = props.tab.file.value.line_count * ROW_HEIGHT
+  const contentPx = props.tab.file.value.line_count * rowHeight.value
   const bucketCount = Math.max(1, Math.min(Math.floor(height), contentPx))
   if (
     !force &&
@@ -2085,21 +2096,26 @@ defineExpose({
         var(--bg-skeleton-gutter) 0,
         var(--bg-skeleton-gutter) 100%
       ),
+      /* Two shimmer stripes (line-number column, message column) drawn as
+         a band ~0.6x the current font size, vertically centred in the
+         row. Expressed as calc() over `--row-height` and
+         `--font-size-base` so they scale when the user bumps font size
+         instead of staying glued to the top of each row. */
       linear-gradient(
         to bottom,
         transparent 0,
-        transparent 5px,
-        var(--bg-skeleton-num) 5px,
-        var(--bg-skeleton-num) 13px,
-        transparent 13px
+        transparent calc((var(--row-height) - var(--font-size-base) * 0.6) / 2),
+        var(--bg-skeleton-num) calc((var(--row-height) - var(--font-size-base) * 0.6) / 2),
+        var(--bg-skeleton-num) calc((var(--row-height) + var(--font-size-base) * 0.6) / 2),
+        transparent calc((var(--row-height) + var(--font-size-base) * 0.6) / 2)
       ),
       linear-gradient(
         to bottom,
         transparent 0,
-        transparent 5px,
-        var(--bg-skeleton) 5px,
-        var(--bg-skeleton) 13px,
-        transparent 13px
+        transparent calc((var(--row-height) - var(--font-size-base) * 0.6) / 2),
+        var(--bg-skeleton) calc((var(--row-height) - var(--font-size-base) * 0.6) / 2),
+        var(--bg-skeleton) calc((var(--row-height) + var(--font-size-base) * 0.6) / 2),
+        transparent calc((var(--row-height) + var(--font-size-base) * 0.6) / 2)
       ),
       linear-gradient(
         to bottom,

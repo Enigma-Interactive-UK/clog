@@ -1905,6 +1905,10 @@ pub struct SettingsPatch {
     pub minimap_heatmap_blend: Option<f32>,
     pub minimap_background_opacity: Option<f32>,
     pub speed_rail_enabled: Option<bool>,
+    /// Tri-state: `None` = untouched, `Some(None)` = clear (revert to default
+    /// stack), `Some(Some(name))` = set this family.
+    #[serde(default, deserialize_with = "deserialize_optional_optional")]
+    pub mono_font_family: Option<Option<String>>,
 }
 
 #[allow(clippy::option_option)] // tri-state patch: None=untouched, Some(None)=clear, Some(Some)=set
@@ -1956,11 +1960,31 @@ fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
     if let Some(b) = patch.speed_rail_enabled {
         s.speed_rail_enabled = b;
     }
+    if let Some(opt) = patch.mono_font_family {
+        s.mono_font_family = opt
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty());
+    }
     s.save().map_err(|e| IpcError::Io {
         message: e.to_string(),
         path: paths::settings_path().display().to_string(),
     })?;
     Ok(s)
+}
+
+/// Enumerate the system's installed font families. Returned list is
+/// sorted case-insensitively and de-duplicated. On failure an empty list
+/// is returned rather than an error so the picker degrades to "no
+/// suggestions" instead of breaking the modal.
+#[tauri::command]
+fn list_system_fonts() -> Vec<String> {
+    use font_kit::source::SystemSource;
+    let Ok(mut names) = SystemSource::new().all_families() else {
+        return Vec::new();
+    };
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup();
+    names
 }
 
 #[tauri::command]
@@ -2152,6 +2176,7 @@ fn main() {
             open_data_dir,
             get_settings,
             update_settings,
+            list_system_fonts,
             forget_recent,
             get_session,
             save_session,

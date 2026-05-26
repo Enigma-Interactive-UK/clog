@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:18:09.116Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T17:43:08.035Z
 > Files: 96 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -30,7 +30,7 @@
 ## crates/clog-app/
 
 - `build.rs` (~12 tok)
-- `Cargo.toml` — Rust package manifest (~239 tok)
+- `Cargo.toml` — Rust package manifest (~228 tok)
 - `tauri.conf.json` (~456 tok)
 
 ## crates/clog-app/capabilities/
@@ -47,9 +47,9 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~38446 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~36154 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~994 tok)
-- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~5133 tok)
+- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4899 tok)
 
 ## crates/clog-core/
 
@@ -127,11 +127,11 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4101 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4017 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 214 vars (~4974 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
-- `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2377 tok)
+- `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2402 tok)
 
 ## ui/src/components/
 
@@ -145,10 +145,10 @@
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
 - `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~10753 tok)
-- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~20669 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~21375 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2888 tok)
-- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~5804 tok)
+- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7177 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1382 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 
@@ -158,7 +158,7 @@
 - `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~470 tok)
 - `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
 - `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1203 tok)
-- `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~1851 tok)
+- `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~2237 tok)
 - `useStartupPaths.ts` — CLI argv + single-instance forward handler. (~450 tok)
 - `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
 - `useWindowChrome.ts` — Window chrome: maximize/restore tracking + the three title-bar buttons. (~443 tok)

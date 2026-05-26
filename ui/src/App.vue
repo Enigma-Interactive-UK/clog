@@ -56,7 +56,6 @@ const {
   handleFontShortcut,
   refreshDataDir,
   openDataFolder,
-  forgetRecent,
   resetData,
 } = useSettings()
 
@@ -148,16 +147,6 @@ async function openAbout() {
 async function openSettings() {
   await refreshDataDir()
   settingsOpen.value = true
-}
-
-async function openRecent(path: string) {
-  settingsOpen.value = false
-  await openPath(path)
-}
-
-async function onForgetRecent(path: string) {
-  const err = await forgetRecent(path)
-  if (err) error.value = err
 }
 
 async function onUpdateSettings(patch: Partial<typeof settings.value>) {
@@ -425,8 +414,6 @@ onBeforeUnmount(() => {
       @update="onUpdateSettings"
       @bump-font="bumpFontSize"
       @reset-font="resetFontSize"
-      @open-recent="openRecent"
-      @forget-recent="onForgetRecent"
       @open-data-folder="onOpenDataFolder"
       @reset-data="onResetData"
       @save-global-rules="onSaveGlobalRules"

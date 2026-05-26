@@ -6,8 +6,9 @@
  * buttons). The active tab is local state; close resets nothing else.
  */
 
-import { computed, ref, watchEffect } from 'vue'
+import { computed, onMounted, ref, watch, watchEffect } from 'vue'
 import { ask } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 
 import BaseModal from './BaseModal.vue'
 import HighlightRulesEditor from './HighlightRulesEditor.vue'
@@ -24,8 +25,6 @@ const emit = defineEmits<{
   (e: 'update', patch: Partial<Settings>): void
   (e: 'bump-font', delta: number): void
   (e: 'reset-font'): void
-  (e: 'open-recent', path: string): void
-  (e: 'forget-recent', path: string): void
   (e: 'open-data-folder'): void
   (e: 'reset-data', scope: 'settings' | 'session' | 'patterns' | 'index' | 'highlight' | 'all'): void
   (e: 'save-global-rules', rules: UserHighlightRule[]): void
@@ -87,9 +86,114 @@ function resetGlobalThresholds() {
   emit('update', { slow_request_thresholds: null })
 }
 
-function basename(p: string): string {
-  const m = p.match(/[^\\/]+$/)
-  return m ? m[0] : p
+// --- Mono font picker -----------------------------------------------------
+
+const systemFonts = ref<string[]>([])
+const fontInput = ref('')
+
+// Mirror the input whenever settings.mono_font_family changes underneath us
+// (modal opened, reset hit). Blank input means "use the default stack".
+watchEffect(() => {
+  fontInput.value = props.settings.mono_font_family ?? ''
+})
+
+// Lazy-load the system font list once when the modal mounts; failure
+// (e.g. font-kit returns nothing on this machine) leaves the datalist
+// empty so the input degrades into plain free-text.
+onMounted(() => {
+  void (async () => {
+    try {
+      const fonts = (await invoke('list_system_fonts')) as string[]
+      systemFonts.value = fonts
+    } catch {
+      systemFonts.value = []
+    }
+  })()
+})
+
+function quoteFamily(name: string): string {
+  const escaped = name.replaceAll('"', String.raw`\"`)
+  return `"${escaped}", Consolas, ui-monospace, monospace`
+}
+
+const monoPreviewFamily = computed<string | undefined>(() => {
+  const name = fontInput.value.trim()
+  if (!name) return undefined
+  return quoteFamily(name)
+})
+
+// --- Font-picker dropdown state ---
+const fontListOpen = ref(false)
+const fontHighlight = ref(0)
+
+const filteredFonts = computed<string[]>(() => {
+  const q = fontInput.value.trim().toLowerCase()
+  if (!q) return systemFonts.value
+  // Substring match keeps the list useful for partial typing ("mono" finds
+  // every monospace family); prefix matches sort first so the most
+  // confident matches are at the top.
+  const prefix: string[] = []
+  const substr: string[] = []
+  for (const f of systemFonts.value) {
+    const lc = f.toLowerCase()
+    if (lc.startsWith(q)) prefix.push(f)
+    else if (lc.includes(q)) substr.push(f)
+  }
+  return [...prefix, ...substr]
+})
+
+// Reset highlight whenever the filter changes so it doesn't sit past
+// the end of the new result list.
+watch(filteredFonts, () => {
+  fontHighlight.value = 0
+})
+
+function openFontList() {
+  fontListOpen.value = true
+}
+
+function closeFontList() {
+  fontListOpen.value = false
+}
+
+function pickFont(name: string) {
+  fontInput.value = name
+  fontListOpen.value = false
+  emit('update', { mono_font_family: name })
+}
+
+function onFontKeydown(ev: KeyboardEvent) {
+  if (ev.key === 'ArrowDown') {
+    ev.preventDefault()
+    fontListOpen.value = true
+    const max = filteredFonts.value.length - 1
+    if (max >= 0) fontHighlight.value = Math.min(max, fontHighlight.value + 1)
+  } else if (ev.key === 'ArrowUp') {
+    ev.preventDefault()
+    fontHighlight.value = Math.max(0, fontHighlight.value - 1)
+  } else if (ev.key === 'Enter') {
+    ev.preventDefault()
+    const pick = filteredFonts.value[fontHighlight.value]
+    if (fontListOpen.value && pick) {
+      pickFont(pick)
+    } else {
+      saveMonoFont()
+    }
+  } else if (ev.key === 'Escape') {
+    closeFontList()
+  }
+}
+
+function saveMonoFont() {
+  const name = fontInput.value.trim()
+  emit('update', { mono_font_family: name === '' ? null : name })
+  closeFontList()
+}
+
+function resetMonoFont() {
+  fontInput.value = ''
+  closeFontList()
+  emit('update', { mono_font_family: null })
 }
 
 interface ResetConfig {
@@ -220,6 +324,55 @@ function onResetAll() {
       </div>
 
       <div class="row-grid">
+        <label for="mono-font-input" class="row-label">Monospace font</label>
+        <span class="control-cell mono-font-cell">
+          <span class="font-combobox">
+            <input
+              id="mono-font-input"
+              v-model="fontInput"
+              type="text"
+              placeholder="(default)"
+              spellcheck="false"
+              autocomplete="off"
+              role="combobox"
+              :aria-expanded="fontListOpen"
+              aria-controls="font-list"
+              aria-autocomplete="list"
+              @focus="openFontList"
+              @click="openFontList"
+              @input="openFontList"
+              @blur="closeFontList"
+              @keydown="onFontKeydown"
+            />
+            <ul
+              v-if="fontListOpen && filteredFonts.length > 0"
+              id="font-list"
+              role="listbox"
+              class="font-list"
+            >
+              <li
+                v-for="(f, i) in filteredFonts"
+                :key="f"
+                role="option"
+                :class="{ 'is-on': i === fontHighlight }"
+                :aria-selected="i === fontHighlight"
+                :style="{ fontFamily: quoteFamily(f) }"
+                @mousedown.prevent="pickFont(f)"
+                @mouseenter="fontHighlight = i"
+              >{{ f }}</li>
+            </ul>
+          </span>
+          <button type="button" class="seg-btn" :disabled="!settings.mono_font_family" @click="resetMonoFont">Reset</button>
+        </span>
+      </div>
+      <div class="row-grid">
+        <span class="row-label"></span>
+        <span class="mono-preview" :style="{ fontFamily: monoPreviewFamily }">
+          The quick brown fox 0123456789 [INFO] play - {key=value}
+        </span>
+      </div>
+
+      <div class="row-grid">
         <label for="colour-blind" class="row-label">Colour-blind mode</label>
         <span class="control-cell">
           <input
@@ -280,19 +433,6 @@ function onResetAll() {
         </span>
       </div>
 
-      <h3>Recent files</h3>
-      <ul v-if="settings.recent_files.length > 0" class="recent-list">
-        <li v-for="p in settings.recent_files" :key="p">
-          <button type="button" class="open-btn" @click="emit('open-recent', p)">{{ basename(p) }}</button>
-          <span class="path">{{ p }}</span>
-          <button type="button" class="btn-dismiss is-destructive forget-btn" @click="emit('forget-recent', p)" title="Remove from list" aria-label="Forget recent file">
-            <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-            </svg>
-          </button>
-        </li>
-      </ul>
-      <p v-else class="muted">No recent files yet. Open a log to populate this list.</p>
     </section>
 
     <!-- Slow requests -->
@@ -497,55 +637,6 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
 }
 .font-seg .font-val { font-family: var(--font-mono); min-width: 3.5rem; text-align: center; }
 
-.recent-list {
-  list-style: none;
-  padding: 0;
-  margin: 0.3rem 0 0;
-  max-height: 14rem;
-  overflow-y: auto;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-
-  li {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px dashed var(--border-default);
-    font-size: 0.82rem;
-
-    &:last-child { border-bottom: 0; }
-
-    .open-btn {
-      background: transparent;
-      border: 0;
-      color: var(--accent);
-      cursor: pointer;
-      padding: 0;
-      font-weight: 600;
-      flex: 0 0 auto;
-
-      &:hover { text-decoration: underline; }
-    }
-
-    .path {
-      color: var(--fg-dim);
-      font-family: var(--font-mono);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 1;
-      min-width: 0;
-    }
-
-    .forget-btn {
-      width: 1.4rem;
-      height: 1.4rem;
-      font-size: 1.05rem;
-    }
-  }
-}
-
 .data-cell {
   flex-wrap: wrap;
 
@@ -604,6 +695,81 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   text-align: right;
 }
 .minimap-hint { margin-top: 0.3rem; max-width: 32rem; }
+.mono-font-cell {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.font-combobox {
+  position: relative;
+  flex: 1;
+  min-width: 10rem;
+  display: inline-flex;
+
+  & input[type='text'] {
+    width: 100%;
+    background: var(--bg-viewport);
+    border: 1px solid var(--border-button);
+    color: var(--fg-default);
+    padding: 0.2rem 0.45rem;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+}
+.font-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: var(--bg-viewport);
+  border: 1px solid var(--border-button);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 0.95rem;
+
+  & li {
+    padding: 0.2rem 0.55rem;
+    cursor: pointer;
+    color: var(--fg-default);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+
+    &.is-on {
+      background: var(--accent);
+      color: var(--fg-on-accent);
+    }
+  }
+}
+.mono-preview {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  background: var(--bg-viewport);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+  /* Base font-family is the *built-in* default monospace stack -- NOT
+     `var(--font-mono)`, because that variable is rewritten at the
+     document root when the user has saved a font, which would make the
+     "default" preview echo the saved choice instead of the genuine
+     default. Keep this in sync with the `--font-mono` definition in
+     `style.css` and with `MONO_FONT_FALLBACK` in `useSettings.ts`. The
+     inline `monoPreviewFamily` style overrides this when the user has
+     typed/selected a family. */
+  font-family: Consolas, ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--fg-default);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .threshold-grid {
   display: flex;
   gap: 0.8rem;

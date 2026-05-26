@@ -32,6 +32,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 blake3 = "1"
+font-kit = "0.14"
 
 [dev-dependencies]
 proptest = "1"

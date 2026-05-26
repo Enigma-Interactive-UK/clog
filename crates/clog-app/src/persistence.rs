@@ -66,6 +66,12 @@ pub struct Settings {
     /// available.
     #[serde(default = "default_true")]
     pub speed_rail_enabled: bool,
+    /// Optional override for the UI's monospace font family. When `None`
+    /// or empty, the default `--font-mono` stack from `style.css` applies.
+    /// When set, the family name is prepended to that stack so the rest
+    /// of the fallback chain still kicks in if the chosen face is gone.
+    #[serde(default)]
+    pub mono_font_family: Option<String>,
 }
 
 impl Default for Settings {
@@ -81,6 +87,7 @@ impl Default for Settings {
             minimap_heatmap_blend: default_minimap_heatmap_blend(),
             minimap_background_opacity: default_minimap_background_opacity(),
             speed_rail_enabled: true,
+            mono_font_family: None,
         }
     }
 }
