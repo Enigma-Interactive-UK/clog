@@ -13,8 +13,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { DataDirPayload, IpcError, Settings } from '../types'
 
-const THEME_CYCLE = ['system', 'light', 'dark'] as const
-type Theme = (typeof THEME_CYCLE)[number]
+type Theme = 'system' | 'light' | 'dark'
 
 const THEME_GLYPH: Record<'light' | 'dark', string> = {
   light: '☀', // sun
@@ -151,9 +150,19 @@ export function useSettings() {
   })
 
   function cycleTheme() {
+    // The status-bar button must always produce a visible change. Decide
+    // by resolved appearance, not by stored value: if the current theme
+    // renders the same as the OS preference, jump to the opposite
+    // explicit theme; otherwise return to 'system'. This avoids the
+    // dead-click cases where the stored value differs but the pixels
+    // don't (e.g. theme='light' on a light OS, or theme='system' on a
+    // light OS both resolve to light). See #5.
     const cur = settings.value.theme
-    const idx = THEME_CYCLE.indexOf(cur)
-    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]
+    const sysIsDark = systemPrefersDark.value
+    const resolvedDark = cur === 'dark' || (cur === 'system' && sysIsDark)
+    const sysMatchesResolved = resolvedDark === sysIsDark
+    const opposite: Theme = sysIsDark ? 'light' : 'dark'
+    const next: Theme = sysMatchesResolved ? opposite : 'system'
     void updateSettings({ theme: next })
   }
 

@@ -1,132 +1,39 @@
 {
-  "session_id": "session-2026-05-27-2039",
-  "started": "2026-05-27T19:39:47.340Z",
+  "session_id": "session-2026-05-27-2050",
+  "started": "2026-05-27T19:50:02.675Z",
   "files_read": {
-    "e:/Work/clog/ui/src/components/AboutModal.vue": {
-      "count": 1,
-      "tokens": 1522,
-      "first_read": "2026-05-27T19:40:58.763Z"
-    },
-    "e:/Work/clog/ui/src/composables/useUpdateBanner.ts": {
-      "count": 3,
-      "tokens": 1470,
-      "first_read": "2026-05-27T19:41:02.244Z"
-    },
-    "e:/Work/clog/ui/src/App.vue": {
-      "count": 3,
-      "tokens": 5162,
-      "first_read": "2026-05-27T19:41:09.631Z"
-    },
-    "e:/Work/clog/ui/src/style.css": {
-      "count": 1,
-      "tokens": 5770,
-      "first_read": "2026-05-27T19:41:25.274Z"
-    },
-    "e:/Work/clog/.wolf/buglog.json": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-05-27T19:48:31.989Z"
-    },
-    "e:/Work/clog/.wolf/memory.md": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-05-27T19:48:47.946Z"
+    "e:/Work/clog/ui/src/composables/useSettings.ts": {
+      "count": 2,
+      "tokens": 2237,
+      "first_read": "2026-05-27T19:52:26.395Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/composables/useUpdateBanner.ts",
+      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
       "action": "edit",
-      "tokens": 270,
-      "at": "2026-05-27T19:41:45.457Z"
+      "tokens": 150,
+      "at": "2026-05-27T19:52:45.892Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/composables/useUpdateBanner.ts",
+      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
       "action": "edit",
-      "tokens": 98,
-      "at": "2026-05-27T19:41:51.800Z"
+      "tokens": 12,
+      "at": "2026-05-27T19:52:54.451Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/App.vue",
+      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
       "action": "edit",
-      "tokens": 238,
-      "at": "2026-05-27T19:42:07.696Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 17,
-      "at": "2026-05-27T19:42:21.866Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/composables/useUpdateBanner.ts",
-      "action": "edit",
-      "tokens": 70,
-      "at": "2026-05-27T19:45:00.042Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/composables/useUpdateBanner.ts",
-      "action": "edit",
-      "tokens": 580,
-      "at": "2026-05-27T19:45:18.181Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/composables/useUpdateBanner.ts",
-      "action": "edit",
-      "tokens": 8,
-      "at": "2026-05-27T19:45:27.917Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 187,
-      "at": "2026-05-27T19:45:37.716Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 4,
-      "at": "2026-05-27T19:45:45.106Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 0,
-      "at": "2026-05-27T19:45:53.871Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 438,
-      "at": "2026-05-27T19:46:08.114Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 93,
-      "at": "2026-05-27T19:46:14.595Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 63,
-      "at": "2026-05-27T19:46:19.828Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 110,
-      "at": "2026-05-27T19:46:26.365Z"
+      "tokens": 252,
+      "at": "2026-05-27T19:54:26.226Z"
     }
   ],
   "edit_counts": {
-    "ui/src/composables/useUpdateBanner.ts": 5,
-    "ui/src/App.vue": 5,
-    "ui/src/components/AboutModal.vue": 4
+    "ui/src/composables/useSettings.ts": 3
   },
-  "anatomy_hits": 4,
-  "anatomy_misses": 2,
-  "repeated_reads_warned": 4,
+  "anatomy_hits": 1,
+  "anatomy_misses": 0,
+  "repeated_reads_warned": 1,
   "cerebrum_warnings": 0,
-  "stop_count": 4
+  "stop_count": 2
 }

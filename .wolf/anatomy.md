@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T19:46:26.356Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T19:54:26.219Z
 > Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -168,7 +168,7 @@
 - `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~470 tok)
 - `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
 - `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1203 tok)
-- `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~2237 tok)
+- `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~2414 tok)
 - `useStartupPaths.ts` — CLI argv + single-instance forward handler. (~450 tok)
 - `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
 - `useUpdateBanner.ts` — Update-banner state machine. Talks to the Rust shim (`check_for_update`, (~1462 tok)
