@@ -26,7 +26,7 @@ cargo tauri dev --config crates/clog-app/tauri.conf.json
 ```
 
 This launches the Vite dev server for the UI and a Tauri-hosted window.
-Click **Open file...**, pick `research/solopress-prod.log` (or any
+Click **Open file...**, pick `research/cheesecake-prod.log` (or any
 `.log`/`.out`) to start tailing, searching, filtering and highlighting.
 A `cargo dev` alias for the full command lives in `.cargo/config.toml`.
 

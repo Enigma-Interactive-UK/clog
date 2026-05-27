@@ -543,10 +543,10 @@ mod tests {
     /// Integration test on the prod fixture: a smart-search query that
     /// has a known number of hits across the whole file.
     #[test]
-    fn solopress_prod_known_count_smart_search() {
+    fn cheesecake_prod_known_count_smart_search() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-prod.log"
+            "/../../research/cheesecake-prod.log"
         );
         if !std::path::Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");

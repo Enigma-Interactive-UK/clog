@@ -521,7 +521,7 @@ Expected: build green, tests green. Visually identical to before (no paint chang
 cargo dev
 ```
 
-Open `research/solopress-prod.log`. The minimap should look identical to before. Close.
+Open `research/cheesecake-prod.log`. The minimap should look identical to before. Close.
 
 - [ ] **Step 9: Run the full lint+test sweep**
 
@@ -671,7 +671,7 @@ Expected: PASS.
 cargo dev
 ```
 
-Open `research/solopress-prod.log`. Confirm:
+Open `research/cheesecake-prod.log`. Confirm:
 
 - Quiet INFO regions look like a faint wash (much dimmer than before).
 - ERROR/WARN clusters pop visibly: a single stray ERROR is clearly visible above the wash, and dense ERROR runs blaze near full alpha.
@@ -840,7 +840,7 @@ npm --prefix ui run build
 cargo dev
 ```
 
-Open `research/solopress-prod.log`. Hover over:
+Open `research/cheesecake-prod.log`. Hover over:
 
 - A quiet INFO region: tooltip shows line + timestamp only (no heat line).
 - An ERROR cluster: tooltip shows line + timestamp + "N errors" (or "N errors, M warnings").
@@ -922,7 +922,7 @@ Expected: all green.
 cargo dev
 ```
 
-- Open `research/solopress-prod.log` (the 74k-line fixture).
+- Open `research/cheesecake-prod.log` (the 74k-line fixture).
 - Visually confirm error clusters pop vs. quiet INFO runs.
 - Hover a hot bucket and confirm the tooltip's heat line.
 - Hover a quiet INFO bucket and confirm no heat line.

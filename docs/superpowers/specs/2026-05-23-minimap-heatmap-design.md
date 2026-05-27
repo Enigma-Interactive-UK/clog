@@ -173,6 +173,6 @@ None. No new toggle in this iteration.
 - `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - `cargo fmt --check` clean.
 - `npm --prefix ui run test` green.
-- `cargo dev` smoke on `research/solopress-prod.log`: confirm error
+- `cargo dev` smoke on `research/cheesecake-prod.log`: confirm error
   clusters visually pop vs. quiet INFO regions; hover a hot bucket and
   see the split error/warn count line in the tooltip.

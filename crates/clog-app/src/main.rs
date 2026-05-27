@@ -2498,7 +2498,7 @@ mod tests {
     fn appending_lines_one_at_a_time_keeps_get_lines_consistent() {
         let (mut file, scanner) = fresh_file();
         let body = [
-            "[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n",
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n",
             "[INFO ] 2026-05-22 16:28:59.390 [main] play - Module crud is available\n",
             "[INFO ] 2026-05-22 16:28:59.391 [main] play - Module secure is available\n",
             "[INFO ] 2026-05-22 16:28:59.392 [main] play - Module crud is available\n",
@@ -2605,7 +2605,7 @@ mod tests {
     #[test]
     fn five_line_mixed_levels_each_become_their_own_record() {
         let body = [
-            "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n",
+            "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n",
             "[DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available\n",
             "[TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available\n",
             "[ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available\n",
@@ -2968,7 +2968,7 @@ mod tests {
         let _guard = scopeguard_like(&path);
 
         // Seed the four initial lines, each terminated with `\n`.
-        let seed = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+        let seed = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n\
                     [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
                     [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
                     [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
@@ -3079,7 +3079,7 @@ mod tests {
         let path: PathBuf = std::env::temp_dir().join(format!("clog-atomic-{pid}-{ts}.log"));
         let _guard = scopeguard_like(&path);
 
-        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n\
                           [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
                           [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
                           [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
@@ -3158,7 +3158,7 @@ mod tests {
         let _guard = scopeguard_like(&path);
 
         // Four lines BUT no trailing `\n` on line 4.
-        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n\
                                 [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
                                 [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
                                 [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)";
@@ -3272,7 +3272,7 @@ mod tests {
         let path: PathBuf = std::env::temp_dir().join(format!("clog-partial-{pid}-{ts}.log"));
         let _guard = scopeguard_like(&path);
 
-        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+        let seed_no_trailing = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n\
                                 [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
                                 [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
                                 [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)";
@@ -3362,7 +3362,7 @@ mod tests {
         let path: PathBuf = std::env::temp_dir().join(format!("clog-hypb-{pid}-{ts}.log"));
         let _guard = scopeguard_like(&path);
 
-        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/solopress\n\
+        let four_lines = "[WARN ] 2026-05-22 16:28:59.246 [main] play - Starting /var/play/sites/cheesecake\n\
                           [DEBUG] 2026-05-22 16:28:59.390 [main] play - Module crud is available (/usr/local/play-1.7.1/modules/crud)\n\
                           [TRACE] 2026-05-22 16:28:59.391 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n\
                           [ERROR] 2026-05-22 16:28:59.392 [main] play - Module secure is available (/usr/local/play-1.7.1/modules/secure)\n";
@@ -3555,7 +3555,7 @@ mod tests {
         let path = Path::new("..")
             .join("..")
             .join("research")
-            .join("solopress-prod.log");
+            .join("cheesecake-prod.log");
         if !path.exists() {
             return;
         }

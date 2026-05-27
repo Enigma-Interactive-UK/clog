@@ -60,21 +60,21 @@ Deferred work belongs to a later phase or to the explicit non-goals list in
 
 - `cargo build --workspace` and `npm -C ui run build` both succeed.
 - `cargo tauri dev` launches a window, the file picker opens the sample log,
-  and `"solopress.out -- 84,231 lines"` (or equivalent) appears.
+  and `"cheesecake.out -- 84,231 lines"` (or equivalent) appears.
 - `cargo fmt --check` and `cargo clippy -D warnings` pass.
 - README has a minimal "How to develop locally" section pointing at
   `cargo tauri dev`.
 
 **Tests landed**
 
-- One smoke test in `clog-core` that `line_count` of `research/solopress.out`
+- One smoke test in `clog-core` that `line_count` of `research/cheesecake.out`
   matches a known constant.
 - No Playwright yet.
 
 **Demo**
 
 Open `cargo tauri dev`, click the file picker button, pick
-`research/solopress.out`, see the line count.
+`research/cheesecake.out`, see the line count.
 
 **Cross-references:** design §2, §3.
 
@@ -100,7 +100,7 @@ Open `cargo tauri dev`, click the file picker button, pick
 
 **Done-criteria**
 
-- Opening `research/solopress.out` produces a fully scrollable view of the
+- Opening `research/cheesecake.out` produces a fully scrollable view of the
   entire file.
 - Scroll position is responsive (no perceptible jank) from top to bottom.
 - The scrollbar accurately reflects total position from the first frame.
@@ -148,7 +148,7 @@ styling (P3+), highlight rules (P5).
 
 **Done-criteria**
 
-- Opening the wsl-oink sample (`research/solopress.out`) renders with full
+- Opening the wsl-oink sample (`research/cheesecake.out`) renders with full
   axis-1 colouring.
 - Pasting the prod pattern (`%d{...} %level [%t] - %msg%n`) at the top bar
   and applying it makes the prod-shaped lines render correctly (use a
@@ -162,7 +162,7 @@ styling (P3+), highlight rules (P5).
 - The single `proptest` on the compiler (generators + parse-render-reparse
   property).
 - Integration test asserting that auto-detect chooses the wsl-oink pattern
-  for `solopress.out`.
+  for `cheesecake.out`.
 
 **Demo**
 
@@ -238,7 +238,7 @@ losing position relative to the new file.
 
 **Done-criteria**
 
-- A log with stack traces (use `research/solopress.out` if present; otherwise
+- A log with stack traces (use `research/cheesecake.out` if present; otherwise
   hand-author a fixture) renders with class names bold, file paths
   underlined, URLs clickable, `Caused by:` standing out.
 - Scrolling a heavily-traced section stays at 60 fps.
@@ -294,7 +294,7 @@ rule overrides (P8).
   `docs/design.md §7`).
 - Unit tests for regex search anchoring (a hit must not cross record
   boundaries).
-- Integration test on `solopress.out` for a known-count smart-search query.
+- Integration test on `cheesecake.out` for a known-count smart-search query.
 - Playwright smoke test 3: open-search-find-navigate.
 
 **Demo**

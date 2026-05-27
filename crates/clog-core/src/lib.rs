@@ -142,10 +142,10 @@ mod tests {
     /// Smoke test: the prod sample's line count is stable. If it changes,
     /// either the fixture moved or the line counter regressed.
     #[test]
-    fn solopress_prod_line_count_is_stable() {
+    fn cheesecake_prod_line_count_is_stable() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-prod.log"
+            "/../../research/cheesecake-prod.log"
         );
         if !Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");
@@ -159,10 +159,10 @@ mod tests {
     /// adjacent records meet exactly, the last record runs to EOF, and the
     /// first/last record byte offsets match the file shape.
     #[test]
-    fn solopress_wsl_dev_record_coverage_is_watertight() {
+    fn cheesecake_wsl_dev_record_coverage_is_watertight() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-wsl-oink.out"
+            "/../../research/cheesecake-wsl-oink.out"
         );
         if !Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");
@@ -192,12 +192,12 @@ mod tests {
         assert!(records.len() <= line_index.line_count());
     }
 
-    /// P3: auto-detect must choose wsl-dev for `solopress-wsl-oink.out`.
+    /// P3: auto-detect must choose wsl-dev for `cheesecake-wsl-oink.out`.
     #[test]
     fn auto_detect_chooses_wsl_dev_for_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-wsl-oink.out"
+            "/../../research/cheesecake-wsl-oink.out"
         );
         if !Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");
@@ -225,7 +225,7 @@ mod tests {
 
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-wsl-oink.out"
+            "/../../research/cheesecake-wsl-oink.out"
         );
         if !Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");
@@ -257,7 +257,7 @@ mod tests {
     fn auto_detect_chooses_prod_for_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../research/solopress-prod.log"
+            "/../../research/cheesecake-prod.log"
         );
         if !Path::new(path).exists() {
             eprintln!("skipping: fixture {path} not present");

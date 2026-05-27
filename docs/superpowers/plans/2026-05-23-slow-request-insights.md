@@ -1747,7 +1747,7 @@ In the existing `#[cfg(test)] mod tests` block at the bottom of `crates/clog-app
 #[test]
 fn slow_request_smoke_against_prod_fixture() {
     use std::path::Path;
-    let path = Path::new("..").join("..").join("research").join("solopress-prod.log");
+    let path = Path::new("..").join("..").join("research").join("cheesecake-prod.log");
     if !path.exists() {
         // Fixture is gitignored; skip silently when absent.
         return;
@@ -2346,7 +2346,7 @@ npm --prefix ui run build
 cargo dev
 ```
 
-Open `research/solopress-prod.log`. Expected:
+Open `research/cheesecake-prod.log`. Expected:
 
 - A 4px gradient stripe appears immediately to the right of the minimap.
 - Regions with high-duration slow requests read red; quiet regions read green.
@@ -3527,7 +3527,7 @@ Expected: every command green.
 cargo dev
 ```
 
-Open `research/solopress-prod.log`:
+Open `research/cheesecake-prod.log`:
 
 - Speed rail paints a continuous green-to-red gradient next to the minimap.
 - Visible red regions correlate with regions holding the longest-duration `SLOW REQUEST` lines.
@@ -3546,7 +3546,7 @@ Open `research/solopress-prod.log`:
 
 - [ ] **Step 3: Manual smoke - no-slow-requests fixture**
 
-In the dev shell, open `research/solopress-wsl-oink.out`:
+In the dev shell, open `research/cheesecake-wsl-oink.out`:
 
 - Speed rail paints as a uniform green strip.
 - Drawer reads "No slow requests detected in this file."

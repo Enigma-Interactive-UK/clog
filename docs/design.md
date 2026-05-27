@@ -12,7 +12,7 @@ Clog (Core Log) is a Windows desktop application for viewing, tailing, filtering
 and searching log4j2-formatted log files produced by Play 1.x Java applications.
 Files are typically large (>50 MB) and accessed from a WSL Ubuntu image via an
 SMB bridge, though local files must work identically for the developer loop. A
-real sample log lives at `research/solopress.out` (~8.7 MB) and is the primary
+real sample log lives at `research/cheesecake.out` (~8.7 MB) and is the primary
 fixture used throughout development and testing.
 
 The originating log4j2 configs in `research/` show that production patterns vary
@@ -398,7 +398,7 @@ This makes the portable zip distribution genuinely portable.
 
 The strategy is layered by where bugs hide:
 
-- **`clog-core` unit tests** against `research/solopress.out` as the primary
+- **`clog-core` unit tests** against `research/cheesecake.out` as the primary
   fixture, plus tiny synthetic fixtures for edge cases (empty file, single
   line, no trailing newline, malformed records).
 - **One `proptest`** on the PatternLayout compiler — the one place where

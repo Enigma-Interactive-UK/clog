@@ -89,10 +89,10 @@ Notes that matter for the parser:
 
 ### Sample fixtures
 
-- [research/solopress-prod.log](research/solopress-prod.log) - 8.7 MB, **74,921 lines**, prod pattern. Primary smoke fixture.
-- [research/solopress-wsl-oink.out](research/solopress-wsl-oink.out) - 42 KB, 386 lines, wsl-oink pattern.
+- [research/cheesecake-prod.log](research/cheesecake-prod.log) - 8.7 MB, **74,921 lines**, prod pattern. Primary smoke fixture.
+- [research/cheesecake-wsl-oink.out](research/cheesecake-wsl-oink.out) - 42 KB, 386 lines, wsl-oink pattern.
 
-Note: `docs/build-phases.md` and `docs/design.md` still reference `research/solopress.out` (the historical name). Code should use the real filenames above.
+Note: `docs/build-phases.md` and `docs/design.md` still reference `research/cheesecake.out` (the historical name). Code should use the real filenames above.
 
 ## OpenWolf
 

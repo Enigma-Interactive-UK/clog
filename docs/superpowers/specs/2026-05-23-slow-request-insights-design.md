@@ -423,7 +423,7 @@ Cover:
     rules and `thresholds: None` is deleted from disk by the save IPC
     rather than persisted as a stub.
 
-Plus a smoke test against `research/solopress-prod.log` asserting at
+Plus a smoke test against `research/cheesecake-prod.log` asserting at
 least one `SLOW REQUEST` entry parses cleanly (regression guard against
 regex drift).
 
@@ -834,12 +834,12 @@ user-facing setting in v1.
 ## Verification
 
 - `cargo test --workspace` green (new `slow_requests` module + smoke
-  against `research/solopress-prod.log`).
+  against `research/cheesecake-prod.log`).
 - `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - `cargo fmt --check` clean.
 - `npm --prefix ui run test` green.
 - `npm --prefix ui run build` green.
-- `cargo dev` smoke on `research/solopress-prod.log`: open the
+- `cargo dev` smoke on `research/cheesecake-prod.log`: open the
   drawer; confirm at least the `/preflight/killpreflightrequest.json`
   and `/productfront/getupdatedproductoptions.json/` groups appear with
   sensible totals; flip Normalised / Raw and confirm the row counts
@@ -851,7 +851,7 @@ user-facing setting in v1.
   red end clearly anchored to the regions holding the highest-duration
   hits and smooth fades between adjacent buckets (no visible cell
   edges); confirm the rail paints as a uniform green strip on a
-  fixture with zero slow requests (e.g. `research/solopress-wsl-oink.out`);
+  fixture with zero slow requests (e.g. `research/cheesecake-wsl-oink.out`);
   hover a red region and confirm the third tooltip line shows "N hits,
   avg ..., peak ...".
 - Threshold smoke: in the Settings modal, set Fast 1000 / Slow 5000;

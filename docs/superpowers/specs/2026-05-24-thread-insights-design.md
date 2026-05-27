@@ -244,8 +244,8 @@ The intersection just considers both masks now.
 **`clog-core`:**
 
 - Unit tests for `classify(thread: &[u8])` covering every observed
-  thread name from `research/solopress-prod.log` and
-  `research/solopress-wsl-oink.out`, plus a `b""` (empty) input and a
+  thread name from `research/cheesecake-prod.log` and
+  `research/cheesecake-wsl-oink.out`, plus a `b""` (empty) input and a
   garbage UTF-8 input.
 - Property test: any input that matches `^play-thread-\d+$`
   classifies as `Requests`. Same for `jobs-thread-\d+` -> `Jobs`.
@@ -263,7 +263,7 @@ The intersection just considers both masks now.
   tab's allow ref; Reset clears both masks; click-outside emits
   `close`.
 
-**Manual smoke tests (on `research/solopress-prod.log`):**
+**Manual smoke tests (on `research/cheesecake-prod.log`):**
 
 1. Open the file. Open Filters. Toggle off Requests. Viewport should
    collapse from ~75k records to a much smaller set dominated by Jobs

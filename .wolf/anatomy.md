@@ -105,8 +105,8 @@
 
 - `log4j.prod.properties` (~331 tok)
 - `log4j2.wsl-oink.xml` (~729 tok)
-- `solopress-wsl-oink-short.out` (~200 tok)
-- `solopress-wsl-oink.out` — Declares set (~11695 tok)
+- `cheesecake-wsl-oink-short.out` (~200 tok)
+- `cheesecake-wsl-oink.out` — Declares set (~11695 tok)
 - `test - Copy.log` (~202 tok)
 
 ## scripts/

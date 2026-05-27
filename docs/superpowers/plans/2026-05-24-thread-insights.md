@@ -1339,7 +1339,7 @@ Expected: app window opens.
 
 - [ ] **Step 2: Smoke test the prod fixture**
 
-1. Open `research/solopress-prod.log`.
+1. Open `research/cheesecake-prod.log`.
 2. Click the Filters button. Confirm the popover opens with two sections: Levels (6 pills) and Threads (6 pills: Requests, Jobs, Scheduler, System, Infra, Other).
 3. Toggle Requests off. Confirm the viewport collapses from ~75k records to a much smaller set dominated by Jobs and main lines.
 4. Toggle everything off in the Threads section except Other. Confirm the residual records are the rare Memcached / Netty / JGroups header lines (if any are present in the fixture).
