@@ -89,14 +89,37 @@ async function refresh() {
 
 const chartEl = useTemplateRef<HTMLCanvasElement>('chartEl')
 const speedGrid = ref<SpeedGrid | null>(null)
-const CHART_HEIGHT = 67
-// Gutters reserved for axis labels (CSS px). LEFT_PAD fits a ms label
-// like "12s" or "999ms"; BOTTOM_PAD fits a single line of x-axis labels
-// with breathing room from the host's border.
-const LEFT_PAD = 36
-const RIGHT_PAD = 8
-const TOP_PAD = 12
-const BOTTOM_PAD = 20
+
+// Chart dimensions all derive from --font-size-base so the whole chart
+// (height, axis gutters, tick-label font) scales when the user bumps
+// the app font size. The base values below are calibrated for the
+// default 13px font; the multiplier vs. that produces the live size.
+// chartMetrics() is called at the start of every paint/fetch/hit-test
+// so we always read the current CSS variable rather than caching at
+// module load.
+const CHART_BASE_FONT_PX = 13
+const CHART_BASE = {
+  height: 67,
+  leftPad: 36,
+  rightPad: 8,
+  topPad: 12,
+  bottomPad: 20,
+  labelFontPx: 9,
+} as const
+
+function chartMetrics() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--font-size-base').trim()
+  const fs = Number.parseFloat(raw) || CHART_BASE_FONT_PX
+  const k = fs / CHART_BASE_FONT_PX
+  return {
+    height: Math.round(CHART_BASE.height * k),
+    leftPad: Math.round(CHART_BASE.leftPad * k),
+    rightPad: Math.round(CHART_BASE.rightPad * k),
+    topPad: Math.round(CHART_BASE.topPad * k),
+    bottomPad: Math.round(CHART_BASE.bottomPad * k),
+    labelFontPx: Math.max(8, Math.round(CHART_BASE.labelFontPx * k)),
+  }
+}
 const chartTooltip = ref<{ visible: boolean; x: number; text: string }>({
   visible: false,
   x: 0,
@@ -116,7 +139,8 @@ async function fetchSpeedGrid() {
   // One bucket per 4 CSS px across the plotting area (excluding axis
   // gutters) gives a readable bar chart without sending an absurd
   // payload for narrow drawers. Clamped to >=1 for safety.
-  const plotW = Math.max(1, w - LEFT_PAD - RIGHT_PAD)
+  const { leftPad, rightPad } = chartMetrics()
+  const plotW = Math.max(1, w - leftPad - rightPad)
   const bucketCount = Math.max(1, Math.floor(plotW / 4))
   try {
     const payload = await invoke<SpeedGrid>('get_slow_request_speeds', {
@@ -196,7 +220,8 @@ function paintChart() {
   const grid = speedGrid.value
   if (!canvas || !grid) return
   const w = canvas.clientWidth
-  const h = CHART_HEIGHT
+  const metrics = chartMetrics()
+  const h = metrics.height
   if (w <= 0) return
   const dpr = globalThis.devicePixelRatio || 1
   canvas.width = Math.floor(w * dpr)
@@ -207,14 +232,21 @@ function paintChart() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
-  const plotX = LEFT_PAD
-  const plotY = TOP_PAD
-  const plotW = Math.max(1, w - LEFT_PAD - RIGHT_PAD)
-  const plotH = Math.max(1, h - TOP_PAD - BOTTOM_PAD)
+  const plotX = metrics.leftPad
+  const plotY = metrics.topPad
+  const plotW = Math.max(1, w - metrics.leftPad - metrics.rightPad)
+  const plotH = Math.max(1, h - metrics.topPad - metrics.bottomPad)
 
   const axisColour = readCssColour('--border-default')
   const labelColour = readCssColour('--fg-muted')
-  ctx.font = '9px var(--font-sans, sans-serif)'
+  // Canvas's ctx.font is a CSS-font shorthand parser but does NOT support
+  // var() inside it -- if any part fails to parse the whole assignment
+  // is silently rejected and the previous font (default 10px sans) stays
+  // in effect. Resolve --font-sans to a concrete family string first.
+  const fontFamily =
+    getComputedStyle(document.documentElement).getPropertyValue('--font-sans').trim() ||
+    'sans-serif'
+  ctx.font = `${metrics.labelFontPx}px ${fontFamily}`
   ctx.textBaseline = 'middle'
 
   // Axes.
@@ -281,8 +313,9 @@ function bucketAtX(clientX: number): { index: number; line: number } | null {
   const grid = speedGrid.value
   if (!canvas || !grid || grid.buckets.length === 0) return null
   const rect = canvas.getBoundingClientRect()
-  const plotW = Math.max(1, rect.width - LEFT_PAD - RIGHT_PAD)
-  const x = clientX - rect.left - LEFT_PAD
+  const { leftPad, rightPad } = chartMetrics()
+  const plotW = Math.max(1, rect.width - leftPad - rightPad)
+  const x = clientX - rect.left - leftPad
   if (x < 0 || x > plotW) return null
   const bc = grid.buckets.length
   const idx = Math.max(0, Math.min(bc - 1, Math.floor((x / plotW) * bc)))
@@ -305,10 +338,11 @@ function onChartMove(ev: PointerEvent) {
   const localY = ev.clientY - rect.top
   // Clamp crosshair to the plot region so the lines never paint over the
   // axis gutters.
-  const plotLeft = LEFT_PAD
-  const plotRight = rect.width - RIGHT_PAD
-  const plotTop = TOP_PAD
-  const plotBottom = rect.height - BOTTOM_PAD
+  const { leftPad, rightPad, topPad, bottomPad } = chartMetrics()
+  const plotLeft = leftPad
+  const plotRight = rect.width - rightPad
+  const plotTop = topPad
+  const plotBottom = rect.height - bottomPad
   const cx = Math.max(plotLeft, Math.min(plotRight, localX))
   const cy = Math.max(plotTop, Math.min(plotBottom, localY))
   chartCrosshair.value = { visible: true, x: cx, y: cy }
@@ -421,6 +455,10 @@ if (settingsVersion) {
   watch(settingsVersion, () => {
     void refreshThresholds()
     emit('thresholds-changed')
+    // Refetch buckets because a font-size bump changes leftPad and so the
+    // bucket count derived from plotW. Cheap relative to a tail refresh
+    // and only fires on settings saves.
+    void fetchSpeedGrid()
     // Force a repaint so a colour-blind palette swap takes effect even
     // when the thresholds payload comes back identical (deep watcher
     // wouldn't fire on an unchanged shape).
@@ -773,7 +811,6 @@ function jumpTo(line: number) {
         <option value="avg">Avg</option>
         <option value="path">Path</option>
       </select>
-      <span class="sort-dir">{{ tab.slowRequestSort.value.dir === 'desc' ? 'desc' : 'asc' }}</span>
     </div>
     <div ref="bodyEl" class="drawer-body">
       <div v-if="error" class="drawer-error">
@@ -913,6 +950,18 @@ function jumpTo(line: number) {
   border: 0;
 }
 
+/* Shared sizing token so the mode buttons, filter input and sort
+   select all stand at the same height, regardless of their internal
+   font choices and the native select's dropdown affordance. Scales
+   with --font-size-base so the whole row tracks the font setting. */
+.mode-btn,
+.filter-input,
+.sort-select {
+  box-sizing: border-box;
+  height: round(calc(var(--font-size-base) * 1.9), 1px);
+  line-height: 1.2;
+}
+
 .mode-toggle {
   display: inline-flex;
   align-items: center;
@@ -924,7 +973,7 @@ function jumpTo(line: number) {
     background: var(--bg-button);
     color: var(--fg-muted);
     border: 1px solid var(--border-button);
-    padding: 0.25rem 0.7rem;
+    padding: 0 0.7rem;
     font-size: 0.8rem;
     font-family: var(--font-mono);
     cursor: pointer;
@@ -958,10 +1007,16 @@ function jumpTo(line: number) {
 .filter-input {
   flex: 1 1 auto;
   background: var(--bg-viewport);
-  border: 1px solid var(--border-button);
   color: var(--fg-default);
-  padding: 0.15rem 1.6rem 0.15rem 0.4rem;
-  border-radius: 3px;
+  border: 1px solid var(--border-button);
+  border-radius: var(--radius-sm);
+  /* Match the SearchBar's .search-input: mono family, same font-size,
+     same line-height. Vertical padding is 0 because the shared sizing
+     token above (.mode-btn, .filter-input, .sort-select) sets an
+     explicit height. */
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0 1.6rem 0 0.5rem;
   min-width: 0;
 }
 
@@ -981,12 +1036,20 @@ function jumpTo(line: number) {
 .sort-select {
   background: var(--bg-viewport);
   border: 1px solid var(--border-button);
+  border-radius: var(--radius-sm);
   color: var(--fg-default);
-  padding: 0.15rem 0.3rem;
-  border-radius: 3px;
+  /* Strip the native select chrome so its height matches the
+     button/input neighbours; draw a small caret with a background SVG
+     instead, leaving enough right-padding so the text never collides. */
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0 1.4rem 0 0.5rem;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1 L5 5 L9 1' stroke='%23888' stroke-width='1.25' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 0.6rem auto;
 }
-
-.sort-dir { color: var(--fg-muted); font-size: 0.8rem; }
 
 .entry-list-host {
   position: relative;
@@ -1125,7 +1188,10 @@ function jumpTo(line: number) {
 .chart-host {
   position: relative;
   flex: 0 0 auto;
-  height: 67px;
+  /* Tracks --font-size-base via the same 67/13 ratio that chartMetrics()
+     uses on the JS side, so the canvas painted into this box and the
+     box itself stay in sync as the user bumps the app font size. */
+  height: round(calc(var(--font-size-base) * (67 / 13)), 1px);
   margin: 0 0.6rem 0.4rem;
   background: var(--bg-viewport);
   border: 1px solid var(--border-default);

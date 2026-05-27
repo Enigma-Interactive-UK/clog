@@ -31,6 +31,9 @@ export function useWindowChrome(onError: (msg: string) => void) {
   async function toggleMaximizeWindow() {
     try { await appWindow.toggleMaximize(); await refreshMaximized() } catch (e) { reportError(e) }
   }
+  async function maximizeWindow() {
+    try { await appWindow.maximize(); await refreshMaximized() } catch (e) { reportError(e) }
+  }
   async function closeWindow() {
     try { await appWindow.close() } catch (e) { reportError(e) }
   }
@@ -52,6 +55,7 @@ export function useWindowChrome(onError: (msg: string) => void) {
     windowMaximized,
     minimizeWindow,
     toggleMaximizeWindow,
+    maximizeWindow,
     closeWindow,
   }
 }

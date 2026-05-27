@@ -108,7 +108,7 @@ export function useSettings() {
       applyMonoFont(s.mono_font_family)
     } catch {
       applyTheme('system')
-      applyFontSize(13)
+      applyFontSize(14)
       applyColourBlind(false)
       applyMonoFont(null)
     }

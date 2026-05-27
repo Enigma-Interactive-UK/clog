@@ -196,12 +196,14 @@ defineExpose({
   .mode-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
     border: none;
     padding: 0;
     margin: 0;
 
-    .mode-label { color: var(--fg-muted); }
+    .mode-label {
+      color: var(--fg-muted);
+      margin-right: 0.4rem;
+    }
 
     .mode-btn {
       background: var(--bg-button);

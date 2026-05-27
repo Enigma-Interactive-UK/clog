@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
       :aria-pressed="insightsActive"
       @click="emit('toggle-insights')"
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="insights-glyph" viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="13" width="4" height="8" fill="currentColor" />
         <rect x="10" y="8" width="4" height="13" fill="currentColor" />
         <rect x="17" y="3" width="4" height="18" fill="currentColor" />
@@ -417,6 +417,16 @@ onBeforeUnmount(() => {
   &:focus-visible {
     outline: 1px solid var(--accent);
     outline-offset: -1px;
+  }
+
+  .insights-glyph {
+    /* Snap to whole pixels so the bar chart strokes land on the device
+       grid -- matches the icon-sizing approach used by AppHeader so the
+       glyph tracks the user's font-size setting. */
+    width: round(calc(var(--font-size-base) * 1.1), 1px);
+    height: round(calc(var(--font-size-base) * 1.1), 1px);
+    display: block;
+    shape-rendering: crispEdges;
   }
 }
 

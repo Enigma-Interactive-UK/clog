@@ -181,7 +181,7 @@ useAppShortcuts({
   toggleInsights: onToggleInsights,
 })
 
-const { zen, toggle: toggleZen } = useZenMode()
+const { zen, enter: enterZen, toggle: toggleZen } = useZenMode()
 
 // --- Modal triggers -------------------------------------------------------
 
@@ -439,6 +439,7 @@ onBeforeUnmount(() => {
       @pick-file="pickFile"
       @open-settings="openSettings"
       @open-about="openAbout"
+      @enter-zen="enterZen"
       @error="(msg) => (error = msg)"
     />
 

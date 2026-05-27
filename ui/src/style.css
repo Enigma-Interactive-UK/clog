@@ -157,7 +157,7 @@
   /* Typography */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: Consolas, ui-monospace, monospace;
-  --font-size-base: 13px;
+  --font-size-base: 14px;
   --row-height: 18px;
 
   /* Layout primitives */
