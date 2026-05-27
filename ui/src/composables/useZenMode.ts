@@ -48,10 +48,14 @@ export function useZenMode() {
       inputFocused: isTextInputFocused(),
     })
     if (action === 'noop') return
-    // Suppress any default the webview might attach to F11 (fullscreen
-    // in some contexts) and any propagation to per-component listeners.
-    ev.preventDefault()
-    ev.stopPropagation()
+    if (ev.key === 'F11') {
+      // Suppress any default the webview might attach to F11 (fullscreen
+      // in some contexts) and any propagation to per-component listeners.
+      // Esc deliberately keeps propagating so a future modal Esc handler
+      // can still receive it.
+      ev.preventDefault()
+      ev.stopPropagation()
+    }
     if (action === 'toggle') toggle()
     else if (action === 'exit') exit()
   }
