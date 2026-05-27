@@ -14,6 +14,9 @@ research/
 # Local-only scratch dir (smoke-test update stubs, etc.)
 /tmp/
 
+# Superpowers brainstorm scratch (visual companion mockups)
+.superpowers/
+
 # OpenWolf ephemeral state
 .wolf/memory.md
 .wolf/daemon.log
