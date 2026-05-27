@@ -8,6 +8,7 @@
  *   Ctrl+Shift+Tab  cycle backward through tabs
  *   Ctrl + / -      font size bump (delegated to useSettings)
  *   Ctrl 0          font size reset (delegated to useSettings)
+ *   Ctrl I          toggle slow-request insights drawer for the active tab
  *   Ctrl F / Ctrl G suppressed (we own our own search bar)
  *
  * Capture phase is used so the shortcuts win against focused inputs
@@ -25,10 +26,11 @@ export interface UseAppShortcutsOptions {
   closeTab: (id: number) => Promise<void>
   pickFile: () => Promise<void>
   handleFontShortcut: (ev: KeyboardEvent) => boolean
+  toggleInsights: () => void
 }
 
 export function useAppShortcuts(opts: UseAppShortcutsOptions) {
-  const { tabs, activeTabId, activateTab, closeTab, pickFile, handleFontShortcut } = opts
+  const { tabs, activeTabId, activateTab, closeTab, pickFile, handleFontShortcut, toggleInsights } = opts
 
   function suppressBrowserFind(ev: KeyboardEvent) {
     // F3 (and Shift+F3) trigger the webview "find next/previous" overlay on
@@ -59,6 +61,13 @@ export function useAppShortcuts(opts: UseAppShortcutsOptions) {
     if (k === 't' || k === 'o') {
       ev.preventDefault()
       void pickFile()
+      return true
+    }
+    if (k === 'i' && !ev.shiftKey) {
+      // Ctrl+I toggles the slow-request insights drawer. Needed because
+      // the button lives in TabStrip, which is hidden in zen mode.
+      ev.preventDefault()
+      toggleInsights()
       return true
     }
     if (ev.key === 'Tab') {

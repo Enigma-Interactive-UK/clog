@@ -178,6 +178,7 @@ useAppShortcuts({
   closeTab,
   pickFile,
   handleFontShortcut,
+  toggleInsights: onToggleInsights,
 })
 
 const { zen, toggle: toggleZen } = useZenMode()
