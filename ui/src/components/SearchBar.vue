@@ -173,8 +173,8 @@ defineExpose({
 .search-bar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
+  gap: 0.4rem;
+  padding: 0.2rem 0.75rem;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-elevated);
   flex-wrap: wrap;
@@ -207,9 +207,10 @@ defineExpose({
       background: var(--bg-button);
       color: var(--fg-muted);
       border: 1px solid var(--border-button);
-      padding: 0.25rem 0.7rem;
+      padding: 0.15rem 0.6rem;
       font-size: 0.8rem;
       font-family: var(--font-mono);
+      line-height: 1.2;
       cursor: pointer;
 
       &:first-of-type {
@@ -246,9 +247,10 @@ defineExpose({
     color: var(--fg-default);
     border: 1px solid var(--border-button);
     border-radius: var(--radius-sm);
-    padding: 0.3rem 1.6rem 0.3rem 0.5rem;
+    padding: 0.15rem 1.6rem 0.15rem 0.5rem;
     font-family: var(--font-mono);
     font-size: 0.85rem;
+    line-height: 1.3;
 
     &.has-error {
       border-color: var(--level-error);
@@ -304,9 +306,10 @@ defineExpose({
     color: var(--fg-default);
     border: 1px solid var(--border-button);
     border-radius: var(--radius-sm);
-    padding: 0.25rem 0.55rem;
+    padding: 0.15rem 0.5rem;
     font-size: 0.8rem;
     font-family: var(--font-mono);
+    line-height: 1.2;
     cursor: pointer;
 
     &:hover:not(:disabled) { background: var(--bg-button-hover); }
@@ -328,7 +331,7 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.25rem 0.4rem;
+    padding: 0.15rem 0.4rem;
 
     &.has-active {
       border-color: var(--accent);

@@ -49,14 +49,26 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
       @click="emit('open-settings')"
     >&#9881;</button>
     <span class="window-controls" :class="{ 'no-file': !hasFile }">
-      <button type="button" class="win-btn" title="Minimise" aria-label="Minimise" @click="minimizeWindow">&#9472;</button>
+      <button type="button" class="win-btn" title="Minimise" aria-label="Minimise" @click="minimizeWindow">
+        <svg class="win-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 8 L12 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
       <button
         type="button"
         class="win-btn"
         :title="windowMaximized ? 'Restore' : 'Maximise'"
         :aria-label="windowMaximized ? 'Restore' : 'Maximise'"
         @click="toggleMaximizeWindow"
-      >{{ windowMaximized ? '⧉' : '□' }}</button>
+      >
+        <svg v-if="windowMaximized" class="win-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M5 5 L5 3 L13 3 L13 11 L11 11" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linejoin="miter" />
+          <rect x="3" y="5" width="8" height="8" stroke="currentColor" stroke-width="1.25" fill="none" />
+        </svg>
+        <svg v-else class="win-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <rect x="4" y="4" width="8" height="8" stroke="currentColor" stroke-width="1.25" fill="none" />
+        </svg>
+      </button>
       <button type="button" class="win-btn close" title="Close" aria-label="Close" @click="closeWindow">
         <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
@@ -70,14 +82,14 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
 .bar {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
-  padding: 0.6rem 1rem;
+  gap: 0.6rem;
+  padding: 0.2rem 0.75rem;
   border-bottom: 1px solid var(--border-default);
   flex-wrap: wrap;
 
   h1 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1rem;
     letter-spacing: 0.02em;
     display: inline-flex;
     align-items: center;
@@ -85,8 +97,8 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
 
   .app-icon {
     display: block;
-    height: 22px;
-    width: 22px;
+    height: 18px;
+    width: 18px;
     image-rendering: auto;
     object-fit: contain;
     pointer-events: none;
@@ -96,9 +108,10 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
     background: var(--bg-button);
     color: var(--fg-default);
     border: 1px solid var(--border-button);
-    padding: 0.35rem 0.9rem;
+    padding: 0.15rem 0.7rem;
     border-radius: var(--radius-sm);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    line-height: 1.2;
     cursor: pointer;
 
     &:hover:not(:disabled) { background: var(--bg-button-hover); }
@@ -107,8 +120,8 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
 
   .settings-btn {
     margin-left: 0.2rem;
-    padding: 0.35rem 0.55rem;
-    font-size: 1rem;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.95rem;
     line-height: 1;
   }
 
@@ -129,9 +142,9 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
       color: var(--fg-muted);
       border: 0;
       padding: 0;
-      width: 2.6rem;
-      height: 2rem;
-      font-size: 1.05rem;
+      width: 2.2rem;
+      height: 1.6rem;
+      font-size: 0.95rem;
       line-height: 1;
       cursor: pointer;
       border-radius: var(--radius-sm);
@@ -143,6 +156,12 @@ const { windowMaximized, minimizeWindow, toggleMaximizeWindow, closeWindow } = u
       &:hover { background: var(--bg-button-hover); color: var(--fg-default); }
       &.close:hover { background: var(--level-error); color: var(--fg-on-accent); }
       &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+      .win-glyph {
+        width: 12px;
+        height: 12px;
+        display: block;
+      }
     }
   }
 }
