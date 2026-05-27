@@ -1,13 +1,13 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T19:54:26.219Z
-> Files: 105 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T20:26:39.118Z
+> Files: 110 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
 - `.gitignore` — Git ignore rules (~115 tok)
-- `Cargo.toml` — Rust package manifest (~104 tok)
-- `CLAUDE.md` — CLAUDE.md (~1313 tok)
+- `Cargo.toml` — Rust package manifest (~111 tok)
+- `CLAUDE.md` — CLAUDE.md (~1314 tok)
 - `clog.code-workspace` (~16 tok)
 - `README.md` — Project documentation (~783 tok)
 
@@ -30,7 +30,7 @@
 ## crates/clog-app/
 
 - `build.rs` (~12 tok)
-- `Cargo.toml` — Rust package manifest (~235 tok)
+- `Cargo.toml` — Rust package manifest (~252 tok)
 - `tauri.conf.json` (~579 tok)
 
 ## crates/clog-app/capabilities/
@@ -39,18 +39,18 @@
 
 ## crates/clog-app/gen/schemas/
 
-- `acl-manifests.json` — Declares command (~20508 tok)
-- `capabilities.json` (~114 tok)
-- `desktop-schema.json` (~38047 tok)
-- `windows-schema.json` (~38047 tok)
+- `acl-manifests.json` — Declares command (~21040 tok)
+- `capabilities.json` (~119 tok)
+- `desktop-schema.json` (~38940 tok)
+- `windows-schema.json` (~38940 tok)
 
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37763 tok)
-- `paths.rs` — Filesystem layout for clog's persistent data. (~1020 tok)
-- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~4899 tok)
-- `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1862 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~40454 tok)
+- `paths.rs` — Filesystem layout for clog's persistent data. (~1092 tok)
+- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~5248 tok)
+- `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1995 tok)
 
 ## crates/clog-core/
 
@@ -64,11 +64,11 @@
 
 - `idx_cache.rs` — Persistent on-disk cache of the `(LineIndex, Vec<RecordHeader>)` produced (~2765 tok)
 - `index.rs` — In-memory line offset index. (~782 tok)
-- `lib.rs` — Clog engine. No Tauri deps. (~2861 tok)
+- `lib.rs` — Clog engine. No Tauri deps. (~2863 tok)
 - `pattern.rs` — log4j2 `PatternLayout` compiler. (~9536 tok)
 - `record.rs` — Record header type and scanner. (~2236 tok)
 - `regex_scanner.rs` — Regex escape hatch. (~1269 tok)
-- `search.rs` — Smart + regex search engine. P6. (~6059 tok)
+- `search.rs` — Smart + regex search engine. P6. (~6060 tok)
 - `slow_requests.rs` — Slow-request detection, aggregation, and speed-grid builder. (~9320 tok)
 - `source.rs` — Line-source abstraction. The v1 impl streams a local file via `BufReader`; (~946 tok)
 - `tail.rs` — Polling tail loop + rotation detection. (~4417 tok)
@@ -84,29 +84,31 @@
 
 ## docs/
 
-- `build-phases.md` — Clog v1 — Build phases (~4689 tok)
-- `design.md` — Clog v1 — Design (~5493 tok)
+- `build-phases.md` — Clog v1 — Build phases (~4816 tok)
+- `design.md` — Clog v1 — Design (~5613 tok)
 - `future-ideas.md` — Clog - Future ideas (~1084 tok)
 
 ## docs/superpowers/plans/
 
-- `2026-05-23-minimap-heatmap.md` — Minimap heatmap implementation plan (~8500 tok)
-- `2026-05-23-slow-request-insights.md` — Slow request insights implementation plan (~30761 tok)
-- `2026-05-24-thread-insights.md` — Thread insights + consolidated filter flyout implementation plan (~11303 tok)
+- `2026-05-23-minimap-heatmap.md` — Minimap heatmap implementation plan (~8735 tok)
+- `2026-05-23-slow-request-insights.md` — Slow request insights implementation plan (~31657 tok)
+- `2026-05-24-thread-insights.md` — Thread insights + consolidated filter flyout implementation plan (~11654 tok)
+- `2026-05-27-zen-mode.md` — Zen mode implementation plan (~4103 tok)
 
 ## docs/superpowers/specs/
 
-- `2026-05-23-minimap-heatmap-design.md` — Minimap heatmap upgrade - design (~1642 tok)
-- `2026-05-23-slow-request-insights-design.md` — Slow request insights - design (~9472 tok)
-- `2026-05-24-thread-insights-design.md` — Thread insights + consolidated filter flyout - design (~3328 tok)
+- `2026-05-23-minimap-heatmap-design.md` — Minimap heatmap upgrade - design (~1687 tok)
+- `2026-05-23-slow-request-insights-design.md` — Slow request insights - design (~9701 tok)
+- `2026-05-24-thread-insights-design.md` — Thread insights + consolidated filter flyout - design (~3404 tok)
 - `2026-05-26-auto-update-design.md` — Auto-update - design (~4102 tok)
+- `2026-05-27-zen-mode-design.md` — Zen mode - design spec (~1710 tok)
 
 ## research/
 
-- `log4j.prod.properties` (~331 tok)
-- `log4j2.wsl-oink.xml` (~729 tok)
 - `cheesecake-wsl-oink-short.out` (~200 tok)
 - `cheesecake-wsl-oink.out` — Declares set (~11695 tok)
+- `log4j.prod.properties` (~331 tok)
+- `log4j2.wsl-oink.xml` (~729 tok)
 - `test - Copy.log` (~202 tok)
 
 ## scripts/
@@ -117,7 +119,7 @@
 
 ## tmp/update-stub/
 
-- `Clog_1.0.1_x64-setup.exe` (~12 tok)
+- `Clog_1.0.1_x64-setup.exe.sig` (~110 tok)
 - `latest.json` (~193 tok)
 
 ## ui/
@@ -135,7 +137,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4914 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4991 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 218 vars (~5770 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
@@ -157,10 +159,11 @@
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `RecordModal.vue` — Full-record viewer modal. Shows the raw text of a single log record so (~1158 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2888 tok)
-- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7388 tok)
+- `SettingsModal.vue` — Settings modal split into four tabs: General (appearance / behaviour / (~7356 tok)
 - `StatusBar.vue` — Footer status bar: cache hint, record/line/byte stats for the current (~1382 tok)
 - `TabStrip.vue` — Tab strip across the top of the app. Lists open tabs with a tail status (~3851 tok)
 - `UpdateBanner.vue` — Non-modal banner that surfaces an available update. Sits at the bottom (~1396 tok)
+- `ZenExitPill.vue` — Floating "Exit zen mode" pill. Rendered by App.vue only when zen is (~378 tok)
 
 ## ui/src/composables/
 
@@ -173,6 +176,8 @@
 - `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
 - `useUpdateBanner.ts` — Update-banner state machine. Talks to the Rust shim (`check_for_update`, (~1462 tok)
 - `useWindowChrome.ts` — Window chrome: maximize/restore tracking + the three title-bar buttons. (~443 tok)
+- `useZenMode.test.ts` (~406 tok)
+- `useZenMode.ts` — Zen mode - hides the app chrome so the log records own the viewport. (~570 tok)
 
 ## ui/src/highlight/
 
