@@ -1510,13 +1510,6 @@ function onRowContextMenu(row: LineRow | null, ev: MouseEvent) {
   showRowContextMenu({ clientX: ev.clientX, clientY: ev.clientY }, items)
 }
 
-function heatLine(error: number, warn: number): string {
-  const parts: string[] = []
-  if (error > 0) parts.push(`${error} ${error === 1 ? 'error' : 'errors'}`)
-  if (warn > 0) parts.push(`${warn} ${warn === 1 ? 'warning' : 'warnings'}`)
-  return parts.join(', ')
-}
-
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -1734,7 +1727,11 @@ defineExpose({
         <span
           v-if="minimapTooltip.error > 0 || minimapTooltip.warn > 0"
           class="heat"
-        >{{ heatLine(minimapTooltip.error, minimapTooltip.warn) }}</span>
+        >
+          <span v-if="minimapTooltip.error > 0" class="heat-error">{{ minimapTooltip.error }} {{ minimapTooltip.error === 1 ? 'error' : 'errors' }}</span>
+          <span v-if="minimapTooltip.error > 0 && minimapTooltip.warn > 0" class="heat-sep">, </span>
+          <span v-if="minimapTooltip.warn > 0" class="heat-warn">{{ minimapTooltip.warn }} {{ minimapTooltip.warn === 1 ? 'warning' : 'warnings' }}</span>
+        </span>
         <span
           v-if="minimapTooltip.speed_count > 0"
           class="speed-line"
@@ -2059,7 +2056,10 @@ defineExpose({
   .line-no { color: var(--fg-muted); }
   .ts { color: var(--fg-default); }
   .ts.muted { color: var(--fg-dim); }
-  .heat { color: var(--hl-search-fg); font-weight: 600; }
+  .heat { font-weight: 600; }
+  .heat-error { color: var(--level-error); }
+  .heat-warn { color: var(--level-warn); }
+  .heat-sep { color: var(--fg-muted); font-weight: 400; }
   .speed-line { color: var(--speed-mid); font-weight: 600; }
 
   &::before,
