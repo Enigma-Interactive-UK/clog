@@ -7,6 +7,7 @@
 import { inject, ref, watch } from 'vue'
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app'
 import BaseModal from './BaseModal.vue'
+import ClawdSprite from './ClawdSprite.vue'
 import type { CheckOutcome } from '../composables/useUpdateBanner'
 
 const props = defineProps<{ open: boolean }>()
@@ -100,7 +101,7 @@ defineExpose({ ensureLoaded })
     <h3>Credits</h3>
     <p>
       Vibed by <a href="https://github.com/lewster32/" class="link-btn" target="_blank" rel="noopener noreferrer">Lewis Lane</a> for <a href="https://www.enigma-interactive.co.uk" class="link-btn" target="_blank" rel="noopener noreferrer">Enigma Interactive</a>.
-      A collaboration of meat and metal, built with blood, sweat and oil using <a class="link-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">Claude</a> Opus 4.7 🦀 
+      A collaboration of meat and metal, built with blood, sweat and oil using <a class="link-btn" href="https://claude.ai" target="_blank" rel="noopener noreferrer">Claude</a> Opus 4.7 <ClawdSprite :pixel="1" />
     </p>
 
     <h3>Guest starring</h3>

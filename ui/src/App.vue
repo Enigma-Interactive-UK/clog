@@ -15,6 +15,7 @@ import type { UserHighlightRule } from './types'
 
 import AboutModal from './components/AboutModal.vue'
 import AppHeader from './components/AppHeader.vue'
+import ClawdCameo from './components/ClawdCameo.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import DropOverlay from './components/DropOverlay.vue'
 import LogViewport from './components/LogViewport.vue'
@@ -31,6 +32,7 @@ import { useContextMenu, type MenuItem, type MenuSlider, type MenuToggle } from 
 
 import { useAppShortcuts } from './composables/useAppShortcuts'
 import { useHighlightRules } from './composables/useHighlightRules'
+import { useKonamiCode } from './composables/useKonamiCode'
 import { useSession } from './composables/useSession'
 import { useSettings } from './composables/useSettings'
 import { useStartupPaths } from './composables/useStartupPaths'
@@ -182,6 +184,17 @@ useAppShortcuts({
 })
 
 const { zen, enter: enterZen, toggle: toggleZen } = useZenMode()
+
+// --- Easter egg: Konami code triggers a Clawd cameo across the tab strip.
+// The key bumps on every trigger so a fresh component instance mounts each
+// time, even if the previous scuttle is still in flight -- a re-trigger
+// interrupts cleanly with a new Clawd from the left.
+const cameoActive = ref(false)
+const cameoKey = ref(0)
+useKonamiCode(() => {
+  cameoKey.value++
+  cameoActive.value = true
+})
 
 // --- Modal triggers -------------------------------------------------------
 
@@ -513,6 +526,8 @@ onBeforeUnmount(() => {
     />
 
     <ZenExitPill v-if="zen" @click="toggleZen" />
+
+    <ClawdCameo v-if="cameoActive" :key="cameoKey" @done="cameoActive = false" />
 
     <DropOverlay :visible="dragHover" />
 
