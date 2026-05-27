@@ -25,6 +25,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import StatusBar from './components/StatusBar.vue'
 import TabStrip from './components/TabStrip.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
+import ZenExitPill from './components/ZenExitPill.vue'
 
 import { useContextMenu, type MenuItem, type MenuSlider, type MenuToggle } from './composables/useContextMenu'
 
@@ -35,6 +36,7 @@ import { useSettings } from './composables/useSettings'
 import { useStartupPaths } from './composables/useStartupPaths'
 import { useTabs } from './composables/useTabs'
 import { useUpdateBanner } from './composables/useUpdateBanner'
+import { useZenMode } from './composables/useZenMode'
 
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
@@ -177,6 +179,8 @@ useAppShortcuts({
   pickFile,
   handleFontShortcut,
 })
+
+const { zen, toggle: toggleZen } = useZenMode()
 
 // --- Modal triggers -------------------------------------------------------
 
@@ -428,6 +432,7 @@ onBeforeUnmount(() => {
 <template>
   <main class="shell" @contextmenu="onAppContextMenu">
     <AppHeader
+      v-if="!zen"
       :busy="busy"
       :has-file="!!currentTab"
       @pick-file="pickFile"
@@ -437,6 +442,7 @@ onBeforeUnmount(() => {
     />
 
     <TabStrip
+      v-if="!zen"
       :tabs="tabs"
       :active-tab-id="activeTabId"
       :insights-active="currentTab?.insightsOpen.value ?? false"
@@ -475,7 +481,7 @@ onBeforeUnmount(() => {
     <p v-else class="placeholder">No file open. Click <em>Open file...</em> to pick one.</p>
 
     <SearchBar
-      v-if="currentTab"
+      v-if="currentTab && !zen"
       :key="`sb-${currentTab.localId}`"
       :tab="currentTab"
       @next-hit="onNextHit"
@@ -483,7 +489,7 @@ onBeforeUnmount(() => {
     />
 
     <UpdateBanner
-      v-if="updatePhase !== 'hidden'"
+      v-if="updatePhase !== 'hidden' && !zen"
       :status="updateStatus"
       :phase="updatePhase"
       :error-message="updateError"
@@ -495,6 +501,7 @@ onBeforeUnmount(() => {
     />
 
     <StatusBar
+      v-if="!zen"
       :tab="currentTab"
       :settings="settings"
       :theme-toggle-glyph="themeToggleGlyph"
@@ -502,6 +509,8 @@ onBeforeUnmount(() => {
       @cycle-theme="cycleTheme"
       @open-pattern="patternOpen = true"
     />
+
+    <ZenExitPill v-if="zen" @click="toggleZen" />
 
     <DropOverlay :visible="dragHover" />
 
