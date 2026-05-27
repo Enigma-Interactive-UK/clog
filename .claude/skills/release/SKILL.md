@@ -62,6 +62,17 @@ End-to-end Clog release pipeline. Never skip a step; never guess a version.
    `latest.json` MUST be attached so the auto-updater endpoint (`releases/latest/download/latest.json`) resolves to the new release.
 9. **Report the release URL** back to the user.
 
+## Vendored NSIS installer template
+
+`crates/clog-app/installer.nsi` is a vendored copy of `tauri-bundler`'s stock NSIS template, patched to skip the "uninstall before installing" maintenance prompt on upgrade (the prompt's uninstall step was failing in practice and is unnecessary - SetOverwrite is ON and `CheckIfAppIsRunning` already handles a running instance). The patch is a ~10-line insert in `PageReinstall`, right after the "no existing install" Abort, gated on `$WixMode <> 1`.
+
+If `tauri-cli` is bumped and the bundled template diverges, the vendored copy will go stale. After any Tauri version bump:
+
+1. Locate the new stock template at `~/.cargo/registry/src/index.crates.io-*/tauri-bundler-<new-version>/src/bundle/windows/nsis/installer.nsi`.
+2. Diff it against `crates/clog-app/installer.nsi` to spot upstream changes.
+3. Re-vendor: copy the new stock template over the project copy, then re-apply the `$WixMode <> 1` Abort patch in `PageReinstall`.
+4. Smoke-test by running the produced installer over an existing install - it should proceed without prompting for uninstall.
+
 ## Hard rules
 
 - Never bump the version without explicit user confirmation of the number.

@@ -1,149 +1,51 @@
 {
-  "session_id": "session-2026-05-27-2313",
-  "started": "2026-05-27T22:13:16.321Z",
+  "session_id": "session-2026-05-27-2339",
+  "started": "2026-05-27T22:39:06.802Z",
   "files_read": {
-    "e:/Work/clog/.wolf/anatomy.md": {
+    "e:/Work/clog/Cargo.toml": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-05-27T22:15:11.805Z"
+      "first_read": "2026-05-27T22:40:18.021Z"
     },
-    "e:/Work/clog/ui/src/App.vue": {
-      "count": 1,
-      "tokens": 5013,
-      "first_read": "2026-05-27T22:15:14.368Z"
-    },
-    "e:/Work/clog/ui/src/assets/clog-icon.png": {
+    "e:/Work/clog/ui/package.json": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-05-27T22:15:24.229Z"
+      "first_read": "2026-05-27T22:40:19.090Z"
     },
-    "e:/Work/clog/ui/public/clog-icon.png": {
+    "e:/Work/clog/crates/clog-app/tauri.conf.json": {
       "count": 1,
-      "tokens": 0,
-      "first_read": "2026-05-27T22:15:27.425Z"
-    },
-    "e:/Work/clog/ui/src/components/TabStrip.vue": {
-      "count": 1,
-      "tokens": 4082,
-      "first_read": "2026-05-27T22:15:33.493Z"
-    },
-    "e:/Work/clog/ui/src/composables/useAppShortcuts.ts": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-05-27T22:16:02.143Z"
-    },
-    "e:/Work/clog/ui/src/components/AboutModal.vue": {
-      "count": 2,
-      "tokens": 0,
-      "first_read": "2026-05-27T22:20:45.852Z"
-    },
-    "e:/Work/clog/ui/src/components/LogViewport.vue": {
-      "count": 1,
-      "tokens": 21245,
-      "first_read": "2026-05-27T22:27:26.188Z"
-    },
-    "e:/Work/clog/ui/src/components/ClawdCameo.vue": {
-      "count": 1,
-      "tokens": 624,
-      "first_read": "2026-05-27T22:28:07.900Z"
+      "tokens": 589,
+      "first_read": "2026-05-27T22:40:19.329Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/composables/useKonamiCode.ts",
-      "action": "create",
-      "tokens": 394,
-      "at": "2026-05-27T22:19:43.311Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/ClawdCameo.vue",
-      "action": "create",
-      "tokens": 1122,
-      "at": "2026-05-27T22:20:07.525Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
+      "file": "e:/Work/clog/Cargo.toml",
       "action": "edit",
-      "tokens": 61,
-      "at": "2026-05-27T22:20:15.701Z"
+      "tokens": 5,
+      "at": "2026-05-27T22:40:22.971Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/App.vue",
+      "file": "e:/Work/clog/ui/package.json",
       "action": "edit",
-      "tokens": 55,
-      "at": "2026-05-27T22:20:21.982Z"
+      "tokens": 6,
+      "at": "2026-05-27T22:40:24.078Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/App.vue",
+      "file": "e:/Work/clog/crates/clog-app/tauri.conf.json",
       "action": "edit",
-      "tokens": 105,
-      "at": "2026-05-27T22:20:28.087Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 46,
-      "at": "2026-05-27T22:20:38.175Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/ClawdSprite.vue",
-      "action": "create",
-      "tokens": 653,
-      "at": "2026-05-27T22:21:03.749Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/ClawdCameo.vue",
-      "action": "create",
-      "tokens": 668,
-      "at": "2026-05-27T22:21:20.004Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 24,
-      "at": "2026-05-27T22:21:30.884Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/AboutModal.vue",
-      "action": "edit",
-      "tokens": 61,
-      "at": "2026-05-27T22:21:37.471Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/ClawdSprite.vue",
-      "action": "create",
-      "tokens": 632,
-      "at": "2026-05-27T22:22:36.810Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/components/ClawdCameo.vue",
-      "action": "create",
-      "tokens": 706,
-      "at": "2026-05-27T22:28:53.277Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 116,
-      "at": "2026-05-27T22:29:00.827Z"
-    },
-    {
-      "file": "e:/Work/clog/ui/src/App.vue",
-      "action": "edit",
-      "tokens": 24,
-      "at": "2026-05-27T22:29:05.386Z"
+      "tokens": 6,
+      "at": "2026-05-27T22:40:25.199Z"
     }
   ],
   "edit_counts": {
-    "ui/src/composables/useKonamiCode.ts": 1,
-    "ui/src/components/ClawdCameo.vue": 3,
-    "ui/src/App.vue": 6,
-    "ui/src/components/ClawdSprite.vue": 2,
-    "ui/src/components/AboutModal.vue": 2
+    "Cargo.toml": 1,
+    "ui/package.json": 1,
+    "crates/clog-app/tauri.conf.json": 1
   },
-  "anatomy_hits": 4,
-  "anatomy_misses": 5,
-  "repeated_reads_warned": 1,
+  "anatomy_hits": 1,
+  "anatomy_misses": 2,
+  "repeated_reads_warned": 0,
   "cerebrum_warnings": 0,
-  "stop_count": 7
+  "stop_count": 0
 }

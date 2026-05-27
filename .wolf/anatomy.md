@@ -1,11 +1,12 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T22:29:05.378Z
-> Files: 15 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T22:40:25.191Z
+> Files: 20 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
 - `.gitignore` — Git ignore rules (~135 tok)
+- `Cargo.toml` — Rust package manifest (~104 tok)
 
 ## .cargo/
 
@@ -18,6 +19,7 @@
 
 ## .claude/skills/release/
 
+- `SKILL.md` — Release (~2087 tok)
 
 ## .superpowers/brainstorm/1198-1779914439/content/
 
@@ -25,6 +27,8 @@
 
 ## crates/clog-app/
 
+- `installer.nsi` — Declares because (~8587 tok)
+- `tauri.conf.json` (~589 tok)
 
 ## crates/clog-app/capabilities/
 
@@ -72,6 +76,7 @@
 
 ## ui/
 
+- `package.json` — Node.js package manifest (~195 tok)
 
 ## ui/src/
 
