@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T19:30:38.602Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T19:46:26.356Z
 > Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -135,7 +135,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~5162 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~4914 tok)
 - `main.ts` (~32 tok)
 - `style.css` — Styles: 218 vars (~5770 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~6104 tok)
@@ -143,7 +143,7 @@
 
 ## ui/src/components/
 
-- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1522 tok)
+- `AboutModal.vue` — About modal. Lazily resolves the Tauri app name/version/tauri-version on (~1862 tok)
 - `AppHeader.vue` — Title bar: app logo (opens About), Open button, Settings cog, and the (~1247 tok)
 - `BaseModal.vue` — Shared modal scaffold: backdrop, frame, header bar with title + close. (~693 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
@@ -171,7 +171,7 @@
 - `useSettings.ts` — Global settings, theme handling, and font-size scaling. Owns the (~2237 tok)
 - `useStartupPaths.ts` — CLI argv + single-instance forward handler. (~450 tok)
 - `useTabs.ts` — Tab list ownership: the reactive `tabs` array, the active tab pointer, (~1307 tok)
-- `useUpdateBanner.ts` — Update-banner state machine. Talks to the Rust shim (`check_for_update`, (~1321 tok)
+- `useUpdateBanner.ts` — Update-banner state machine. Talks to the Rust shim (`check_for_update`, (~1462 tok)
 - `useWindowChrome.ts` — Window chrome: maximize/restore tracking + the three title-bar buttons. (~443 tok)
 
 ## ui/src/highlight/

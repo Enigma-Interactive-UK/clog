@@ -153,8 +153,6 @@ const {
   status: updateStatus,
   phase: updatePhase,
   errorMessage: updateError,
-  toast: updateToast,
-  clearToast: clearUpdateToast,
   check: checkForUpdates,
   installNow: installUpdate,
   openReleasePage: openUpdateNotes,
@@ -164,8 +162,10 @@ const {
 
 // Expose a manual entry point to the About modal so the logo's About
 // dialog gains a "Check for updates" button (the app has no menu bar).
+// The modal renders the up-to-date / error outcome inline next to the
+// button; the "available" outcome surfaces via the update banner.
 function manualUpdateCheck() {
-  void checkForUpdates(true)
+  return checkForUpdates(true)
 }
 provide('checkForUpdates', manualUpdateCheck)
 
@@ -494,21 +494,6 @@ onBeforeUnmount(() => {
       @dismiss-error="dismissUpdateError"
     />
 
-    <output v-if="updateToast" class="update-toast">
-      <span>{{ updateToast }}</span>
-      <button
-        type="button"
-        class="btn-dismiss"
-        aria-label="Dismiss"
-        title="Dismiss"
-        @click="clearUpdateToast"
-      >
-        <svg class="dismiss-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-        </svg>
-      </button>
-    </output>
-
     <StatusBar
       :tab="currentTab"
       :settings="settings"
@@ -638,26 +623,4 @@ onBeforeUnmount(() => {
   color: var(--fg-dim);
 }
 
-.update-toast {
-  position: fixed;
-  bottom: 1rem;
-  right: 1rem;
-  z-index: 10;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.5rem 0.45rem 0.8rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  color: var(--fg-default);
-  font-size: 0.85rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-
-  .btn-dismiss {
-    flex: 0 0 auto;
-    width: 1.4rem;
-    height: 1.4rem;
-  }
-}
 </style>

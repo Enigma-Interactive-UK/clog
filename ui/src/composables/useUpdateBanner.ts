@@ -34,27 +34,32 @@ export type BannerPhase =
   | 'installing'
   | 'error'
 
+export type CheckOutcome =
+  | { kind: 'available' }
+  | { kind: 'up-to-date'; message: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'skipped' }
+
 const RELEASES_URL = 'https://github.com/Enigma-Interactive-UK/clog/releases/latest'
 
 export function useUpdateBanner() {
   const status = ref<UpdateStatus | null>(null)
   const phase = ref<BannerPhase>('hidden')
   const errorMessage = ref<string | null>(null)
-  const toast = ref<string | null>(null)
 
   const visible = computed(() => phase.value !== 'hidden')
-
-  function clearToast() {
-    toast.value = null
-  }
 
   /**
    * Run a check. `force = false` is the on-launch silent check (subject to
    * the 24h cadence + 7d snooze in Rust); `force = true` is the user-driven
-   * "Check for updates" action which bypasses both and surfaces a toast on
-   * either outcome.
+   * "Check for updates" action which bypasses both and returns an outcome
+   * for the caller (typically the About modal) to render inline.
+   *
+   * The "available" outcome surfaces via the update banner; "up-to-date"
+   * and "error" outcomes carry a message string the caller should display
+   * next to the trigger control.
    */
-  async function check(force: boolean) {
+  async function check(force: boolean): Promise<CheckOutcome> {
     try {
       const result = await invoke<UpdateStatus>('check_for_update', { force })
 
@@ -62,7 +67,7 @@ export function useUpdateBanner() {
       // snooze) carries no fresh signal - it must not stomp on a banner
       // a prior forced check already raised.
       if (!force && result.skipped_by_cadence) {
-        return
+        return { kind: 'skipped' }
       }
 
       status.value = result
@@ -70,19 +75,28 @@ export function useUpdateBanner() {
       if (result.available && result.available_version) {
         phase.value = 'available'
         errorMessage.value = null
-      } else if (force) {
+        return { kind: 'available' }
+      }
+
+      if (force) {
         // Only hide when this call actually contradicts what the banner
         // is showing - i.e. a forced check that came back "up to date".
         phase.value = 'hidden'
-        toast.value = `You're on the latest version (${result.current_version}).`
+        return {
+          kind: 'up-to-date',
+          message: `You're on the latest version (${result.current_version}).`,
+        }
       }
+
+      return { kind: 'skipped' }
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e as { message?: string })?.message ?? String(e)
-      if (force) {
-        toast.value = `Update check failed - see logs.`
-        phase.value = 'hidden'
-      }
       errorMessage.value = msg
+      if (force) {
+        phase.value = 'hidden'
+        return { kind: 'error', message: 'Update check failed - see logs.' }
+      }
+      return { kind: 'skipped' }
     }
   }
 
@@ -143,8 +157,6 @@ export function useUpdateBanner() {
     phase,
     visible,
     errorMessage,
-    toast,
-    clearToast,
     check,
     installNow,
     openReleasePage,

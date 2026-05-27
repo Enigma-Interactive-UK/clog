@@ -4,30 +4,45 @@
  * first open and caches the result for the lifetime of the window.
  */
 
-import { inject, ref } from 'vue'
+import { inject, ref, watch } from 'vue'
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app'
 import BaseModal from './BaseModal.vue'
+import type { CheckOutcome } from '../composables/useUpdateBanner'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 // Provided by App.vue. Calls the Rust check with force=true so the result
-// surfaces via the update banner or the up-to-date toast regardless of
-// the 24h silent-check cadence.
-const triggerUpdateCheck = inject<(() => void) | undefined>('checkForUpdates', undefined)
+// is returned to us regardless of the 24h silent-check cadence. The
+// "available" outcome surfaces via the update banner; "up-to-date" and
+// "error" outcomes are rendered inline beside the button below.
+const triggerUpdateCheck = inject<(() => Promise<CheckOutcome>) | undefined>('checkForUpdates', undefined)
 const checkingUpdate = ref(false)
+const checkMessage = ref<{ text: string; tone: 'info' | 'error' } | null>(null)
+
 async function onCheckUpdates() {
   if (!triggerUpdateCheck) return
   checkingUpdate.value = true
+  checkMessage.value = null
   try {
-    triggerUpdateCheck()
+    const outcome = await triggerUpdateCheck()
+    if (outcome.kind === 'up-to-date') {
+      checkMessage.value = { text: outcome.message, tone: 'info' }
+    } else if (outcome.kind === 'error') {
+      checkMessage.value = { text: outcome.message, tone: 'error' }
+    }
+    // 'available' is rendered by the update banner; nothing inline to show.
   } finally {
-    // The check is async inside the composable; just gate the button
-    // briefly so a double-click doesn't fire two requests.
-    setTimeout(() => { checkingUpdate.value = false }, 800)
+    checkingUpdate.value = false
   }
 }
+
+// Clear the inline result whenever the modal closes so the next open
+// starts clean.
+watch(() => props.open, (isOpen) => {
+  if (!isOpen) checkMessage.value = null
+})
 
 const aboutInfo = ref<{ name: string; version: string; tauri: string } | null>(null)
 
@@ -73,6 +88,12 @@ defineExpose({ ensureLoaded })
             @click="onCheckUpdates"
           >{{ checkingUpdate ? 'Checking...' : 'Check for updates' }}</button>
         </p>
+        <output
+          v-if="checkMessage"
+          class="update-check-result"
+          :class="{ 'is-error': checkMessage.tone === 'error' }"
+          aria-live="polite"
+        >{{ checkMessage.text }}</output>
       </div>
     </div>
     <br>
@@ -130,6 +151,22 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   flex-wrap: wrap;
 
   code { color: var(--fg-default); font-family: var(--font-mono); }
+}
+
+.update-check-result {
+  display: block;
+  margin: 0.4rem 0 0;
+  padding: 0.3rem 0.55rem;
+  border-left: 2px solid var(--accent);
+  background: var(--bg-elevated);
+  color: var(--fg-default);
+  font-size: 0.8rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+
+  &.is-error {
+    border-left-color: var(--level-error);
+    color: var(--level-error);
+  }
 }
 
 .check-update-btn {

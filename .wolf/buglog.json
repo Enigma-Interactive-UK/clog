@@ -2,6 +2,14 @@
   "version": 1,
   "bugs": [
     {
+      "date": "2026-05-27",
+      "phase": "post-v1",
+      "error_message": "GitHub issue #3: 'You're on the latest version' toast from the About modal's Check for updates button rendered behind the modal's translucent backdrop, had no auto-dismiss, and the tiny grey-on-grey x was easy to miss",
+      "root_cause": "Two layered problems. (1) The toast was a fixed-position element in App.vue with z-index: 10, while BaseModal's backdrop sits at z-index: 200 and DropOverlay at 250 -- any toast spawned while the About modal was open got trapped under the dim overlay. (2) The whole 'toast for an outcome the user explicitly asked for' pattern was wrong: the result of a manual Check for updates belongs next to the trigger, not on the opposite corner of the window.",
+      "fix": "Restructured useUpdateBanner.check() to return a CheckOutcome ({ kind: 'available' | 'up-to-date' | 'error' | 'skipped', message? }) instead of pushing into a global toast ref. Removed the App.vue toast element and styles entirely. AboutModal now awaits the inject'd checkForUpdates promise and renders the up-to-date / error message inline as an <output> with an accent-coloured left border (level-error tint on failure), cleared when the modal closes. The 'available' outcome continues to surface via the existing update banner.",
+      "tags": ["ui", "vue", "update-banner", "about-modal", "z-index", "ux", "github-issue"]
+    },
+    {
       "date": "2026-05-24",
       "phase": "post-v1",
       "error_message": "Minimap indicator handle briefly jumps upward each time new records arrive while tailing, producing a distracting jitter on a live log",
