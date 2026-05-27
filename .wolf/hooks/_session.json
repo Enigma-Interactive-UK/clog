@@ -1,39 +1,39 @@
 {
-  "session_id": "session-2026-05-27-2050",
-  "started": "2026-05-27T19:50:02.675Z",
+  "session_id": "session-2026-05-27-2310",
+  "started": "2026-05-27T22:10:37.089Z",
   "files_read": {
-    "e:/Work/clog/ui/src/composables/useSettings.ts": {
-      "count": 2,
-      "tokens": 2237,
-      "first_read": "2026-05-27T19:52:26.395Z"
+    "e:/Work/clog/ui/src/components/LogViewport.vue": {
+      "count": 3,
+      "tokens": 0,
+      "first_read": "2026-05-27T22:11:19.185Z"
     }
   },
   "files_written": [
     {
-      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 150,
-      "at": "2026-05-27T19:52:45.892Z"
+      "tokens": 156,
+      "at": "2026-05-27T22:11:49.924Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 12,
-      "at": "2026-05-27T19:52:54.451Z"
+      "tokens": 50,
+      "at": "2026-05-27T22:11:56.562Z"
     },
     {
-      "file": "e:/Work/clog/ui/src/composables/useSettings.ts",
+      "file": "e:/Work/clog/ui/src/components/LogViewport.vue",
       "action": "edit",
-      "tokens": 252,
-      "at": "2026-05-27T19:54:26.226Z"
+      "tokens": 0,
+      "at": "2026-05-27T22:12:02.850Z"
     }
   ],
   "edit_counts": {
-    "ui/src/composables/useSettings.ts": 3
+    "ui/src/components/LogViewport.vue": 3
   },
-  "anatomy_hits": 1,
-  "anatomy_misses": 0,
-  "repeated_reads_warned": 1,
+  "anatomy_hits": 0,
+  "anatomy_misses": 1,
+  "repeated_reads_warned": 2,
   "cerebrum_warnings": 0,
-  "stop_count": 3
+  "stop_count": 2
 }
