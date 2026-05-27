@@ -26,7 +26,7 @@ defineEmits<{ (e: 'click'): void }>()
 .zen-exit-pill {
   position: fixed;
   top: 0.5rem;
-  right: 0.5rem;
+  right: 2rem;
   z-index: 20;
   display: inline-flex;
   align-items: center;
