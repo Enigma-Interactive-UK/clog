@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T22:40:25.191Z
-> Files: 20 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-27T22:42:49.261Z
+> Files: 21 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -70,6 +70,10 @@
 
 ## scripts/
 
+
+## target/release/
+
+- `release-notes-1.2.0.md` — Downloads (~588 tok)
 
 ## tmp/update-stub/
 
