@@ -1,0 +1,8 @@
+# OpenWolf's post-write hook parses .wolf/anatomy.md by splitting on "\n" and
+# anchoring each entry line with `$`. A CRLF working-tree copy leaves a trailing
+# "\r" that defeats the anchor, so the hook drops every entry and collapses the
+# file to a stub. core.autocrlf=true silently drifts these files to CRLF, so pin
+# the .wolf text files to LF to keep the working tree matching what the hook expects.
+.wolf/**/*.md   text eol=lf
+.wolf/**/*.json text eol=lf
+.wolf/**/*.js   text eol=lf

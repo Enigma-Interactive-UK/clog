@@ -1,11 +1,12 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T22:28:03.366Z
-> Files: 122 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T22:33:52.508Z
+> Files: 124 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
-- `.gitignore` — Git ignore rules (~135 tok)
+- `.gitattributes` — /*.md   text eol=lf (~131 tok)
+- `.gitignore` — Git ignore rules (~142 tok)
 - `Cargo.toml` — Rust package manifest (~111 tok)
 - `CLAUDE.md` — CLAUDE.md (~1314 tok)
 - `clog.code-workspace` (~16 tok)
@@ -129,6 +130,10 @@
 - `make-latest-json.ps1` — make-latest-json.ps1 (~1274 tok)
 - `make-portable-zip.ps1` — make-portable-zip.ps1 (~808 tok)
 - `release.ps1` — release.ps1 (~288 tok)
+
+## tmp/
+
+- `release-notes-1.3.0.md` — Downloads (~454 tok)
 
 ## tmp/update-stub/
 
