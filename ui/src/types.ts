@@ -71,6 +71,11 @@ export interface RecordRefsPayload {
 export type SearchMode = 'smart' | 'regex'
 export type LevelKey = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 
+/** Per-file collapse mode. `'inherit'` follows the global default. */
+export type CollapseMode = 'inherit' | 'none' | 'errors' | 'all'
+/** Global default (no `'inherit'` - it is the thing inherited). */
+export type GlobalCollapseDefault = 'none' | 'errors' | 'all'
+
 // Bit positions must match clog_core::search::level_bit.
 export const LEVEL_BIT: Record<string, number> = {
   trace: 1 << 0,
@@ -136,6 +141,8 @@ export interface Settings {
   speed_rail_enabled?: boolean
   /** Optional override for the UI monospace font. Null/empty = default stack. */
   mono_font_family?: string | null
+  /** Global default collapse mode for multi-line records. Default 'none'. */
+  collapse_records_default?: GlobalCollapseDefault
 }
 
 export interface RestoredFile {
@@ -149,6 +156,12 @@ export interface RestoredFile {
   search_case_sensitive: boolean
   filter_mode: boolean
   bookmarks?: number[]
+  /** Per-file collapse mode. Absent = 'inherit'. */
+  collapse_mode?: CollapseMode
+  /** Header-row physical line indices forced open against the mode. */
+  manually_expanded?: number[]
+  /** Header-row physical line indices forced closed against the mode. */
+  manually_collapsed?: number[]
 }
 
 export interface Session {
