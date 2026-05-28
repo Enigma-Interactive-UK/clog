@@ -34,6 +34,7 @@ import {
   type LevelKey,
   type OpenedFile,
   type PatternTestPayload,
+  type CollapseMode,
   type RecordRef,
   type RecordRefsPayload,
   type RestoredFile,
@@ -202,6 +203,23 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   // Sorted-on-write via snapshot(); kept as a Set for O(1) toggle/lookup.
   const bookmarks = ref<Set<number>>(new Set<number>())
 
+  // --- Collapse records ---
+  // Per-file mode. 'inherit' follows settings.collapse_records_default.
+  const collapseMode = ref<CollapseMode>('inherit')
+  // Header-row physical line indices the user forced open / closed against
+  // the mode. Persisted. Kept as Sets for O(1) toggle/lookup; sorted+deduped
+  // on snapshot().
+  const manuallyExpanded = ref<Set<number>>(new Set<number>())
+  const manuallyCollapsed = ref<Set<number>>(new Set<number>())
+  // Header-row line indices auto-expanded by intent navigation. In-memory
+  // only - navigation crumbs, not preferences.
+  const transientlyExpanded = ref<Set<number>>(new Set<number>())
+
+  // --- Record map (collapse + minimap need every record's span/level) ---
+  // The full (first_line, line_count, level) list, fetched with full masks.
+  // Refreshed on open, tail growth, rotation and pattern apply.
+  const recordIndex = ref<RecordRef[]>([])
+
   function isBookmarked(lineIdx: number): boolean {
     return bookmarks.value.has(lineIdx)
   }
@@ -236,6 +254,48 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     }
     out.sort((a, b) => a - b)
     return out
+  }
+
+  // Drop manual-set entries pointing past the current line_count (file
+  // shrank, rotated, or restored against a smaller file). Sorted ascending.
+  function prunedManualSet(set: Set<number>): number[] {
+    const out: number[] = []
+    const limit = file.value.line_count
+    for (const idx of set) {
+      if (idx >= 0 && idx < limit) out.push(idx)
+    }
+    out.sort((a, b) => a - b)
+    return out
+  }
+
+  // Clear all collapse override state. Called on rotation and on mode change.
+  function clearCollapseOverrides() {
+    if (manuallyExpanded.value.size > 0) manuallyExpanded.value = new Set()
+    if (manuallyCollapsed.value.size > 0) manuallyCollapsed.value = new Set()
+    if (transientlyExpanded.value.size > 0) transientlyExpanded.value = new Set()
+  }
+
+  // Set the per-file mode. The mode is the new rule, so sticky overrides from
+  // the previous regime are cleared (design spec: "Mode reset on per-file
+  // mode change").
+  function setCollapseMode(mode: CollapseMode) {
+    collapseMode.value = mode
+    clearCollapseOverrides()
+  }
+
+  // Fetch the full record map with full masks so collapse has every record's
+  // span + level regardless of the active filter. Non-fatal on error.
+  async function refreshRecordIndex(): Promise<void> {
+    try {
+      const payload = await invoke<RecordRefsPayload>('list_records_by_filters', {
+        fileId: file.value.file_id,
+        levelMask: 0xffffffff,
+        threadGroupMask: 0x3f,
+      })
+      recordIndex.value = payload.refs
+    } catch {
+      // non-fatal -- keep the previous map; collapse falls back to identity
+    }
   }
 
   // --- Helpers -------------------------------------------------------------
@@ -319,6 +379,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       // existing bookmarks would point at unrelated content. Drop them
       // silently per the feature spec.
       clearBookmarks()
+      clearCollapseOverrides()
+      void refreshRecordIndex()
       showRotationToast()
       void fetchPage(0)
       if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) void refreshAllowedRecords()
@@ -343,6 +405,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       }
     }
     lastTailLineCount = delta.line_count
+    void refreshRecordIndex()
     if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) void refreshAllowedRecords()
     if (searchQuery.value.trim().length > 0) scheduleSearch()
     hooks.onTailAppend?.(api, delta)
@@ -525,6 +588,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       }
       pages.value = new Map()
       void fetchPage(0)
+      void refreshRecordIndex()
     } catch (e) {
       const err = e as IpcError | string
       patternError.value = typeof err === 'string' ? err : err.message
@@ -552,6 +616,20 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     } else {
       bookmarks.value = new Set()
     }
+    collapseMode.value = r.collapse_mode ?? 'inherit'
+    const limit = file.value.line_count
+    const pruneIn = (arr: number[] | undefined): Set<number> => {
+      const next = new Set<number>()
+      if (Array.isArray(arr)) {
+        for (const idx of arr) {
+          if (Number.isFinite(idx) && idx >= 0 && idx < limit) next.add(idx)
+        }
+      }
+      return next
+    }
+    manuallyExpanded.value = pruneIn(r.manually_expanded)
+    manuallyCollapsed.value = pruneIn(r.manually_collapsed)
+    transientlyExpanded.value = new Set() // never restored
   }
 
   function snapshot(): RestoredFile {
@@ -566,6 +644,9 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       search_case_sensitive: searchCaseSensitive.value,
       filter_mode: filterMode.value,
       bookmarks: prunedBookmarks(),
+      collapse_mode: collapseMode.value,
+      manually_expanded: prunedManualSet(manuallyExpanded.value),
+      manually_collapsed: prunedManualSet(manuallyCollapsed.value),
     }
   }
 
@@ -620,6 +701,11 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     scrollTop,
     unread,
     bookmarks,
+    collapseMode,
+    manuallyExpanded,
+    manuallyCollapsed,
+    transientlyExpanded,
+    recordIndex,
     insightsOpen,
     slowRequestMode,
     slowRequestSort,
@@ -644,6 +730,9 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     toggleLevel,
     toggleThreadGroup,
     refreshAllowedRecords,
+    setCollapseMode,
+    clearCollapseOverrides,
+    refreshRecordIndex,
     testPattern,
     applyPattern,
     applyRestored,
