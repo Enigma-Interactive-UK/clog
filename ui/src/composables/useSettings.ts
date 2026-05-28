@@ -37,6 +37,7 @@ function defaultSettings(): Settings {
     minimap_heatmap_blend: 0,
     minimap_background_opacity: 0.5,
     speed_rail_enabled: true,
+    collapse_records_default: 'none',
   }
 }
 
