@@ -162,6 +162,7 @@
 
   /* Layout primitives */
   --gutter-width: 4px;
+  --chevron-width: 14px;
   --line-num-width: 5em;
   --continuation-indent: 1.4em;
 

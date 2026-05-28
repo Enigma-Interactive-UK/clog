@@ -38,6 +38,8 @@ import {
   isRecordExpanded,
   buildVisibleRowIndex,
   recordOfLine,
+  resolveChevronToggle,
+  defaultExpandedFor,
   type GlobalCollapseDefault,
 } from '../collapse'
 import InsightsDrawer from './InsightsDrawer.vue'
@@ -143,6 +145,43 @@ function recordExpanded(rec: RecordRef): boolean {
       transientlyExpanded: tab.transientlyExpanded.value,
     },
   )
+}
+
+interface ChevronState {
+  show: boolean        // multi-line record header -> render a chevron
+  expanded: boolean    // current expanded state
+  hiddenCount: number  // continuation lines hidden when collapsed (line_count - 1)
+}
+
+// Resolve the chevron for a header row at physical line `lineIdx`.
+function chevronFor(row: LineRow | null, lineIdx: number): ChevronState {
+  const blank: ChevronState = { show: false, expanded: true, hiddenCount: 0 }
+  if (!row || row.line_within_record !== 0) return blank
+  const rec = recordOfLine(props.tab.recordIndex.value, lineIdx)
+  if (!rec || rec.record_line_count <= 1) return blank
+  return {
+    show: true,
+    expanded: recordExpanded(rec),
+    hiddenCount: rec.record_line_count - 1,
+  }
+}
+
+// Toggle the record header at `lineIdx`. Mutates the manual/transient sets via
+// the pure resolver.
+function toggleCollapse(lineIdx: number) {
+  const tab = props.tab
+  const rec = recordOfLine(tab.recordIndex.value, lineIdx)
+  if (!rec || rec.record_line_count <= 1) return
+  const lvl = typeof rec.level === 'string' ? rec.level : String(rec.level)
+  const def = defaultExpandedFor(rec.record_line_count, lvl, collapseEffectiveMode.value)
+  const next = resolveChevronToggle(rec.record_first_line, def, {
+    manuallyExpanded: tab.manuallyExpanded.value,
+    manuallyCollapsed: tab.manuallyCollapsed.value,
+    transientlyExpanded: tab.transientlyExpanded.value,
+  })
+  tab.manuallyExpanded.value = next.manuallyExpanded
+  tab.manuallyCollapsed.value = next.manuallyCollapsed
+  tab.transientlyExpanded.value = next.transientlyExpanded
 }
 
 // Does collapse currently hide ANY line? If not (mode resolves to none and no
@@ -1642,6 +1681,16 @@ defineExpose({
           @contextmenu="onRowContextMenu(stickyHeader.row, $event)"
         >
           <span class="gutter" />
+          <span
+            class="chevron"
+            :class="{ 'is-clickable': chevronFor(stickyHeader.row, stickyHeader.lineIndex).show }"
+            :title="chevronFor(stickyHeader.row, stickyHeader.lineIndex).show
+              ? (chevronFor(stickyHeader.row, stickyHeader.lineIndex).expanded ? 'Collapse record' : `Expand record (+${chevronFor(stickyHeader.row, stickyHeader.lineIndex).hiddenCount} lines)`)
+              : undefined"
+            @click.stop="chevronFor(stickyHeader.row, stickyHeader.lineIndex).show && toggleCollapse(stickyHeader.lineIndex)"
+          >{{ chevronFor(stickyHeader.row, stickyHeader.lineIndex).show
+              ? (chevronFor(stickyHeader.row, stickyHeader.lineIndex).expanded ? '▾' : '▸')
+              : '' }}</span>
           <button
             type="button"
             class="idx jump-up"
@@ -1691,6 +1740,18 @@ defineExpose({
             @contextmenu="onRowContextMenu(lineRowVirtual(vrow.index), $event)"
           >
             <span class="gutter" />
+            <span
+              class="chevron"
+              :class="{ 'is-clickable': chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show }"
+              :title="chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show
+                ? (chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded
+                    ? 'Collapse record'
+                    : `Expand record (+${chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).hiddenCount} lines)`)
+                : undefined"
+              @click.stop="chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show && toggleCollapse(actualLineIndex(vrow.index))"
+            >{{ chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show
+                ? (chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded ? '▾' : '▸')
+                : '' }}</span>
             <span
               class="idx idx-interactive"
               :title="tab.isBookmarked(actualLineIndex(vrow.index))
@@ -2262,7 +2323,7 @@ defineExpose({
     width: max-content;
     z-index: 1;
     display: grid;
-    grid-template-columns: var(--gutter-width) var(--line-num-width) max-content;
+    grid-template-columns: var(--gutter-width) var(--chevron-width) var(--line-num-width) max-content;
     align-items: center;
     white-space: pre;
     color: var(--fg-row);
@@ -2271,6 +2332,22 @@ defineExpose({
     .gutter {
       background: var(--gutter-color, var(--level-unknown));
       height: 100%;
+    }
+
+    .chevron {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--chevron-width);
+      height: 100%;
+      font-size: 0.8em;
+      color: color-mix(in srgb, var(--fg-row) 75%, transparent);
+      user-select: none;
+
+      &.is-clickable {
+        cursor: pointer;
+        &:hover { color: var(--fg-row); }
+      }
     }
 
     .idx {
