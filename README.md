@@ -5,8 +5,10 @@ produced by Play 1.x Java applications.
 
 The design lives in [`docs/design.md`](docs/design.md). The v1 build was
 sliced into ten vertical phases in [`docs/build-phases.md`](docs/build-phases.md);
-all ten have landed (workspace version `1.0.0`, P10 slice A: NSIS installer +
-portable zip). Post-v1 enhancement candidates live in
+all ten have landed. Since then v1.1-v1.3 have shipped the post-v1 features
+described below (slow-request insights, thread insights, minimap heatmap,
+collapse records, zen mode and in-app auto-update). The current workspace
+version is `1.3.0`. Remaining enhancement candidates live in
 [`docs/future-ideas.md`](docs/future-ideas.md).
 
 ## How to develop locally
@@ -22,21 +24,31 @@ npm --prefix ui install
 Then, from the repository root:
 
 ```powershell
-cargo tauri dev --config crates/clog-app/tauri.conf.json
+cargo dev
+# (alias from .cargo/config.toml for:
+#  cargo tauri dev --config crates/clog-app/tauri.conf.json)
 ```
 
 This launches the Vite dev server for the UI and a Tauri-hosted window.
 Click **Open file...**, pick `research/cheesecake-prod.log` (or any
 `.log`/`.out`) to start tailing, searching, filtering and highlighting.
-A `cargo dev` alias for the full command lives in `.cargo/config.toml`.
 
 ### Producing release artefacts
 
 ```powershell
-# NSIS installer + portable zip (P10 slice A)
-cargo tauri build --config crates/clog-app/tauri.conf.json
-.\scripts\make-portable-zip.ps1
+# One-shot: NSIS installer + portable zip
+.\scripts\release.ps1
+
+# Or the individual steps:
+cargo dist                          # alias for cargo tauri build (installer + exe)
+.\scripts\make-portable-zip.ps1     # -SkipBuild reuses an existing build
 ```
+
+A full signed release (version bump, installer signing, updater
+`latest.json`, git tag and GitHub release) is driven by the `release`
+skill - see [`.claude/skills/release/SKILL.md`](.claude/skills/release/SKILL.md).
+Signing and the updater manifest are produced by
+[`scripts/make-latest-json.ps1`](scripts/make-latest-json.ps1).
 
 ### Useful one-off commands
 
@@ -67,13 +79,15 @@ clog/
       capabilities/         capability files
       icons/                bundle icons
   ui/                       Vue 3 + Vite frontend
-  docs/                     design, phased build plan, future ideas
-  scripts/                  release packaging (portable zip)
+  docs/                     design, phased build plan, future ideas, specs/plans
+  scripts/                  release packaging (release, portable zip, signing/updater)
   research/                 sample logs + log4j2 configs (gitignored)
   .wolf/                    OpenWolf project memory
 ```
 
-## Features (v1)
+## Features
+
+### Core (v1)
 
 - Open any log4j2 PatternLayout-formatted log file; pattern is auto-detected
   from a built-in library, or pasted/edited per file. Regex escape hatch
@@ -89,3 +103,22 @@ clog/
 - Multi-tab UI, single-instance with CLI argv forwarding, drag-drop to open.
 - Light/dark/system themes; runtime font-size control.
 - NSIS installer + portable zip; `.log` and `.out` file associations.
+
+### Since v1 (v1.1-v1.3)
+
+- **Slow-request insights** - detects, aggregates and grades slow requests in
+  a collapsible right-side drawer, with configurable fast/slow thresholds.
+- **Thread insights + filter flyout** - thread-name classification into a fixed
+  taxonomy (Requests / Jobs / Scheduler / System / Infra / Other), exposed
+  through a consolidated level + thread-group filter popover.
+- **Minimap heatmap** - a density/severity gutter spanning the whole file, with
+  configurable blend, background and colour-blind-safe palette.
+- **Collapse records** - fold repeating records to a single line, per file or
+  by default; Space folds/unfolds the record under the cursor; state is
+  remembered across sessions.
+- **Zen mode** - hides the app chrome so the log records own the viewport.
+- **Full-record modal** - right-click "Show full record" opens a resizable,
+  soft-wrapping view of a single record.
+- **In-app auto-update** - silently checks a signed `latest.json` on launch and
+  surfaces a non-modal update banner (installer builds auto-install; portable
+  builds prompt a re-download).
