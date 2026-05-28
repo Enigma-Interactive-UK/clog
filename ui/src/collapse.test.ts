@@ -54,3 +54,41 @@ describe('isRecordExpanded', () => {
     ).toBe(true)
   })
 })
+
+import { buildVisibleRowIndex } from './collapse'
+import type { RecordRef } from './types'
+
+function rec(idx: number, first: number, count: number, level = 'info'): RecordRef {
+  return { record_idx: idx, record_first_line: first, record_line_count: count, level }
+}
+
+describe('buildVisibleRowIndex', () => {
+  it('pushes every line of an expanded record and only the header of a collapsed one', () => {
+    // record 0: lines 0..2 expanded; record 1: lines 3..5 collapsed (header 3 only)
+    const records = [rec(0, 0, 3), rec(1, 3, 3)]
+    const { visibleRowToLine, lineToRow } = buildVisibleRowIndex(
+      records,
+      (r) => r.record_idx === 0, // record 0 expanded, record 1 collapsed
+    )
+    expect(visibleRowToLine).toEqual([0, 1, 2, 3])
+    expect(lineToRow.get(0)).toBe(0)
+    expect(lineToRow.get(2)).toBe(2)
+    expect(lineToRow.get(3)).toBe(3)
+    // Hidden continuation lines are absent from the reverse map.
+    expect(lineToRow.has(4)).toBe(false)
+    expect(lineToRow.has(5)).toBe(false)
+  })
+
+  it('round-trips an all-expanded list to the identity sequence', () => {
+    const records = [rec(0, 0, 2), rec(1, 2, 1), rec(2, 3, 4)]
+    const { visibleRowToLine } = buildVisibleRowIndex(records, () => true)
+    expect(visibleRowToLine).toEqual([0, 1, 2, 3, 4, 5, 6])
+  })
+
+  it('collapses every multi-line record under all-collapsed', () => {
+    const records = [rec(0, 0, 3), rec(1, 3, 1), rec(2, 4, 5)]
+    const { visibleRowToLine } = buildVisibleRowIndex(records, (r) => r.record_line_count <= 1)
+    // record 0 header (0), record 1 single line (3), record 2 header (4)
+    expect(visibleRowToLine).toEqual([0, 3, 4])
+  })
+})
