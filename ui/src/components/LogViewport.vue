@@ -1706,7 +1706,7 @@ defineExpose({
               : undefined"
             @click.stop="chevronFor(stickyHeader.row, stickyHeader.lineIndex).show && toggleCollapse(stickyHeader.lineIndex)"
           >{{ chevronFor(stickyHeader.row, stickyHeader.lineIndex).show
-              ? (chevronFor(stickyHeader.row, stickyHeader.lineIndex).expanded ? '▾' : '▸')
+              ? (chevronFor(stickyHeader.row, stickyHeader.lineIndex).expanded ? '\u25be' : '\u25b8')
               : '' }}</span>
           <button
             type="button"
@@ -1767,7 +1767,7 @@ defineExpose({
                 : undefined"
               @click.stop="chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show && toggleCollapse(actualLineIndex(vrow.index))"
             >{{ chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show
-                ? (chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded ? '▾' : '▸')
+                ? (chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded ? '\u25be' : '\u25b8')
                 : '' }}</span>
             <span
               class="idx idx-interactive"
@@ -2324,8 +2324,8 @@ defineExpose({
       );
     background-position:
       0 0,
-      calc(var(--gutter-width) + 0.6rem) 0,
-      calc(var(--gutter-width) + var(--line-num-width)) 0,
+      calc(var(--gutter-width) + var(--chevron-width) + 0.6rem) 0,
+      calc(var(--gutter-width) + var(--chevron-width) + var(--line-num-width)) 0,
       0 0;
     background-size:
       var(--gutter-width) var(--row-height),
