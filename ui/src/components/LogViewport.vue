@@ -37,6 +37,7 @@ import {
   effectiveMode,
   isRecordExpanded,
   buildVisibleRowIndex,
+  recordOfLine,
   type GlobalCollapseDefault,
 } from '../collapse'
 import InsightsDrawer from './InsightsDrawer.vue'
@@ -181,6 +182,46 @@ const visibleIndex = computed(() => {
 const filteredLineIndices = computed<number[] | null>(
   () => visibleIndex.value?.visibleRowToLine ?? null,
 )
+
+// Reverse map for "is this physical line currently visible?" checks. Null in
+// identity mode (every line < line_count is visible).
+const lineToRow = computed<Map<number, number> | null>(
+  () => visibleIndex.value?.lineToRow ?? null,
+)
+
+function lineIsVisible(lineIdx: number): boolean {
+  const map = lineToRow.value
+  if (map === null) return lineIdx >= 0 && lineIdx < props.tab.file.value.line_count
+  return map.has(lineIdx)
+}
+
+// Auto-expand the record containing `lineIdx` if it is currently hidden inside
+// a collapsed record. Single-shot: clears any prior transient expansion first
+// so navigation does not leave a trail of opened records (manual expansions
+// are untouched). Returns true if it changed the visible set.
+function revealLine(lineIdx: number): boolean {
+  if (lineIsVisible(lineIdx)) {
+    // Target already visible; still clear stale transients so the previous
+    // auto-open collapses back. Only if the target is not itself a transient.
+    const tab = props.tab
+    if (tab.transientlyExpanded.value.size > 0) {
+      const rec = recordOfLine(tab.recordIndex.value, lineIdx)
+      const keep = rec ? tab.transientlyExpanded.value.has(rec.record_first_line) : false
+      if (!keep) tab.transientlyExpanded.value = new Set()
+    }
+    return false
+  }
+  const tab = props.tab
+  const rec = recordOfLine(tab.recordIndex.value, lineIdx)
+  if (!rec) return false
+  // Manual expansions are sticky and not part of the transient sweep.
+  const next = tab.manuallyExpanded.value.has(rec.record_first_line)
+    ? new Set(tab.transientlyExpanded.value)
+    : new Set<number>()
+  next.add(rec.record_first_line)
+  tab.transientlyExpanded.value = next
+  return true
+}
 
 const effectiveCount = computed(() => {
   const filt = filteredLineIndices.value
@@ -359,6 +400,7 @@ function scrollToCurrentHit() {
   const hit = tab.hits.value.get(recIdx)
   if (!hit) return
   const targetLine = hitTargetLine(hit)
+  revealLine(targetLine)
   const filt = filteredLineIndices.value
   let targetVirtual: number
   if (filt) {
@@ -832,6 +874,7 @@ function markerColourVar(kind: string): string {
 function jumpToLine(lineIdx: number) {
   const v = virtualizer.value
   if (!v) return
+  revealLine(lineIdx)
   const filt = filteredLineIndices.value
   if (filt) {
     const virtIdx = filt.indexOf(lineIdx)
