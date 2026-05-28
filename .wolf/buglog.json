@@ -2,6 +2,30 @@
   "version": 1,
   "bugs": [
     {
+      "date": "2026-05-28",
+      "phase": "post-v1 collapse-records",
+      "error_message": "Settings -> Behaviour -> 'Collapse records by default' Errors/All options did nothing when clicked; the global default never took effect (per-file modes via the filters popover worked fine)",
+      "root_cause": "The collapse-records plan added collapse_records_default to the persisted Settings struct (persistence.rs) but never added it to SettingsPatch in main.rs, the typed struct the update_settings IPC command deserializes the UI patch into. serde ignores unknown fields by default, so the field was silently dropped: update_settings loaded the current Settings, applied none of the collapse value, saved, and returned Settings with the old default 'none'. The UI's reactive settings.value.collapse_records_default therefore never changed, so the viewport's collapseDefault/collapseEffectiveMode stayed 'none'. Per-file worked because it routes through tab.setCollapseMode + the RestoredFile session path, which the plan DID wire.",
+      "fix": "Added `pub collapse_records_default: Option<String>` to SettingsPatch and an apply arm `if let Some(v) = patch.collapse_records_default { s.collapse_records_default = v; }` in update_settings (matching the plain `theme` String handling, no validation since the UI only sends none/errors/all and the viewport normalises anything else to 'none'). Added a serde regression test settings_patch_captures_collapse_records_default.",
+      "tags": ["clog-app", "settings", "ipc", "serde", "collapse-records", "plan-gap"]
+    },
+    {
+      "date": "2026-05-28",
+      "phase": "post-v1 collapse-records",
+      "error_message": "The '+N lines' badge on collapsed record headers sat ~0.4rem left of the marker rail, leaving a distracting gap instead of sitting flush against the rail",
+      "root_cause": "The .collapse-badge rule in style.css used `right: 0.4rem` for its position: sticky offset. The marker rail is a 20px flex sibling immediately to the right of the .viewport scroll container (which has no right padding), so a 0.4rem right offset pins the badge 0.4rem inside the viewport edge, leaving a visible gap between the badge and the rail. Both surfaces use --bg-viewport so flush would read as one continuous strip.",
+      "fix": "Changed .collapse-badge `right: 0.4rem` to `right: 0` so it pins flush to the viewport's right edge (= the marker rail's left edge). Kept margin-left and the ::before left fade.",
+      "tags": ["ui", "css", "collapse-records", "marker-rail", "cosmetic"]
+    },
+    {
+      "date": "2026-05-28",
+      "phase": "post-v1",
+      "error_message": "cargo test --workspace fails one test: tests::append_without_newline_then_with_newline_matches_user_repro in crates/clog-app/src/main.rs:3016 panics 'assertion left == right failed: consumed cursor, left: 414, right: 413'",
+      "root_cause": "Pre-existing, unrelated to the collapse-records feature (the feature branch never touched main.rs). The test seeds a buffer that is 414 bytes long but asserts the consumed cursor lands at 413 -- an off-by-one in the test's own expected value, not in production code. Discovered while running the Task 13 verification gate for the collapse-records branch.",
+      "fix": "NOT FIXED -- out of scope for the collapse-records work and left for a dedicated fix so the change stays isolated. The fix is almost certainly to correct the expected offset from 413 to 414 in the assertion (verify by counting the seed bytes), but the user should confirm whether 414 is the intended cursor before changing the assertion vs. the parser.",
+      "tags": ["clog-app", "test", "off-by-one", "pre-existing", "tail", "needs-confirmation"]
+    },
+    {
       "date": "2026-05-27",
       "phase": "post-v1",
       "error_message": "GitHub issue #3: 'You're on the latest version' toast from the About modal's Check for updates button rendered behind the modal's translucent backdrop, had no auto-dismiss, and the tiny grey-on-grey x was easy to miss",
