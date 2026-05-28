@@ -434,6 +434,24 @@ function onResetAll() {
         </span>
       </div>
 
+      <div class="row-grid">
+        <span class="row-label">Collapse records by default</span>
+        <span class="seg">
+          <button
+            v-for="opt in (['none', 'errors', 'all'] as const)"
+            :key="opt"
+            type="button"
+            class="seg-btn"
+            :class="{ 'is-on': (settings.collapse_records_default ?? 'none') === opt }"
+            @click="emit('update', { collapse_records_default: opt })"
+          >{{ opt[0].toUpperCase() + opt.slice(1) }}</button>
+        </span>
+      </div>
+      <p class="muted hint-inline">
+        Multi-line records are folded to just their header line. Per-file
+        overrides live in the filters popover.
+      </p>
+
     </section>
 
     <!-- Slow requests -->
