@@ -1104,18 +1104,35 @@ function spaceToggleTargetLine(): number | null {
   return rec ? rec.record_first_line : null
 }
 
+// Pull keyboard focus into the viewport when the user interacts with it, so
+// the Space shortcut below has a focused viewport to key off. WebView2 does not
+// reliably move focus to a tabindex=0 container when a non-focusable child
+// (log text) is clicked, which left Space doing nothing.
+function ensureViewportFocus() {
+  const el = scrollEl.value
+  if (!el) return
+  const active = document.activeElement
+  if (el === active || el.contains(active)) return
+  el.focus({ preventScroll: true })
+}
+
 function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
   if (ev.key === ' ' || ev.key === 'Spacebar') {
-    // Only when focus is inside this viewport and not in an input/textarea
-    // (so Space still types in the search box and the pattern editor).
     const active = document.activeElement as HTMLElement | null
-    const el = scrollEl.value
-    if (!el) return
-    const inViewport = el === active || el.contains(active)
+    // Never steal Space from a text field (search box, pattern editor, ...).
     const tag = active?.tagName
     const editable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
-    if (!inViewport || editable) return
+    if (editable) return
+    const el = scrollEl.value
+    if (!el) return
+    // Fire when focus is inside this viewport, or when nothing in particular
+    // holds focus (body/null -- e.g. after a wheel-scroll with no click). Bail
+    // when some OTHER control is focused so Space still activates a focused
+    // button.
+    const inViewport = el === active || el.contains(active)
+    const unfocused = !active || active === document.body
+    if (!inViewport && !unfocused) return
     const target = spaceToggleTargetLine()
     if (target === null) return
     ev.preventDefault()
@@ -1707,7 +1724,7 @@ defineExpose({
 <template>
   <div class="viewport-shell">
     <div class="log-pane">
-    <div ref="scrollEl" class="viewport" tabindex="0" @scroll.passive="onViewportScroll">
+    <div ref="scrollEl" class="viewport" tabindex="0" @mousedown="ensureViewportFocus" @scroll.passive="onViewportScroll">
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"

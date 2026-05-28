@@ -664,6 +664,11 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   flex: 1 1 0;
   text-align: center;
 }
+/* Keep the section's explanatory hints from wrapping at a narrower width than
+   the Minimap hint, so the prose reads consistently across the tab. */
+.general-tab .hint-inline {
+  max-width: 32rem;
+}
 .reset-row { margin-top: 1rem; }
 .row-label { color: var(--fg-muted); font-size: 0.85rem; }
 .control-cell { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
