@@ -55,7 +55,7 @@ describe('isRecordExpanded', () => {
   })
 })
 
-import { buildVisibleRowIndex } from './collapse'
+import { buildVisibleRowIndex, recordOfLine, resolveChevronToggle } from './collapse'
 import type { RecordRef } from './types'
 
 function rec(idx: number, first: number, count: number, level = 'info'): RecordRef {
@@ -90,5 +90,52 @@ describe('buildVisibleRowIndex', () => {
     const { visibleRowToLine } = buildVisibleRowIndex(records, (r) => r.record_line_count <= 1)
     // record 0 header (0), record 1 single line (3), record 2 header (4)
     expect(visibleRowToLine).toEqual([0, 3, 4])
+  })
+})
+
+describe('recordOfLine', () => {
+  const records = [rec(0, 0, 3), rec(1, 3, 1), rec(2, 4, 5)]
+  it('finds the owning record for a header line', () => {
+    expect(recordOfLine(records, 0)?.record_idx).toBe(0)
+    expect(recordOfLine(records, 4)?.record_idx).toBe(2)
+  })
+  it('finds the owning record for a continuation line', () => {
+    expect(recordOfLine(records, 2)?.record_idx).toBe(0)
+    expect(recordOfLine(records, 8)?.record_idx).toBe(2)
+  })
+  it('returns null past the end', () => {
+    expect(recordOfLine(records, 9)).toBeNull()
+    expect(recordOfLine(records, -1)).toBeNull()
+  })
+})
+
+describe('resolveChevronToggle', () => {
+  it('default-expanded record gains a manuallyCollapsed entry', () => {
+    const r = resolveChevronToggle(10, true, sets())
+    expect(r.manuallyCollapsed.has(10)).toBe(true)
+    expect(r.manuallyExpanded.has(10)).toBe(false)
+  })
+  it('default-collapsed record gains a manuallyExpanded entry', () => {
+    const r = resolveChevronToggle(10, false, sets())
+    expect(r.manuallyExpanded.has(10)).toBe(true)
+    expect(r.manuallyCollapsed.has(10)).toBe(false)
+  })
+  it('toggling out of manuallyExpanded clears it', () => {
+    const r = resolveChevronToggle(10, false, sets({ manuallyExpanded: new Set([10]) }))
+    expect(r.manuallyExpanded.has(10)).toBe(false)
+  })
+  it('toggling out of manuallyCollapsed clears it', () => {
+    const r = resolveChevronToggle(10, true, sets({ manuallyCollapsed: new Set([10]) }))
+    expect(r.manuallyCollapsed.has(10)).toBe(false)
+  })
+  it('toggling a transient expansion collapses it (removes from transient)', () => {
+    const r = resolveChevronToggle(10, true, sets({ transientlyExpanded: new Set([10]) }))
+    expect(r.transientlyExpanded.has(10)).toBe(false)
+    expect(r.manuallyCollapsed.has(10)).toBe(false)
+  })
+  it('does not mutate the input sets', () => {
+    const input = sets()
+    resolveChevronToggle(10, true, input)
+    expect(input.manuallyCollapsed.size).toBe(0)
   })
 })

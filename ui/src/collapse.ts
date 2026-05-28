@@ -124,3 +124,41 @@ export function recordOfLine(
   const end = ans.record_first_line + ans.record_line_count
   return line >= ans.record_first_line && line < end ? ans : null
 }
+
+export type ChevronToggleResult = CollapseSets
+
+/**
+ * Resolve a chevron click / Space toggle on the record header at `firstLine`.
+ * Returns fresh Set instances (inputs are not mutated). `defaultExpanded` is
+ * the record's mode-derived default with no overrides applied
+ * (see `defaultExpandedFor`).
+ *
+ * Precedence matches the design spec's toggle table:
+ *   in manuallyExpanded  -> remove (back to default)
+ *   in manuallyCollapsed -> remove (back to default)
+ *   in transientlyExpanded (and neither manual) -> remove (collapses)
+ *   else default-expanded  -> add to manuallyCollapsed
+ *   else default-collapsed -> add to manuallyExpanded
+ */
+export function resolveChevronToggle(
+  firstLine: number,
+  defaultExpanded: boolean,
+  current: CollapseSets,
+): ChevronToggleResult {
+  const manuallyExpanded = new Set(current.manuallyExpanded)
+  const manuallyCollapsed = new Set(current.manuallyCollapsed)
+  const transientlyExpanded = new Set(current.transientlyExpanded)
+
+  if (manuallyExpanded.has(firstLine)) {
+    manuallyExpanded.delete(firstLine)
+  } else if (manuallyCollapsed.has(firstLine)) {
+    manuallyCollapsed.delete(firstLine)
+  } else if (transientlyExpanded.has(firstLine)) {
+    transientlyExpanded.delete(firstLine)
+  } else if (defaultExpanded) {
+    manuallyCollapsed.add(firstLine)
+  } else {
+    manuallyExpanded.add(firstLine)
+  }
+  return { manuallyExpanded, manuallyCollapsed, transientlyExpanded }
+}
