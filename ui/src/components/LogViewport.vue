@@ -1096,6 +1096,21 @@ function onDocumentPointerDown(ev: PointerEvent) {
 
 function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
+  if (ev.key === ' ' || ev.key === 'Spacebar') {
+    // Only when focus is inside this viewport and not in an input/textarea
+    // (so Space still types in the search box and the pattern editor).
+    const active = document.activeElement as HTMLElement | null
+    const el = scrollEl.value
+    if (!el) return
+    const inViewport = el === active || el.contains(active)
+    const tag = active?.tagName
+    const editable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
+    if (!inViewport || editable) return
+    const sticky = stickyHeader.value
+    if (!sticky) return
+    ev.preventDefault()
+    toggleCollapse(sticky.lineIndex)
+  }
 }
 
 function hotColour(level: string, heat: number, max: number, blend: number): string | null {
@@ -1669,7 +1684,7 @@ defineExpose({
 <template>
   <div class="viewport-shell">
     <div class="log-pane">
-    <div ref="scrollEl" class="viewport" @scroll.passive="onViewportScroll">
+    <div ref="scrollEl" class="viewport" tabindex="0" @scroll.passive="onViewportScroll">
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
@@ -2266,6 +2281,8 @@ defineExpose({
   /* width = vertical scrollbar width (0 -> hidden, replaced by minimap);
      height = horizontal scrollbar height (inherits the app-wide look). */
   &::-webkit-scrollbar { width: 0; height: 10px; }
+
+  &:focus-visible { outline: none; }
 
   .total {
     position: relative;
