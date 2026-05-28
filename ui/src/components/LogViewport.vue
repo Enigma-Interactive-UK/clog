@@ -1089,67 +1089,47 @@ function onDocumentPointerDown(ev: PointerEvent) {
   closeClusterPopover()
 }
 
-// The line the user last pressed on inside the viewport. Space toggles the
-// record containing it, so "toggle this record" acts on the record the user is
-// actually looking at rather than whatever happens to sit at the top edge.
-const lastInteractedLine = ref<number | null>(null)
-
-// On mousedown: focus the viewport (WebView2 does not reliably focus a
-// tabindex=0 container when a non-focusable child -- log text -- is clicked,
-// which left the Space shortcut with no focused viewport to key off) and
-// remember which line was pressed. The rows are virtualised, so map the
-// pointer Y to a virtual row the same way the sticky header does.
-function onViewportMouseDown(ev: MouseEvent) {
-  const el = scrollEl.value
-  if (!el) return
-  const active = document.activeElement
-  if (el !== active && !el.contains(active)) el.focus({ preventScroll: true })
-  const total = effectiveCount.value
-  if (total === 0) return
-  const contentY = ev.clientY - el.getBoundingClientRect().top + el.scrollTop
-  const virtual = Math.floor(contentY / rowHeight.value)
-  if (virtual >= 0 && virtual < total) lastInteractedLine.value = actualLineIndex(virtual)
+// Viewport-relative pointer position while the cursor is over the log, or null
+// when it is outside. Space folds/unfolds the record under the cursor, so we
+// track the pointer rather than focus or clicks. A plain variable (not a ref):
+// it is read imperatively on keypress and must not drive reactivity on every
+// mousemove.
+let pointerClientY: number | null = null
+function onViewportMouseMove(ev: MouseEvent) {
+  pointerClientY = ev.clientY
+}
+function onViewportMouseLeave() {
+  pointerClientY = null
 }
 
-// The record Space toggles: the one the user last pressed on, else the record
-// under the sticky header (a multi-line record scrolled partway off the top),
-// else the record at the very top of the viewport. Falling through this way
-// avoids the dead zone where Space hit a single-line record the user was not
-// looking at and so did nothing.
-function spaceToggleTargetLine(): number | null {
-  const recs = props.tab.recordIndex.value
-  const clicked = lastInteractedLine.value
-  if (clicked !== null) {
-    const rec = recordOfLine(recs, clicked)
-    if (rec) return rec.record_first_line
-  }
-  const sticky = stickyHeader.value
-  if (sticky) return sticky.lineIndex
+// The first line of the record currently under the mouse cursor, or null when
+// the cursor is not over a record. Rows are virtualised, so map the pointer Y
+// to a virtual row (the arithmetic the sticky header uses) then to the owning
+// record. A cursor over the sticky-header overlay maps to the top visible row,
+// which is a continuation of the stuck record, and recordOfLine resolves that
+// to the same record -- so hovering the overlay toggles the record it shows.
+function recordUnderPointerFirstLine(): number | null {
+  const el = scrollEl.value
+  if (pointerClientY === null || !el) return null
   const total = effectiveCount.value
   if (total === 0) return null
-  const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / rowHeight.value))
-  const rec = recordOfLine(recs, actualLineIndex(topVirtual))
+  const contentY = pointerClientY - el.getBoundingClientRect().top + el.scrollTop
+  const virtual = Math.floor(contentY / rowHeight.value)
+  if (virtual < 0 || virtual >= total) return null
+  const rec = recordOfLine(props.tab.recordIndex.value, actualLineIndex(virtual))
   return rec ? rec.record_first_line : null
 }
 
 function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
   if (ev.key === ' ' || ev.key === 'Spacebar' || ev.code === 'Space') {
+    // Don't steal Space from a text field (search box, pattern editor, ...).
     const active = document.activeElement as HTMLElement | null
-    // Never steal Space from a text field (search box, pattern editor, ...).
     const tag = active?.tagName
-    const editable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
-    if (editable) return
-    const el = scrollEl.value
-    if (!el) return
-    // Fire when focus is inside this viewport, or when nothing in particular
-    // holds focus (body/null -- e.g. after a wheel-scroll with no click). Bail
-    // when some OTHER control is focused so Space still activates a focused
-    // button.
-    const inViewport = el === active || el.contains(active)
-    const unfocused = !active || active === document.body
-    if (!inViewport && !unfocused) return
-    const target = spaceToggleTargetLine()
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable) return
+    // Toggle the record under the mouse cursor. When the cursor is not over the
+    // log, leave Space alone so it keeps its default behaviour elsewhere.
+    const target = recordUnderPointerFirstLine()
     if (target === null) return
     ev.preventDefault()
     toggleCollapse(target)
@@ -1740,7 +1720,14 @@ defineExpose({
 <template>
   <div class="viewport-shell">
     <div class="log-pane">
-    <div ref="scrollEl" class="viewport" tabindex="0" @mousedown="onViewportMouseDown" @scroll.passive="onViewportScroll">
+    <div
+      ref="scrollEl"
+      class="viewport"
+      tabindex="0"
+      @mousemove="onViewportMouseMove"
+      @mouseleave="onViewportMouseLeave"
+      @scroll.passive="onViewportScroll"
+    >
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
