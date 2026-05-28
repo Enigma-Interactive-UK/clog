@@ -222,43 +222,38 @@ const filteredLineIndices = computed<number[] | null>(
   () => visibleIndex.value?.visibleRowToLine ?? null,
 )
 
-// Reverse map for "is this physical line currently visible?" checks. Null in
-// identity mode (every line < line_count is visible).
-const lineToRow = computed<Map<number, number> | null>(
-  () => visibleIndex.value?.lineToRow ?? null,
-)
-
-function lineIsVisible(lineIdx: number): boolean {
-  const map = lineToRow.value
-  if (map === null) return lineIdx >= 0 && lineIdx < props.tab.file.value.line_count
-  return map.has(lineIdx)
-}
-
-// Auto-expand the record containing `lineIdx` if it is currently hidden inside
-// a collapsed record. Single-shot: clears any prior transient expansion first
-// so navigation does not leave a trail of opened records (manual expansions
-// are untouched). Returns true if it changed the visible set.
+// Auto-expand the record containing `lineIdx` when that record is collapsed,
+// so navigation (search hits, bookmark/marker jumps, insights entries) can
+// reveal content folded inside it. This gates on the RECORD's expanded state,
+// NOT on whether `lineIdx` itself is currently visible: a collapsed record's
+// header line is always visible, and callers routinely target the header --
+// search falls back to it when the buried match line's page is not yet loaded
+// (collapsed records never fetch their continuation pages), and markers and
+// bookmarks sit on it. Gating on line visibility therefore never opened
+// anything. Single-shot: a fresh jump drops any prior transient expansion so
+// navigation does not leave a trail of opened records. Returns true if it
+// opened a record.
 function revealLine(lineIdx: number): boolean {
-  if (lineIsVisible(lineIdx)) {
-    // Target already visible; still clear stale transients so the previous
-    // auto-open collapses back. Only if the target is not itself a transient.
-    const tab = props.tab
-    if (tab.transientlyExpanded.value.size > 0) {
-      const rec = recordOfLine(tab.recordIndex.value, lineIdx)
-      const keep = rec ? tab.transientlyExpanded.value.has(rec.record_first_line) : false
-      if (!keep) tab.transientlyExpanded.value = new Set()
+  const tab = props.tab
+  const rec = recordOfLine(tab.recordIndex.value, lineIdx)
+  // No record here, or the record already shows all its lines (single-line,
+  // the mode leaves it open, or a manual/transient expansion): nothing to
+  // open. Sweep away a stale transient trail from a previous jump, but keep
+  // this record if it is the one already held open transiently.
+  if (!rec || recordExpanded(rec)) {
+    const keepFirst = rec?.record_first_line
+    if (
+      tab.transientlyExpanded.value.size > 0 &&
+      (keepFirst === undefined || !tab.transientlyExpanded.value.has(keepFirst))
+    ) {
+      tab.transientlyExpanded.value = new Set()
     }
     return false
   }
-  const tab = props.tab
-  const rec = recordOfLine(tab.recordIndex.value, lineIdx)
-  if (!rec) return false
-  // Manual expansions are sticky and not part of the transient sweep.
-  const next = tab.manuallyExpanded.value.has(rec.record_first_line)
-    ? new Set(tab.transientlyExpanded.value)
-    : new Set<number>()
-  next.add(rec.record_first_line)
-  tab.transientlyExpanded.value = next
+  // Collapsed multi-line record -> open it transiently. recordExpanded() above
+  // already honours sticky manual expansions, so a manually-expanded record
+  // never reaches here; a fresh single-entry set is the correct single-shot.
+  tab.transientlyExpanded.value = new Set<number>([rec.record_first_line])
   return true
 }
 
