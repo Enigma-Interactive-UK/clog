@@ -300,7 +300,7 @@ function onResetAll() {
 
     <!-- General -->
     <div class="tab-stack">
-    <section class="tab-panel" :class="{ 'is-active': activeTab === 'general' }" role="tabpanel" :aria-hidden="activeTab !== 'general'">
+    <section class="tab-panel general-tab" :class="{ 'is-active': activeTab === 'general' }" role="tabpanel" :aria-hidden="activeTab !== 'general'">
       <h3>Appearance</h3>
       <div class="row-grid">
         <span class="row-label">Theme</span>
@@ -366,7 +366,7 @@ function onResetAll() {
           <button type="button" class="seg-btn" :disabled="!settings.mono_font_family" @click="resetMonoFont">Reset</button>
         </span>
       </div>
-      <div class="row-grid">
+      <div class="row-grid preview-row">
         <span class="row-label"></span>
         <span class="mono-preview" :style="{ fontFamily: monoPreviewFamily }">
           The quick brown fox 0123456789 [INFO] play - {key=value}
@@ -639,6 +639,30 @@ code { background: var(--bg-button); padding: 0.05rem 0.3rem; border-radius: 3px
   align-items: center;
   gap: 0.8rem;
   margin: 0.35rem 0;
+}
+
+/* General tab: the Minimap sliders cap at ~20rem, but the Behaviour/Appearance
+   controls are content-width, so in the full-width modal column they sat
+   raggedly with a wide empty gutter. Cap every General control cell to the
+   slider width so all rows -- and therefore the Minimap and Behaviour sections
+   -- share one tidy width. */
+.general-tab .row-grid {
+  grid-template-columns: 10rem minmax(0, 20rem);
+}
+/* The font preview keeps the full width so its sample line is not clipped. */
+.general-tab .preview-row {
+  grid-template-columns: 10rem minmax(0, 1fr);
+}
+/* Stretch the choice segmented-controls (theme, collapse default) to fill the
+   capped column so their right edge lines up with the sliders. The font-size
+   stepper keeps its natural compact size. */
+.general-tab .seg:not(.font-seg) {
+  display: flex;
+  width: 100%;
+}
+.general-tab .seg:not(.font-seg) .seg-btn {
+  flex: 1 1 0;
+  text-align: center;
 }
 .reset-row { margin-top: 1rem; }
 .row-label { color: var(--fg-muted); font-size: 0.85rem; }

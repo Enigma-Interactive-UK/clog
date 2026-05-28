@@ -138,12 +138,12 @@ onBeforeUnmount(() => {
           type="button"
           class="filter-pill"
           :class="{ 'is-on': tab.collapseMode.value === opt }"
+          :title="opt === 'inherit'
+            ? `Follow the global default (currently ${effectiveLabel})`
+            : `Collapse mode: ${COLLAPSE_LABEL[opt]}`"
           @click="setCollapseMode(opt)"
         >{{ COLLAPSE_LABEL[opt] }}</button>
       </div>
-      <p v-if="tab.collapseMode.value === 'inherit'" class="collapse-hint">
-        Inheriting global default (currently "{{ effectiveLabel }}")
-      </p>
     </section>
     <footer class="filters-footer">
       <button type="button" class="reset-link" @click="resetAll">Reset all filters</button>
@@ -207,13 +207,6 @@ onBeforeUnmount(() => {
   background: var(--accent);
   color: var(--fg-on-accent);
   border-color: var(--accent);
-}
-
-.collapse-hint {
-  margin: 0.3rem 0 0;
-  font-size: 0.72rem;
-  color: var(--fg-muted);
-  font-style: italic;
 }
 
 .lvl-trace { color: var(--level-trace); }

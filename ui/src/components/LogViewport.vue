@@ -1089,6 +1089,21 @@ function onDocumentPointerDown(ev: PointerEvent) {
   closeClusterPopover()
 }
 
+// The record Space toggles: the one under the sticky header if a multi-line
+// record has scrolled partway off the top, otherwise the record at the very
+// top of the viewport (its header is the top row). Returning the latter avoids
+// a dead zone where Space did nothing whenever no sticky header was showing --
+// e.g. sitting on a collapsed record, whose only visible row IS its header.
+function spaceToggleTargetLine(): number | null {
+  const sticky = stickyHeader.value
+  if (sticky) return sticky.lineIndex
+  const total = effectiveCount.value
+  if (total === 0) return null
+  const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / rowHeight.value))
+  const rec = recordOfLine(props.tab.recordIndex.value, actualLineIndex(topVirtual))
+  return rec ? rec.record_first_line : null
+}
+
 function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
   if (ev.key === ' ' || ev.key === 'Spacebar') {
@@ -1101,10 +1116,10 @@ function onDocumentKey(ev: KeyboardEvent) {
     const tag = active?.tagName
     const editable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
     if (!inViewport || editable) return
-    const sticky = stickyHeader.value
-    if (!sticky) return
+    const target = spaceToggleTargetLine()
+    if (target === null) return
     ev.preventDefault()
-    toggleCollapse(sticky.lineIndex)
+    toggleCollapse(target)
   }
 }
 
@@ -2446,16 +2461,6 @@ defineExpose({
         color-mix(in srgb, var(--level-fatal) 10%, transparent),
         transparent 75%
       );
-    }
-
-    &.is-current-hit {
-      background-image: linear-gradient(
-        color-mix(in srgb, var(--hl-search-bg) 22%, transparent),
-        color-mix(in srgb, var(--hl-search-bg) 22%, transparent)
-      );
-      box-shadow:
-        inset 0 1px 0 var(--hl-search-bg),
-        inset 0 -1px 0 var(--hl-search-bg);
     }
 
     /* Placed last so the bookmark gradient overrules any level-row-* or
