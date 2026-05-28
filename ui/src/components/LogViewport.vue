@@ -1451,16 +1451,27 @@ watch(
   },
 )
 
-// Tail-driven line_count growth: fetch the latest page and, when
-// following, jump to the bottom.
+// The minimap is line-indexed, so refetch it on raw line growth.
 watch(
   () => props.tab.file.value.line_count,
   (cur, prev) => {
     if (cur === prev) return
     scheduleMinimapFetch()
-    if (props.tab.followTail.value) jumpToBottom()
   },
 )
+
+// Follow-tail must track the VISIBLE bottom, which is effectiveCount -- not
+// line_count. With a collapse mode (or a filter) active, the visible row count
+// only settles after recordIndex refreshes asynchronously following a tail
+// delta; keying the jump on line_count scrolled to a stale bottom and then
+// never caught up once the record landed, so following appeared to stop.
+// Watching effectiveCount fixes that, and still covers plain tailing
+// (effectiveCount === line_count in the identity case). A continuation line
+// appended to an already-collapsed record leaves effectiveCount unchanged, so
+// this correctly does not yank the view when nothing new became visible.
+watch(effectiveCount, () => {
+  if (props.tab.followTail.value) jumpToBottom()
+})
 
 // Restore scroll on mount (per-tab persisted scrollTop).
 let resizeObserver: ResizeObserver | null = null
