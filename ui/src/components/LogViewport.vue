@@ -1089,36 +1089,52 @@ function onDocumentPointerDown(ev: PointerEvent) {
   closeClusterPopover()
 }
 
-// The record Space toggles: the one under the sticky header if a multi-line
-// record has scrolled partway off the top, otherwise the record at the very
-// top of the viewport (its header is the top row). Returning the latter avoids
-// a dead zone where Space did nothing whenever no sticky header was showing --
-// e.g. sitting on a collapsed record, whose only visible row IS its header.
+// The line the user last pressed on inside the viewport. Space toggles the
+// record containing it, so "toggle this record" acts on the record the user is
+// actually looking at rather than whatever happens to sit at the top edge.
+const lastInteractedLine = ref<number | null>(null)
+
+// On mousedown: focus the viewport (WebView2 does not reliably focus a
+// tabindex=0 container when a non-focusable child -- log text -- is clicked,
+// which left the Space shortcut with no focused viewport to key off) and
+// remember which line was pressed. The rows are virtualised, so map the
+// pointer Y to a virtual row the same way the sticky header does.
+function onViewportMouseDown(ev: MouseEvent) {
+  const el = scrollEl.value
+  if (!el) return
+  const active = document.activeElement
+  if (el !== active && !el.contains(active)) el.focus({ preventScroll: true })
+  const total = effectiveCount.value
+  if (total === 0) return
+  const contentY = ev.clientY - el.getBoundingClientRect().top + el.scrollTop
+  const virtual = Math.floor(contentY / rowHeight.value)
+  if (virtual >= 0 && virtual < total) lastInteractedLine.value = actualLineIndex(virtual)
+}
+
+// The record Space toggles: the one the user last pressed on, else the record
+// under the sticky header (a multi-line record scrolled partway off the top),
+// else the record at the very top of the viewport. Falling through this way
+// avoids the dead zone where Space hit a single-line record the user was not
+// looking at and so did nothing.
 function spaceToggleTargetLine(): number | null {
+  const recs = props.tab.recordIndex.value
+  const clicked = lastInteractedLine.value
+  if (clicked !== null) {
+    const rec = recordOfLine(recs, clicked)
+    if (rec) return rec.record_first_line
+  }
   const sticky = stickyHeader.value
   if (sticky) return sticky.lineIndex
   const total = effectiveCount.value
   if (total === 0) return null
   const topVirtual = Math.min(total - 1, Math.floor(viewportScrollTop.value / rowHeight.value))
-  const rec = recordOfLine(props.tab.recordIndex.value, actualLineIndex(topVirtual))
+  const rec = recordOfLine(recs, actualLineIndex(topVirtual))
   return rec ? rec.record_first_line : null
-}
-
-// Pull keyboard focus into the viewport when the user interacts with it, so
-// the Space shortcut below has a focused viewport to key off. WebView2 does not
-// reliably move focus to a tabindex=0 container when a non-focusable child
-// (log text) is clicked, which left Space doing nothing.
-function ensureViewportFocus() {
-  const el = scrollEl.value
-  if (!el) return
-  const active = document.activeElement
-  if (el === active || el.contains(active)) return
-  el.focus({ preventScroll: true })
 }
 
 function onDocumentKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') closeClusterPopover()
-  if (ev.key === ' ' || ev.key === 'Spacebar') {
+  if (ev.key === ' ' || ev.key === 'Spacebar' || ev.code === 'Space') {
     const active = document.activeElement as HTMLElement | null
     // Never steal Space from a text field (search box, pattern editor, ...).
     const tag = active?.tagName
@@ -1724,7 +1740,7 @@ defineExpose({
 <template>
   <div class="viewport-shell">
     <div class="log-pane">
-    <div ref="scrollEl" class="viewport" tabindex="0" @mousedown="ensureViewportFocus" @scroll.passive="onViewportScroll">
+    <div ref="scrollEl" class="viewport" tabindex="0" @mousedown="onViewportMouseDown" @scroll.passive="onViewportScroll">
       <div v-if="stickyHeader" class="sticky-shell">
         <div
           class="row is-header"
