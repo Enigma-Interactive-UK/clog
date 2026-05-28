@@ -3,6 +3,14 @@
   "bugs": [
     {
       "date": "2026-05-28",
+      "phase": "release 1.3.0 / tooling",
+      "error_message": ".wolf/anatomy.md collapsed to a 3-file stub (207 -> 88 lines) after editing files during the release",
+      "root_cause": "core.autocrlf=true with no .gitattributes let .wolf/*.md working-tree copies silently drift to CRLF (autocrlf hides this: a CRLF working tree compares equal to the LF blob, so git status shows the file clean). OpenWolf's post-write hook (parseAnatomy in .wolf/hooks/shared.js) does content.split(\"\\n\") and matches each entry with a regex anchored ...tok\\)$. A CRLF line keeps a trailing \\r before the \\n, so $ never matches and EVERY existing entry is dropped. The hook then re-serializes (LF) keeping only the entries it freshly added for the just-edited file, collapsing anatomy.md to a stub.",
+      "fix": "Regenerated with `openwolf scan` (rewrites LF, parses cleanly). Added .gitattributes pinning .wolf/**/*.{md,json,js} to `text eol=lf` so the working tree always matches the parser's expectation, then `git add --renormalize .wolf/` plus a delete+checkout of the still-CRLF cerebrum.md/buglog.json to materialize LF on disk. Upstream openwolf v1.0.4 should split on /\\r?\\n/ instead -- cannot fix the global npm tool from here, but the .gitattributes removes the trigger.",
+      "tags": ["openwolf", "anatomy", "line-endings", "crlf", "gitattributes", "autocrlf", "tooling"]
+    },
+    {
+      "date": "2026-05-28",
       "phase": "post-v1 collapse-records",
       "error_message": "Pressing Space did not expand/collapse a record (a spec feature) in common cases",
       "root_cause": "The Space handler in onDocumentKey toggled stickyHeader.value.lineIndex and bailed when stickyHeader was null. The sticky header only appears when a multi-line record has scrolled partway off the top (its first visible row is a continuation line). When sitting on a collapsed record -- whose only visible row IS its header (line_within_record 0) -- or on any record viewed from its header, stickyHeader is null, so Space no-opped. That is exactly the situation where the user wants to toggle, so Space appeared broken.",
