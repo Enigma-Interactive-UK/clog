@@ -33,6 +33,12 @@ import {
   type Settings,
 } from '../types'
 import type { Tab } from '../tab'
+import {
+  effectiveMode,
+  isRecordExpanded,
+  buildVisibleRowIndex,
+  type GlobalCollapseDefault,
+} from '../collapse'
 import InsightsDrawer from './InsightsDrawer.vue'
 import { useContextMenu, type MenuItem } from '../composables/useContextMenu'
 
@@ -114,17 +120,67 @@ const filteredSourceRecords = computed<RecordRef[] | null>(() => {
   return allowed
 })
 
-const filteredLineIndices = computed<number[] | null>(() => {
-  const source = filteredSourceRecords.value
-  if (source === null) return null
-  const out: number[] = []
-  for (const rec of source) {
-    const start = rec.record_first_line
-    const end = start + rec.record_line_count
-    for (let i = start; i < end; i++) out.push(i)
-  }
-  return out
+const collapseDefault = computed<GlobalCollapseDefault>(() => {
+  const v = settings?.value.collapse_records_default
+  return v === 'errors' || v === 'all' ? v : 'none'
 })
+const collapseEffectiveMode = computed<GlobalCollapseDefault>(() =>
+  effectiveMode(props.tab.collapseMode.value, collapseDefault.value),
+)
+
+// The record's collapse decision, reused by the index builder and the chevron.
+function recordExpanded(rec: RecordRef): boolean {
+  const tab = props.tab
+  return isRecordExpanded(
+    rec.record_first_line,
+    rec.record_line_count,
+    typeof rec.level === 'string' ? rec.level : String(rec.level),
+    collapseEffectiveMode.value,
+    {
+      manuallyExpanded: tab.manuallyExpanded.value,
+      manuallyCollapsed: tab.manuallyCollapsed.value,
+      transientlyExpanded: tab.transientlyExpanded.value,
+    },
+  )
+}
+
+// Does collapse currently hide ANY line? If not (mode resolves to none and no
+// override hides anything), we can keep the identity fast-path and avoid
+// materialising a per-line array on large files.
+const collapseHidesSomething = computed<boolean>(() => {
+  if (collapseEffectiveMode.value !== 'none') {
+    // errors/all hide multi-line records unless every one is forced open.
+    // Cheap conservative check: assume something is hidden if there is any
+    // multi-line record. (A precise check would walk recordIndex; the array
+    // walk in the builder is the same cost, so just assume true here.)
+    return props.tab.recordIndex.value.some((r) => r.record_line_count > 1)
+  }
+  // none mode: only manuallyCollapsed can hide a record.
+  return props.tab.manuallyCollapsed.value.size > 0
+})
+
+// The ordered record list to project: filter-passing subset in filter mode,
+// else the full record map.
+const projectionRecords = computed<RecordRef[] | null>(() => {
+  const filt = filteredSourceRecords.value
+  if (filt !== null) return filt
+  // No filter active. Only build from the full map when collapse hides
+  // something; otherwise signal identity by returning null.
+  if (!collapseHidesSomething.value) return null
+  return props.tab.recordIndex.value
+})
+
+// Combined virtual-row -> physical-line mapping (filter + collapse). Null =
+// identity (virtual row == physical line == today's behaviour).
+const visibleIndex = computed(() => {
+  const recs = projectionRecords.value
+  if (recs === null) return null
+  return buildVisibleRowIndex(recs, recordExpanded)
+})
+
+const filteredLineIndices = computed<number[] | null>(
+  () => visibleIndex.value?.visibleRowToLine ?? null,
+)
 
 const effectiveCount = computed(() => {
   const filt = filteredLineIndices.value
