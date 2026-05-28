@@ -549,3 +549,32 @@ textarea,
   border-radius: 2px;
   box-shadow: 0 0 0 1px var(--hl-search-bg);
 }
+
+/* Collapsed-record "+N lines" badge: muted italic, pinned to the right edge
+   of the viewport via position: sticky so it stays visible as the user scrolls
+   the collapsed header horizontally; it falls into normal flow at the message
+   end. The ::before paints a short fade so message text doesn't collide with
+   the badge's left edge. */
+.collapse-badge {
+  position: sticky;
+  right: 0.4rem;
+  margin-left: 0.6rem;
+  padding: 0 0.3rem;
+  font-style: italic;
+  font-size: 0.85em;
+  color: var(--fg-gutter);
+  background: var(--bg-viewport);
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.collapse-badge::before {
+  content: '';
+  position: absolute;
+  left: -1.2rem;
+  top: 0;
+  bottom: 0;
+  width: 1.2rem;
+  background: linear-gradient(to right, transparent, var(--bg-viewport));
+  pointer-events: none;
+}

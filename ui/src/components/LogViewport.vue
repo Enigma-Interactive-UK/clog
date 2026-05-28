@@ -1768,6 +1768,10 @@ defineExpose({
                 :data-url="span.url || null"
                 @click="span.url && onSpanClick(span, $event)"
               >{{ span.text }}</span>
+              <span
+                v-if="!chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded && chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show"
+                class="collapse-badge"
+              >+{{ chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).hiddenCount }} lines</span>
             </span>
           </div>
         </template>
