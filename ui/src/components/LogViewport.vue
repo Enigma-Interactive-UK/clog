@@ -1479,6 +1479,8 @@ onMounted(() => {
     void props.tab.fetchPage(0)
   }
 
+  void props.tab.refreshRecordIndex()
+
   // Restore per-tab scrollTop after the virtualizer has mounted the
   // initial overscan window. Two rAFs so the total height has settled.
   requestAnimationFrame(() => {
