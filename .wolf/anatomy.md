@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T22:19:03.255Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T22:28:03.366Z
 > Files: 122 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -58,9 +58,9 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~37966 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~40672 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~1092 tok)
-- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~5696 tok)
+- `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~6103 tok)
 - `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1995 tok)
 
 ## crates/clog-core/
@@ -105,7 +105,7 @@
 - `2026-05-23-slow-request-insights.md` — Slow request insights implementation plan (~31657 tok)
 - `2026-05-24-thread-insights.md` — Thread insights + consolidated filter flyout implementation plan (~11654 tok)
 - `2026-05-27-zen-mode.md` — Zen mode implementation plan (~4103 tok)
-- `2026-05-28-collapse-records.md` — Collapse Records Implementation Plan (~16857 tok)
+- `2026-05-28-collapse-records.md` — Collapse Records Implementation Plan (~17269 tok)
 
 ## docs/superpowers/specs/
 
@@ -151,10 +151,10 @@
 ## ui/src/
 
 - `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~5178 tok)
-- `collapse.test.ts` — CollapseSets: sets, rec (~1737 tok)
-- `collapse.ts` — Pure collapse-records logic. No Vue or DOM dependencies so every rule is (~1594 tok)
+- `collapse.test.ts` — CollapseSets: sets, rec (~1777 tok)
+- `collapse.ts` — Pure collapse-records logic. No Vue or DOM dependencies so every rule is (~1641 tok)
 - `main.ts` (~32 tok)
-- `style.css` — Styles: 219 vars (~6083 tok)
+- `style.css` — Styles: 219 vars (~6084 tok)
 - `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~7148 tok)
 - `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2603 tok)
 
