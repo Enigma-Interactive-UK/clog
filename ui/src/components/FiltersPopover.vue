@@ -4,19 +4,43 @@
  * by the parent, which positions us absolutely. We do not own the
  * trigger -- only the menu surface and its outside-click/Esc dismissal.
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import {
   LEVEL_KEYS,
   THREAD_GROUP_KEYS,
   THREAD_GROUP_LABEL,
+  type CollapseMode,
   type LevelKey,
+  type Settings,
   type ThreadGroupKey,
 } from '../types'
 import { defaultLevelAllow, defaultThreadGroupAllow } from '../tab'
 import type { Tab } from '../tab'
+import { effectiveMode } from '../collapse'
 
 const props = defineProps<{ tab: Tab }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const COLLAPSE_OPTIONS: CollapseMode[] = ['inherit', 'none', 'errors', 'all']
+const COLLAPSE_LABEL: Record<CollapseMode, string> = {
+  inherit: 'Inherit',
+  none: 'None',
+  errors: 'Errors',
+  all: 'All',
+}
+
+const settings = inject<Ref<Settings> | null>('settings', null)
+const inheritedMode = computed(() => {
+  const def = settings?.value.collapse_records_default
+  return def === 'errors' || def === 'all' ? def : 'none'
+})
+const effectiveLabel = computed(() =>
+  COLLAPSE_LABEL[effectiveMode('inherit', inheritedMode.value)],
+)
+
+function setCollapseMode(mode: CollapseMode) {
+  props.tab.setCollapseMode(mode)
+}
 
 const rootEl = ref<HTMLElement | null>(null)
 
@@ -105,6 +129,22 @@ onBeforeUnmount(() => {
         >{{ THREAD_GROUP_LABEL[g] }}</button>
       </div>
     </section>
+    <section class="filters-section">
+      <h4 class="filters-heading">Collapse records</h4>
+      <div class="filters-row collapse-seg">
+        <button
+          v-for="opt in COLLAPSE_OPTIONS"
+          :key="opt"
+          type="button"
+          class="filter-pill"
+          :class="{ 'is-on': tab.collapseMode.value === opt }"
+          @click="setCollapseMode(opt)"
+        >{{ COLLAPSE_LABEL[opt] }}</button>
+      </div>
+      <p v-if="tab.collapseMode.value === 'inherit'" class="collapse-hint">
+        Inheriting global default (currently "{{ effectiveLabel }}")
+      </p>
+    </section>
     <footer class="filters-footer">
       <button type="button" class="reset-link" @click="resetAll">Reset all filters</button>
     </footer>
@@ -161,6 +201,19 @@ onBeforeUnmount(() => {
     opacity: 0.35;
     text-decoration: line-through;
   }
+}
+
+.filter-pill.is-on {
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  border-color: var(--accent);
+}
+
+.collapse-hint {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  font-style: italic;
 }
 
 .lvl-trace { color: var(--level-trace); }
