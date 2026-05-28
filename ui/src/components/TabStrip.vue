@@ -16,6 +16,33 @@
  */
 import { onBeforeUnmount, ref } from 'vue'
 import type { Tab } from '../tab'
+import { useContextMenu, type MenuItem } from '../composables/useContextMenu'
+import type { CollapseMode } from '../types'
+
+const { show: showContextMenu } = useContextMenu()
+
+const COLLAPSE_ITEMS: { mode: CollapseMode; label: string }[] = [
+  { mode: 'inherit', label: 'Inherit' },
+  { mode: 'none', label: 'None' },
+  { mode: 'errors', label: 'Errors' },
+  { mode: 'all', label: 'All' },
+]
+
+function onTabContextMenu(ev: MouseEvent, tab: Tab) {
+  ev.preventDefault()
+  const items: MenuItem[] = [
+    {
+      kind: 'submenu',
+      label: 'Collapse records',
+      children: COLLAPSE_ITEMS.map((opt) => ({
+        kind: 'action' as const,
+        label: `${tab.collapseMode.value === opt.mode ? '✓ ' : '  '}${opt.label}`,
+        onSelect: () => tab.setCollapseMode(opt.mode),
+      })),
+    },
+  ]
+  showContextMenu({ clientX: ev.clientX, clientY: ev.clientY }, items)
+}
 
 defineProps<{
   tabs: Tab[]
@@ -161,6 +188,7 @@ onBeforeUnmount(() => {
         :title="t.file.value.path"
         :data-local-id="t.localId"
         @mousedown="onMiddleClick($event, t.localId); onTabMouseDown($event, t.localId)"
+        @contextmenu="onTabContextMenu($event, t)"
       >
         <button
           type="button"
