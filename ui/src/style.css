@@ -560,7 +560,7 @@ textarea,
   /* Flush with the marker rail (the badge and the rail share --bg-viewport,
      so they read as one continuous strip). Any right offset leaves a
      distracting gap between the badge and the rail. */
-  right: 0;
+  right: -1px;
   margin-left: 0.6rem;
   padding: 0 0.3rem;
   font-style: italic;
@@ -574,10 +574,10 @@ textarea,
 .collapse-badge::before {
   content: '';
   position: absolute;
-  left: -1.2rem;
+  left: -1.5rem;
   top: 0;
   bottom: 0;
-  width: 1.2rem;
+  width: 1.5rem;
   background: linear-gradient(to right, transparent, var(--bg-viewport));
   pointer-events: none;
 }
