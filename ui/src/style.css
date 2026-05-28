@@ -557,7 +557,10 @@ textarea,
    the badge's left edge. */
 .collapse-badge {
   position: sticky;
-  right: 0.4rem;
+  /* Flush with the marker rail (the badge and the rail share --bg-viewport,
+     so they read as one continuous strip). Any right offset leaves a
+     distracting gap between the badge and the rail. */
+  right: 0;
   margin-left: 0.6rem;
   padding: 0 0.3rem;
   font-style: italic;

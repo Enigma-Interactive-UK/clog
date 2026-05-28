@@ -1927,6 +1927,9 @@ pub struct SettingsPatch {
     pub minimap_heatmap_blend: Option<f32>,
     pub minimap_background_opacity: Option<f32>,
     pub speed_rail_enabled: Option<bool>,
+    /// Global default collapse mode for multi-line records:
+    /// `"none"` | `"errors"` | `"all"`. `None` leaves it untouched.
+    pub collapse_records_default: Option<String>,
     /// Tri-state: `None` = untouched, `Some(None)` = clear (revert to default
     /// stack), `Some(Some(name))` = set this family.
     #[serde(default, deserialize_with = "deserialize_optional_optional")]
@@ -1981,6 +1984,9 @@ fn update_settings(patch: SettingsPatch) -> Result<Settings, IpcError> {
     }
     if let Some(b) = patch.speed_rail_enabled {
         s.speed_rail_enabled = b;
+    }
+    if let Some(v) = patch.collapse_records_default {
+        s.collapse_records_default = v;
     }
     if let Some(opt) = patch.mono_font_family {
         s.mono_font_family = opt.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
@@ -3598,5 +3604,14 @@ mod tests {
             Ok(())
         })();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn settings_patch_captures_collapse_records_default() {
+        // Regression: the patch struct used to omit this field, so serde
+        // silently dropped it and the global default never changed.
+        let patch: SettingsPatch = serde_json::from_str(r#"{"collapse_records_default":"errors"}"#)
+            .expect("patch with collapse_records_default decodes");
+        assert_eq!(patch.collapse_records_default.as_deref(), Some("errors"));
     }
 }
