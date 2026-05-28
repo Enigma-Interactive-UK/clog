@@ -72,6 +72,10 @@ pub struct Settings {
     /// of the fallback chain still kicks in if the chosen face is gone.
     #[serde(default)]
     pub mono_font_family: Option<String>,
+    /// Global default collapse mode for multi-line records.
+    /// `"none"` | `"errors"` | `"all"`. Default `"none"`.
+    #[serde(default = "default_collapse_records_default")]
+    pub collapse_records_default: String,
 }
 
 impl Default for Settings {
@@ -88,6 +92,7 @@ impl Default for Settings {
             minimap_background_opacity: default_minimap_background_opacity(),
             speed_rail_enabled: true,
             mono_font_family: None,
+            collapse_records_default: default_collapse_records_default(),
         }
     }
 }
@@ -109,6 +114,9 @@ fn default_minimap_heatmap_blend() -> f32 {
 }
 fn default_minimap_background_opacity() -> f32 {
     0.5
+}
+fn default_collapse_records_default() -> String {
+    "none".to_string()
 }
 
 impl Settings {
@@ -205,6 +213,18 @@ pub struct RestoredFile {
     /// that no longer exist on next open are silently dropped UI-side.
     #[serde(default)]
     pub bookmarks: Vec<u64>,
+    /// Per-file collapse mode: `"inherit"` | `"none"` | `"errors"` | `"all"`.
+    /// Default `"inherit"` so a v1 session restores to "follow global".
+    #[serde(default = "default_collapse_mode")]
+    pub collapse_mode: String,
+    /// Sorted, deduped header-row physical line indices forced open against
+    /// the mode. Out-of-range entries are dropped UI-side on restore.
+    #[serde(default)]
+    pub manually_expanded: Vec<u64>,
+    /// Sorted, deduped header-row physical line indices forced closed against
+    /// the mode.
+    #[serde(default)]
+    pub manually_collapsed: Vec<u64>,
 }
 
 fn default_full_mask() -> u32 {
@@ -215,6 +235,9 @@ fn default_full_thread_group_mask() -> u32 {
 }
 fn default_smart() -> String {
     "smart".to_string()
+}
+fn default_collapse_mode() -> String {
+    "inherit".to_string()
 }
 
 impl Session {
@@ -474,10 +497,53 @@ mod thresholds_tests {
             search_case_sensitive: false,
             filter_mode: false,
             bookmarks: vec![],
+            collapse_mode: "inherit".into(),
+            manually_expanded: vec![],
+            manually_collapsed: vec![],
         };
         let json = serde_json::to_string(&r).expect("serialises");
         let back: RestoredFile = serde_json::from_str(&json).expect("round-trips");
         assert_eq!(back.thread_group_mask, 0x0B);
+    }
+
+    #[test]
+    fn restored_file_defaults_collapse_fields_when_absent() {
+        let raw = r#"{"path":"/x","scroll_top":0,"follow_tail":true,"level_mask":63,"thread_group_mask":63,"filter_text":"","search_mode":"smart","search_case_sensitive":false,"filter_mode":false,"bookmarks":[]}"#;
+        let r: RestoredFile = serde_json::from_str(raw).expect("v1 RestoredFile decodes");
+        assert_eq!(r.collapse_mode, "inherit");
+        assert!(r.manually_expanded.is_empty());
+        assert!(r.manually_collapsed.is_empty());
+    }
+
+    #[test]
+    fn restored_file_round_trips_collapse_fields() {
+        let r = RestoredFile {
+            path: "/x".into(),
+            scroll_top: 0.0,
+            follow_tail: true,
+            level_mask: 63,
+            thread_group_mask: 0x3F,
+            filter_text: String::new(),
+            search_mode: "smart".into(),
+            search_case_sensitive: false,
+            filter_mode: false,
+            bookmarks: vec![],
+            collapse_mode: "errors".into(),
+            manually_expanded: vec![3, 9, 12],
+            manually_collapsed: vec![7],
+        };
+        let json = serde_json::to_string(&r).expect("serialises");
+        let back: RestoredFile = serde_json::from_str(&json).expect("round-trips");
+        assert_eq!(back.collapse_mode, "errors");
+        assert_eq!(back.manually_expanded, vec![3, 9, 12]);
+        assert_eq!(back.manually_collapsed, vec![7]);
+    }
+
+    #[test]
+    fn settings_defaults_collapse_records_default_to_none() {
+        let raw = r#"{"schema":1,"theme":"dark","font_size":13,"recent_files":[],"follow_tail_default":true}"#;
+        let s: Settings = serde_json::from_str(raw).expect("v1 settings decodes");
+        assert_eq!(s.collapse_records_default, "none");
     }
 
     #[test]
