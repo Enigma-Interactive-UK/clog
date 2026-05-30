@@ -21,6 +21,7 @@
   Parser must be PatternLayout-driven, not hardcoded.
 - Files are typically reached via SMB from a WSL Ubuntu share. mmap is unsafe over SMB (rotation triggers access violations); streamed reads are the v1 path. SMB also makes `notify`-style change events unreliable — polling is the unified tail mechanism.
 - `OnStartupTriggeringPolicy` (wsl-oink) and `TimeBasedTriggeringPolicy` (prod) both rotate files; rotation detection via `(size shrank) OR (first 256 bytes hash changed)` covers both.
+- The custom context menu (`ContextMenu.vue` + `useContextMenu.ts`) is mounted once in `App.vue` with only its inner content gated by `v-if="open"`; the component never unmounts. Any component-local view state (e.g. `submenuOpenIdx`) therefore survives a hide/show cycle and must be explicitly reset when the menu closes - `watch(open, ...)` resetting on `!isOpen` is the funnel since the composable's `hide()` is the single close path (covers outside-click, Escape, window blur, resize). New per-open view state added to this surface needs the same reset.
 
 ## Do-Not-Repeat
 

@@ -11,7 +11,7 @@
  * is equivalent to staying inside the app). Submenus use the parent
  * item as their anchor.
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   useContextMenu,
   type MenuItem,
@@ -34,6 +34,18 @@ function clearHoverTimer() {
     hoverTimer = null
   }
 }
+
+// The menu surface is mounted once and only its content is v-if'd on
+// `open`, so component-local view state survives a hide/show cycle.
+// Reset the open-submenu index (and any pending hover timer) every time
+// the menu closes, otherwise a submenu left open when the menu lost
+// focus reappears already-expanded on the next right-click. Fixes #6.
+watch(open, (isOpen) => {
+  if (!isOpen) {
+    clearHoverTimer()
+    submenuOpenIdx.value = null
+  }
+})
 
 function isSubmenu(it: MenuItem): it is MenuSubmenu {
   return it.kind === 'submenu'
