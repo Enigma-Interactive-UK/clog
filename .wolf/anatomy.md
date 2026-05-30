@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:27:32.875Z
-> Files: 125 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:48:12.472Z
+> Files: 126 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -116,6 +116,7 @@
 - `2026-05-26-auto-update-design.md` — Auto-update - design (~4102 tok)
 - `2026-05-27-collapse-records-design.md` — Collapse records - design spec (~5272 tok)
 - `2026-05-27-zen-mode-design.md` — Zen mode - design spec (~1752 tok)
+- `2026-05-30-truncate-logs-design.md` — Truncate logs (collapse above/below) - design (~2114 tok)
 
 ## research/
 
