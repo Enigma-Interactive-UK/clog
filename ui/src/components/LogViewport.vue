@@ -1715,11 +1715,22 @@ function onRowContextMenu(row: LineRow | null, ev: MouseEvent) {
   if (!row) return
   ev.preventDefault()
   ev.stopPropagation()
-  const items: MenuItem[] = []
-  const clipboard = buildClipboardItems(ev)
-  if (clipboard.length > 0) {
-    items.push(...clipboard, { kind: 'separator' })
+  // Selection group: Copy (from buildClipboardItems) plus a Search action
+  // that drops the selected log text into this tab's search bar, replacing
+  // whatever was there. Both only appear when there is a real selection.
+  const items: MenuItem[] = [...buildClipboardItems(ev)]
+  const selection = globalThis.getSelection()?.toString().trim() ?? ''
+  if (selection.length > 0) {
+    items.push({
+      kind: 'action',
+      label: 'Search',
+      onSelect: () => {
+        props.tab.searchQuery.value = selection
+        props.tab.scheduleSearch()
+      },
+    })
   }
+  if (items.length > 0) items.push({ kind: 'separator' })
   items.push({
     kind: 'action',
     label: 'Show full record',
