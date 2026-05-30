@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:48:12.472Z
-> Files: 126 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:58:37.821Z
+> Files: 127 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -107,6 +107,7 @@
 - `2026-05-24-thread-insights.md` — Thread insights + consolidated filter flyout implementation plan (~11654 tok)
 - `2026-05-27-zen-mode.md` — Zen mode implementation plan (~4103 tok)
 - `2026-05-28-collapse-records.md` — Collapse Records Implementation Plan (~17269 tok)
+- `2026-05-30-truncate-logs.md` — Truncate logs (collapse above/below) Implementation Plan (~10571 tok)
 
 ## docs/superpowers/specs/
 
@@ -116,7 +117,7 @@
 - `2026-05-26-auto-update-design.md` — Auto-update - design (~4102 tok)
 - `2026-05-27-collapse-records-design.md` — Collapse records - design spec (~5272 tok)
 - `2026-05-27-zen-mode-design.md` — Zen mode - design spec (~1752 tok)
-- `2026-05-30-truncate-logs-design.md` — Truncate logs (collapse above/below) - design (~2114 tok)
+- `2026-05-30-truncate-logs-design.md` — Truncate logs (collapse above/below) - design (~2228 tok)
 
 ## research/
 

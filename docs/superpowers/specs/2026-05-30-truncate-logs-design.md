@@ -74,16 +74,21 @@ Each of these already snapshots its `Vec<RecordHeader>` under the lock. A shared
 helper slices that vec to the records whose `first_line` is in
 `[before, after)` (a `partition_point` pair) before the command computes:
 
-- `list_records_by_filters` (`main.rs:1328`)
-- `get_level_minimap` (`main.rs:1191`)
-- `get_markers` (`main.rs:1293`)
-- `get_slow_requests` (`main.rs:978`)
-- `get_slow_request_speeds` (`main.rs:1082`)
-- `get_slow_request_thresholds` (`main.rs:1114`)
-- `start_search` (`main.rs:1434`)
+- `list_records_by_filters` (`main.rs:1328`) - filter records by `first_line`.
+- `get_level_minimap` (`main.rs:1191`) - window-relative record copies + span.
+- `get_markers` (`main.rs:1293`) - filter emitted markers by `line_index`.
+- `get_slow_requests` (`main.rs:978`) - filter occurrences by `line_index`.
+- `get_slow_request_speeds` (`main.rs:1082`) - window-relative occurrence
+  copies + span.
+- `start_search` (`main.rs:1434`) - filter hits by `record_first_line` in the
+  emit path (absolute indices preserved).
 
 After this, insights P95/avg/counts, the speed rail, the minimap, search hits
 and the record map all compute as if the hidden lines were never in the file.
+
+`get_slow_request_thresholds` (`main.rs:1114`) is **not** windowed: it returns
+configuration (per-file / global overrides, or fixed auto constants), not data
+derived from the records, so the window does not affect it.
 
 ### `get_lines` is deliberately NOT windowed
 
