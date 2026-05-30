@@ -512,6 +512,17 @@ watch(
   },
 )
 
+// Applying or lifting a truncate window re-scopes which occurrences the
+// drawer aggregates (the backend windows get_slow_requests and the speed
+// grid). It is a discrete user action, not a tail stream, so refetch
+// immediately rather than through the tail debounce.
+watch(
+  () => [props.tab.truncateBefore.value, props.tab.truncateAfter.value],
+  () => {
+    if (props.tab.insightsOpen.value) void refresh()
+  },
+)
+
 const totals = computed(() => {
   const s = props.tab.slowRequestSummary.value
   if (!s) return 'Loading...'
