@@ -1256,9 +1256,32 @@ fn get_level_minimap(
     let file = guard
         .get(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
+    let (lo, hi) = file.truncate_window();
+    if file.truncate_before.is_none() && file.truncate_after.is_none() {
+        return Ok(build_level_minimap_payload(
+            &file.records,
+            file.line_count,
+            bucket_count as usize,
+        ));
+    }
+    let span = hi.saturating_sub(lo);
+    let windowed: Vec<RecordHeader> = file
+        .records
+        .iter()
+        .filter(|r| {
+            let f = u64::from(r.line_offset);
+            f >= lo && f < hi
+        })
+        .map(|r| {
+            let mut c = r.clone();
+            c.line_offset =
+                u32::try_from(u64::from(r.line_offset).saturating_sub(lo)).unwrap_or(u32::MAX);
+            c
+        })
+        .collect();
     Ok(build_level_minimap_payload(
-        &file.records,
-        file.line_count,
+        &windowed,
+        span,
         bucket_count as usize,
     ))
 }
@@ -1354,12 +1377,15 @@ fn get_markers(state: State<'_, AppState>, file_id: u64) -> Result<Vec<MarkerRef
     let file = guard
         .get(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
-    Ok(scan_markers(
+    let (lo, hi) = file.truncate_window();
+    let mut markers = scan_markers(
         &file.records,
         &file.bytes,
         &file.line_offsets,
         BUILTIN_MARKER_RULES,
-    ))
+    );
+    markers.retain(|m| m.line_index >= lo && m.line_index < hi);
+    Ok(markers)
 }
 
 /// Lightweight projection of a record. Used by the UI's level-mask + filter
@@ -1406,12 +1432,17 @@ fn list_records_by_filters(
         .ok_or(IpcError::UnknownFile { file_id })?;
     let lmask = LevelMask(u16::try_from(level_mask & 0xFFFF).unwrap_or(0xFFFF));
     let tmask = ThreadGroupMask(u8::try_from(thread_group_mask & 0xFF).unwrap_or(0x3F));
+    let (lo, hi) = file.truncate_window();
     let bytes = &file.bytes;
     let refs = file
         .records
         .iter()
         .enumerate()
         .filter(|(_, r)| {
+            let f = u64::from(r.line_offset);
+            if f < lo || f >= hi {
+                return false;
+            }
             if !lmask.allows(r.level) {
                 return false;
             }
@@ -2849,6 +2880,23 @@ mod tests {
         }
         assert_eq!(p.max_error_warn_sum, 1);
         assert_eq!(p.max_total, 1);
+    }
+
+    #[test]
+    fn windowed_minimap_relabels_buckets_to_span() {
+        // An Error record originally at line 5; window [5,10) relabels it to
+        // line 0 over span 5, so a 1-bucket grid must report Error.
+        let wb = RecordHeader {
+            byte_offset: 0,
+            byte_len: 0,
+            line_offset: 0,
+            line_count: 1,
+            level: Level::Error,
+            fields: HeaderFields::default(),
+        };
+        let payload = build_level_minimap_payload(&[wb], 5, 1);
+        assert_eq!(payload.buckets[0].worst, Level::Error);
+        assert_eq!(payload.buckets[0].error, 1);
     }
 
     /// Reproduces the symptom the user reported: each tail tick adds one
