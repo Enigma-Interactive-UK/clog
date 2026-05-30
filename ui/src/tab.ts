@@ -146,6 +146,19 @@ export function applyThreadGroupMaskToAllow(mask: number): Record<ThreadGroupKey
   return allow
 }
 
+// Single definition of the truncate-window out-of-range pruning rule, shared
+// by snapshot, restore and the test so the three sites cannot drift apart. A
+// before-cut keeps lines >= it, so it must be a valid line index (0..lineCount);
+// an after-cut keeps lines < it, so it may sit exactly at lineCount but must be
+// strictly positive (a cut at 0 hides everything and is meaningless).
+export function pruneTruncateBefore(value: number | null, lineCount: number): number | null {
+  return value !== null && value >= 0 && value < lineCount ? value : null
+}
+
+export function pruneTruncateAfter(value: number | null, lineCount: number): number | null {
+  return value !== null && value > 0 && value <= lineCount ? value : null
+}
+
 export function createTab(localId: number, opened: OpenedFile, defaults: TabDefaults, hooks: TabHooks = {}) {
   // --- File handle + page cache ---
   const file = ref<OpenedFile>(opened)
@@ -724,10 +737,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     transientlyExpanded.value = new Set() // never restored
     const tb = r.truncate_before
     const ta = r.truncate_after
-    truncateBefore.value =
-      typeof tb === 'number' && tb >= 0 && tb < limit ? tb : null
-    truncateAfter.value =
-      typeof ta === 'number' && ta > 0 && ta <= limit ? ta : null
+    truncateBefore.value = pruneTruncateBefore(typeof tb === 'number' ? tb : null, limit)
+    truncateAfter.value = pruneTruncateAfter(typeof ta === 'number' ? ta : null, limit)
     if (truncateBefore.value !== null || truncateAfter.value !== null) {
       void invoke('set_truncate', {
         fileId: file.value.file_id,
@@ -754,14 +765,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       collapse_mode: collapseMode.value,
       manually_expanded: prunedManualSet(manuallyExpanded.value),
       manually_collapsed: prunedManualSet(manuallyCollapsed.value),
-      truncate_before:
-        truncateBefore.value !== null && truncateBefore.value < file.value.line_count
-          ? truncateBefore.value
-          : null,
-      truncate_after:
-        truncateAfter.value !== null && truncateAfter.value <= file.value.line_count
-          ? truncateAfter.value
-          : null,
+      truncate_before: pruneTruncateBefore(truncateBefore.value, file.value.line_count),
+      truncate_after: pruneTruncateAfter(truncateAfter.value, file.value.line_count),
     }
   }
 
