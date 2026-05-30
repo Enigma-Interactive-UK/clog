@@ -173,9 +173,65 @@ struct OpenedFile {
     /// after any change to (records, bytes, pattern). Both
     /// `get_slow_requests` and `get_slow_request_speeds` read this.
     slow_request_cache: Option<SlowRequestCache>,
+    /// Inclusive lower bound (first visible physical line) of the truncate
+    /// window. `None` = no "above" cut. Snapped to a record's first line.
+    truncate_before: Option<u64>,
+    /// Exclusive upper bound (one past the last visible physical line) of the
+    /// truncate window. `None` = no "below" cut. Snapped to a record boundary.
+    truncate_after: Option<u64>,
 }
 
 impl OpenedFile {
+    /// Resolve the visible physical-line window, defaulting unset bounds to the
+    /// full file. Returns `(lo_inclusive, hi_exclusive)`.
+    fn truncate_window(&self) -> (u64, u64) {
+        let lo = self.truncate_before.unwrap_or(0);
+        let hi = self.truncate_after.unwrap_or(self.line_count);
+        (lo, hi)
+    }
+
+    /// Number of physical lines hidden above and below the window. Used only
+    /// for the windowed line/record counts returned to the UI.
+    fn windowed_line_count(&self) -> u64 {
+        let (lo, hi) = self.truncate_window();
+        hi.saturating_sub(lo).min(self.line_count)
+    }
+
+    /// Set (or clear) the truncate window. `before` is the first visible
+    /// physical line; `after` is one past the last visible physical line. Both
+    /// are expected pre-snapped to record boundaries by the caller. Rejects an
+    /// empty or inverted window. `(None, None)` clears the window.
+    fn apply_truncate(
+        &mut self,
+        before: Option<u64>,
+        after: Option<u64>,
+    ) -> Result<TruncatePayload, IpcError> {
+        if let (Some(b), Some(a)) = (before, after) {
+            if b >= a {
+                return Err(IpcError::BadPattern {
+                    message: format!("invalid truncate window: before={b} >= after={a}"),
+                });
+            }
+        }
+        self.truncate_before = before;
+        self.truncate_after = after;
+        let (lo, hi) = self.truncate_window();
+        let record_count = self
+            .records
+            .iter()
+            .filter(|r| {
+                let f = u64::from(r.line_offset);
+                f >= lo && f < hi
+            })
+            .count() as u64;
+        Ok(TruncatePayload {
+            before,
+            after,
+            line_count: self.windowed_line_count(),
+            record_count,
+        })
+    }
+
     fn rebuild_line_caches(&mut self, line_count: u64, line_offsets: Vec<u64>) {
         self.line_count = line_count;
         self.line_offsets = line_offsets;
@@ -454,6 +510,8 @@ fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenedFilePaylo
         search_cancel: None,
         search_join: None,
         slow_request_cache: None,
+        truncate_before: None,
+        truncate_after: None,
     };
     opened.rebuild_line_caches(
         line_index.line_count() as u64,
@@ -1320,6 +1378,16 @@ struct RecordRefsPayload {
     refs: Vec<RecordRef>,
 }
 
+#[derive(Debug, Serialize)]
+struct TruncatePayload {
+    before: Option<u64>,
+    after: Option<u64>,
+    /// Number of physical lines inside the window.
+    line_count: u64,
+    /// Number of records whose first line falls inside the window.
+    record_count: u64,
+}
+
 /// Return every record's `(record_idx, first_line, line_count)` whose
 /// level passes `level_mask` AND whose thread group passes
 /// `thread_group_mask`. The UI uses this to build `filteredLineIndices`
@@ -1377,6 +1445,24 @@ fn thread_group_of(rec: &clog_core::RecordHeader, bytes: &[u8]) -> ThreadGroup {
         }
         None => ThreadGroup::Other,
     }
+}
+
+/// Set (or clear) the truncate window for `file_id`. `before` is the first
+/// visible physical line; `after` is one past the last visible physical line.
+/// Both are expected pre-snapped to record boundaries by the caller. Rejects an
+/// empty or inverted window. `(None, None)` clears the window.
+#[tauri::command]
+fn set_truncate(
+    state: State<'_, AppState>,
+    file_id: u64,
+    before: Option<u64>,
+    after: Option<u64>,
+) -> Result<TruncatePayload, IpcError> {
+    let mut guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get_mut(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    file.apply_truncate(before, after)
 }
 
 #[tauri::command]
@@ -2480,6 +2566,7 @@ fn main() {
             start_search,
             cancel_search,
             list_records_by_filters,
+            set_truncate,
             get_data_dir,
             open_data_dir,
             get_settings,
@@ -2535,6 +2622,8 @@ mod tests {
             search_cancel: None,
             search_join: None,
             slow_request_cache: None,
+            truncate_before: None,
+            truncate_after: None,
         };
         (file, scanner)
     }
@@ -2587,6 +2676,46 @@ mod tests {
         assert_eq!(b.total, 4);
         assert_eq!(p.max_error_warn_sum, 3, "(error + warn) max");
         assert_eq!(p.max_total, 4);
+    }
+
+    #[test]
+    fn apply_truncate_rejects_inverted_and_counts_window() {
+        use std::fmt::Write as _;
+        let (mut file, scanner) = fresh_file();
+        // 100 single-line records, each its own header line -> line_offset 0..100.
+        let mut body = String::new();
+        for i in 0..100 {
+            writeln!(
+                body,
+                "[INFO ] 2026-05-22 16:28:59.246 [main] play - line {i}"
+            )
+            .expect("write to String");
+        }
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 100);
+        assert_eq!(file.records.len(), 100);
+
+        // Inverted window is rejected and leaves no partial state behind that
+        // would let the bad bounds count.
+        let err = file
+            .apply_truncate(Some(50), Some(20))
+            .expect_err("inverted window must be rejected");
+        assert!(matches!(err, IpcError::BadPattern { .. }));
+
+        // A valid window [10, 40) keeps 30 physical lines and the 30 records
+        // whose first line falls in [10, 40).
+        let payload = file
+            .apply_truncate(Some(10), Some(40))
+            .expect("valid window accepted");
+        assert_eq!(payload.before, Some(10));
+        assert_eq!(payload.after, Some(40));
+        assert_eq!(payload.line_count, 30);
+        assert_eq!(payload.record_count, 30);
+
+        // Clearing the window restores the full file.
+        let cleared = file.apply_truncate(None, None).expect("clear accepted");
+        assert_eq!(cleared.line_count, 100);
+        assert_eq!(cleared.record_count, 100);
     }
 
     #[test]
