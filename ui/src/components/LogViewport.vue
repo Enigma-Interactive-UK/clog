@@ -43,7 +43,7 @@ import {
   type GlobalCollapseDefault,
 } from '../collapse'
 import InsightsDrawer from './InsightsDrawer.vue'
-import { useContextMenu, type MenuItem } from '../composables/useContextMenu'
+import { buildClipboardItems, useContextMenu, type MenuItem } from '../composables/useContextMenu'
 
 const props = defineProps<{
   tab: Tab
@@ -1715,13 +1715,16 @@ function onRowContextMenu(row: LineRow | null, ev: MouseEvent) {
   if (!row) return
   ev.preventDefault()
   ev.stopPropagation()
-  const items: MenuItem[] = [
-    {
-      kind: 'action',
-      label: 'Show full record',
-      onSelect: () => { void fetchAndShowRecord(row.record_idx) },
-    },
-  ]
+  const items: MenuItem[] = []
+  const clipboard = buildClipboardItems(ev)
+  if (clipboard.length > 0) {
+    items.push(...clipboard, { kind: 'separator' })
+  }
+  items.push({
+    kind: 'action',
+    label: 'Show full record',
+    onSelect: () => { void fetchAndShowRecord(row.record_idx) },
+  })
   const universal = buildUniversalItems?.() ?? []
   if (universal.length > 0) {
     items.push({ kind: 'separator' }, ...universal)

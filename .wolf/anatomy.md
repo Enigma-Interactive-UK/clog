@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:04:08.142Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:27:32.875Z
 > Files: 125 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -47,7 +47,7 @@
 
 ## crates/clog-app/capabilities/
 
-- `default.json` (~158 tok)
+- `default.json` (~182 tok)
 
 ## crates/clog-app/gen/schemas/
 
@@ -59,7 +59,7 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~39454 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~39469 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~1092 tok)
 - `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~6103 tok)
 - `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1995 tok)
@@ -155,7 +155,7 @@
 
 ## ui/src/
 
-- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~5178 tok)
+- `App.vue` — App orchestrator. Composes the tab list, session save/restore, (~5219 tok)
 - `collapse.test.ts` — CollapseSets: sets, rec (~1777 tok)
 - `collapse.ts` — Pure collapse-records logic. No Vue or DOM dependencies so every rule is (~1641 tok)
 - `main.ts` (~32 tok)
@@ -172,13 +172,13 @@
 - `ClawdCameo.vue` — Konami-code easter egg: pixel-art Clawd scuttles across the tab strip (~659 tok)
 - `ClawdSprite.vue` — Pixel-art Clawd sprite, shared between the About modal (static inline (~590 tok)
 - `ColourPickerPopover.vue` — Compact popover that surfaces both foreground and background palette (~1606 tok)
-- `ContextMenu.vue` — Custom right-click context menu surface. Renders the items in (~3241 tok)
+- `ContextMenu.vue` — Custom right-click context menu surface. Renders the items in (~3365 tok)
 - `DropOverlay.vue` — Drop-target overlay shown while the user drags files over the window. (~286 tok)
 - `FiltersPopover.vue` — Popover hosting the level mask and thread-group mask toggles. Anchored (~1868 tok)
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
 - `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~11736 tok)
-- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~24655 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~24696 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `RecordModal.vue` — Full-record viewer modal. Shows the raw text of a single log record so (~1158 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2914 tok)
@@ -191,7 +191,7 @@
 ## ui/src/composables/
 
 - `useAppShortcuts.ts` — Global keyboard shortcuts wired to the document in capture phase. (~928 tok)
-- `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~470 tok)
+- `useContextMenu.ts` — Global custom context-menu state. One menu at a time; module-scoped (~1386 tok)
 - `useHighlightRules.ts` — Global + per-file highlight rule loading and engine wiring. (~1118 tok)
 - `useKonamiCode.ts` — Konami-code detector: up up down down left right left right b a. (~394 tok)
 - `useSession.ts` — Multi-tab session save/restore + the autosave watcher. (~1232 tok)

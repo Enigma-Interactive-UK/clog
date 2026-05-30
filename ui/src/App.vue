@@ -28,7 +28,7 @@ import TabStrip from './components/TabStrip.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
 import ZenExitPill from './components/ZenExitPill.vue'
 
-import { useContextMenu, type MenuItem, type MenuSlider, type MenuToggle } from './composables/useContextMenu'
+import { buildClipboardItems, useContextMenu, type MenuItem, type MenuSlider, type MenuToggle } from './composables/useContextMenu'
 
 import { useAppShortcuts } from './composables/useAppShortcuts'
 import { useHighlightRules } from './composables/useHighlightRules'
@@ -376,6 +376,10 @@ function onAppContextMenu(ev: MouseEvent) {
   const inMinimap = !!target?.closest('.minimap, .marker-rail')
 
   const items: MenuItem[] = []
+  const clipboard = buildClipboardItems(ev)
+  if (clipboard.length > 0) {
+    items.push(...clipboard, { kind: 'separator' })
+  }
   if (inMinimap) {
     items.push(...buildMinimapItems(), { kind: 'separator' })
   }
