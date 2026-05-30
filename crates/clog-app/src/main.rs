@@ -1043,13 +1043,17 @@ fn get_slow_requests(
     let file = guard
         .get_mut(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
+    let (lo, hi) = file.truncate_window();
     let _ = rebuild_slow_request_cache(file);
-    let occs = file
+    let occs: Vec<clog_core::SlowRequestOccurrence> = file
         .slow_request_cache
         .as_ref()
         .expect("rebuild leaves cache populated")
         .occurrences
-        .clone();
+        .iter()
+        .filter(|o| o.line_index >= lo && o.line_index < hi)
+        .cloned()
+        .collect();
     Ok(reaggregate_from_cache(&occs, mode))
 }
 
@@ -1147,16 +1151,25 @@ fn get_slow_request_speeds(
     let file = guard
         .get_mut(&file_id)
         .ok_or(IpcError::UnknownFile { file_id })?;
-    let line_count = file.line_count;
+    let (lo, hi) = file.truncate_window();
+    let span = hi.saturating_sub(lo);
     let _ = rebuild_slow_request_cache(file);
-    let occs = &file
+    let occs: Vec<clog_core::SlowRequestOccurrence> = file
         .slow_request_cache
         .as_ref()
         .expect("rebuild leaves cache populated")
-        .occurrences;
+        .occurrences
+        .iter()
+        .filter(|o| o.line_index >= lo && o.line_index < hi)
+        .map(|o| {
+            let mut c = o.clone();
+            c.line_index = o.line_index.saturating_sub(lo);
+            c
+        })
+        .collect();
     Ok(clog_core::build_speed_grid(
-        occs,
-        line_count,
+        &occs,
+        span,
         bucket_count as usize,
     ))
 }
@@ -2628,6 +2641,25 @@ fn main() {
 mod tests {
     use super::*;
     use clog_core::builtin_pattern;
+
+    #[test]
+    fn windowed_speed_grid_buckets_relative_to_span() {
+        use clog_core::{build_speed_grid, SlowRequestOccurrence};
+        // One occurrence at absolute line 8, duration 500ms. With a window
+        // [5, 10) (span 5) it relabels to line 3 -> bucket 3 of a 5-bucket grid.
+        let occ = SlowRequestOccurrence {
+            timestamp_ms: None,
+            duration_ms: 500,
+            line_index: 3, // already window-relative (8 - 5)
+            record_idx: 0,
+            dup_count: 1,
+            class_method: "GET.index".to_string(),
+            raw_path: "/x".to_string(),
+        };
+        let grid = build_speed_grid(&[occ], 5, 5);
+        assert_eq!(grid.buckets[3].count, 1);
+        assert_eq!(grid.buckets[3].max_ms, 500);
+    }
 
     /// Build a fresh `OpenedFile` with no content, wired up with the
     /// wsl-dev pattern so a stream of header lines can be appended via
