@@ -190,8 +190,8 @@ impl OpenedFile {
         (lo, hi)
     }
 
-    /// Number of physical lines hidden above and below the window. Used only
-    /// for the windowed line/record counts returned to the UI.
+    /// Number of physical lines visible inside the window. Used only for the
+    /// windowed line/record counts returned to the UI.
     fn windowed_line_count(&self) -> u64 {
         let (lo, hi) = self.truncate_window();
         hi.saturating_sub(lo).min(self.line_count)
