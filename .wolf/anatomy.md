@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T22:45:50.889Z
-> Files: 124 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T10:04:08.142Z
+> Files: 125 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -59,7 +59,7 @@
 ## crates/clog-app/src/
 
 - `channels.rs` — 60 Hz coalescing layer for streaming IPC channels. (~1041 tok)
-- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~40672 tok)
+- `main.rs` — Tauri commands take `State` by value by convention; the lint fires on every (~39454 tok)
 - `paths.rs` — Filesystem layout for clog's persistent data. (~1092 tok)
 - `persistence.rs` — On-disk JSON state: `settings.json`, `session.json`, `patterns.json`. (~6103 tok)
 - `update.rs` — Auto-update wiring: persisted cadence/snooze state and the small Rust (~1995 tok)
@@ -159,9 +159,10 @@
 - `collapse.test.ts` — CollapseSets: sets, rec (~1777 tok)
 - `collapse.ts` — Pure collapse-records logic. No Vue or DOM dependencies so every rule is (~1641 tok)
 - `main.ts` (~32 tok)
-- `style.css` — Styles: 219 vars (~6084 tok)
-- `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~7148 tok)
-- `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2603 tok)
+- `perf.ts` — [clog-perf] Temporary performance instrumentation. (~1021 tok)
+- `style.css` — Styles: 219 vars (~6197 tok)
+- `tab.ts` — Per-tab state container. A Tab owns every reactive ref that was (~7739 tok)
+- `types.ts` — Shared TypeScript interfaces used across the UI. Mirrors the wire shapes (~2906 tok)
 
 ## ui/src/components/
 
@@ -177,7 +178,7 @@
 - `HelloWorld.vue` — Vue: setup, TS (~755 tok)
 - `HighlightRulesEditor.vue` — Editable table of user highlight rules with a live preview pane. (~4219 tok)
 - `InsightsDrawer.vue` — Right-side collapsible drawer hosting the slow-request insights for (~11736 tok)
-- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~24247 tok)
+- `LogViewport.vue` — Per-tab viewport. Owns the virtualised line list, the minimap canvas, (~24655 tok)
 - `PatternModal.vue` — Pattern editor modal. Operates directly on the current tab's pattern (~1171 tok)
 - `RecordModal.vue` — Full-record viewer modal. Shows the raw text of a single log record so (~1158 tok)
 - `SearchBar.vue` — Search + filter + level-mask control bar for a single tab. All state (~2914 tok)
@@ -206,7 +207,7 @@
 
 - `default-rules.json` (~558 tok)
 - `engine.test.ts` — HighlightRulesFile: findCls (~1401 tok)
-- `engine.ts` — Reactive version counter. Bumped on every `setRules()` call so any Vue (~3424 tok)
-- `record-render.ts` — Render a log line's text into LeafSpans, applying axis-1 header field (~804 tok)
+- `engine.ts` — Reactive version counter. Bumped on every `setRules()` call so any Vue (~3473 tok)
+- `record-render.ts` — Render a log line's text into LeafSpans, applying axis-1 header field (~1552 tok)
 - `user-rule.test.ts` — UserHighlightRule: makeUserRule (~1304 tok)
 - `user-rule.ts` — Compose the effective engine rule set from the three layers: (~460 tok)

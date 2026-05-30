@@ -245,6 +245,9 @@ export interface LeafSpan {
   text: string
   cls: string // space-joined axis-1 cls + axis-2 cls
   url?: string
+  // Set on a synthetic affordance leaf (truncation marker) so the viewport
+  // can wire a click to "show full record" instead of opening a URL.
+  action?: 'show-record'
 }
 
 /**

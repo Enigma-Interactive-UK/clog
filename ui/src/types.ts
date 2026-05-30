@@ -38,7 +38,33 @@ export interface LineRow {
   byte_offset_in_record: number
   level: string
   fields: HeaderFields | null
+  /** Full byte length of the physical line. Used for the truncation affordance
+   *  label and to clamp window fetches. */
+  full_len: number
+  /** True when `text` was cut to fit the server-side transport cap. The
+   *  renderer shows a "show full record" affordance and search hits past the
+   *  cap are fetched as a window via `get_line_window`. Sent explicitly (not
+   *  re-derived from `full_len` vs char length, which is wrong for non-ASCII). */
+  truncated: boolean
   text: string
+}
+
+/** A bounded slice of a single physical line, centred on some offset, used to
+ *  surface a search match that sits past the transported text cap without
+ *  pulling the whole multi-MB line across the IPC bridge. */
+export interface LineWindowPayload {
+  /** Char offset within the physical line where `text` begins. */
+  start: number
+  /** Full length of the physical line. */
+  full_len: number
+  text: string
+}
+
+/** UI-side window record stored per line index on a tab. */
+export interface LineWindow {
+  text: string
+  start: number
+  fullLen: number
 }
 
 export interface HitRef {

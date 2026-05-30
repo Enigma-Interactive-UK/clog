@@ -31,6 +31,8 @@ import {
   type IpcError,
   type LineRow,
   type LinesPayload,
+  type LineWindow,
+  type LineWindowPayload,
   type LevelKey,
   type OpenedFile,
   type PatternTestPayload,
@@ -149,6 +151,15 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   const pages = ref(new Map<number, LineRow[]>())
   const inflight = new Map<number, number>()
   let nextGen = 0
+
+  // --- Windowed slices of monster lines ---
+  // A search match can sit past the per-line transport cap of a multi-MB
+  // line. For such lines we fetch a small slice centred on the match
+  // (`get_line_window`) and the renderer draws it with ellipsis markers, so
+  // every hit stays visible inline without dragging the whole line over IPC.
+  // Keyed by physical line index. Cleared whenever the hit set changes.
+  const lineWindows = ref(new Map<number, LineWindow>())
+  const windowInflight = new Set<number>()
 
   // --- Pattern bar ---
   const patternInput = ref<string>(opened.pattern_source)
@@ -333,6 +344,35 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     }
   }
 
+  // Fetch a slice of physical line `lineIndex` centred on `center` (a
+  // line-local char offset), extending `radius` each way, and cache it for the
+  // renderer. One window per line (the first hit that needs it); cleared when
+  // the hit set changes. Non-fatal on error.
+  async function fetchLineWindow(lineIndex: number, center: number, radius: number): Promise<void> {
+    if (lineWindows.value.has(lineIndex) || windowInflight.has(lineIndex)) return
+    windowInflight.add(lineIndex)
+    try {
+      const payload = await invoke<LineWindowPayload>('get_line_window', {
+        fileId: file.value.file_id,
+        lineIndex,
+        center,
+        radius,
+      })
+      const next = new Map(lineWindows.value)
+      next.set(lineIndex, { text: payload.text, start: payload.start, fullLen: payload.full_len })
+      lineWindows.value = next
+    } catch {
+      // non-fatal -- the line just shows its head with the truncation marker
+    } finally {
+      windowInflight.delete(lineIndex)
+    }
+  }
+
+  function clearLineWindows() {
+    windowInflight.clear()
+    if (lineWindows.value.size > 0) lineWindows.value = new Map()
+  }
+
   // --- Tail ----------------------------------------------------------------
 
   async function startTail(): Promise<void> {
@@ -368,6 +408,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
 
     if (delta.rotated) {
       pages.value = new Map()
+      clearLineWindows()
       file.value = {
         ...file.value,
         line_count: delta.line_count,
@@ -437,6 +478,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     const mask = buildLevelMaskFromAllow(levelAllow.value)
     const tgMask = buildThreadGroupMaskFromAllow(threadGroupAllow.value)
     const myGen = ++runSearchGen
+    // Hit positions are about to change; drop windows centred on the old ones.
+    clearLineWindows()
     if (query.trim().length === 0) {
       try {
         await invoke('cancel_search', { fileId })
@@ -504,6 +547,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     hitOrder.value = []
     currentHit.value = -1
     searchInflight.value = false
+    // Highlights are gone -> windowed monster lines revert to head truncation.
+    clearLineWindows()
   }
 
   function setSearchMode(mode: SearchMode) {
@@ -587,6 +632,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
         loose: payload.loose,
       }
       pages.value = new Map()
+      clearLineWindows()
       void fetchPage(0)
       void refreshRecordIndex()
     } catch (e) {
@@ -719,6 +765,9 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     clearBookmarks,
     lineRow,
     fetchPage,
+    lineWindows,
+    fetchLineWindow,
+    clearLineWindows,
     startTail,
     syncLastTailLineCount,
     scheduleSearch,

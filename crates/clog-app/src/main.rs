@@ -546,6 +546,17 @@ struct LinePayload {
     /// Populated only when `line_within_record == 0`. Spans are relative to
     /// the line's first byte, so the UI can slice directly out of `text`.
     fields: Option<HeaderFields>,
+    /// Full byte length of this physical line. When it exceeds `text.len()`
+    /// the line was truncated to `LINE_TEXT_CAP` for transport (a multi-MB
+    /// single-record JSON payload would otherwise stall the IPC bridge and
+    /// the renderer). The UI shows a "show full record" affordance and can
+    /// fetch a slice around any point via `get_line_window`; the full text
+    /// still flows through `get_record_lines`. ASCII is assumed, matching
+    /// the existing offset handling, so bytes == chars in practice.
+    full_len: u64,
+    /// True when `text` was cut to fit the transport cap. Byte-exact, so the
+    /// UI must not re-derive truncation from `full_len` vs the char length.
+    truncated: bool,
     text: String,
 }
 
@@ -587,13 +598,52 @@ fn get_record_lines(
     let rec = &file.records[rec_usz];
     let start = u64::from(rec.line_offset);
     let end = start + u64::from(rec.line_count);
-    build_lines_payload(file, start, end)
+    // Uncapped: the full-record modal must show the complete text, however
+    // large. The page path (`get_lines`) caps for scroll performance.
+    build_lines_payload_capped(file, start, end, None)
 }
 
-/// Pure helper that builds the page payload from an `OpenedFile`. Split out
-/// so tests can exercise the line/record/byte invariants without going
-/// through Tauri state.
+/// Maximum bytes of a single physical line's text shipped to the UI per page.
+/// Lines longer than this are truncated for transport; the UI renders a
+/// truncation affordance and can fetch a slice around any offset via
+/// `get_line_window`, while the full text remains available through
+/// `get_record_lines`. Sized well above a normal log line but far below the
+/// multi-MB single-record JSON payloads (see research/biscuit.out) that
+/// otherwise stall the IPC bridge, the highlight engine, and DOM layout.
+const LINE_TEXT_CAP: usize = 4096;
+
+/// Truncate `text` to at most `cap` bytes on a UTF-8 char boundary, leaving
+/// shorter lines untouched.
+fn cap_line_text(mut text: String, cap: usize) -> String {
+    if text.len() <= cap {
+        return text;
+    }
+    let mut cut = cap;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    text
+}
+
+/// Build the page payload from an `OpenedFile`, capping every line's text to
+/// `LINE_TEXT_CAP`. This is the paginated scroll path (`get_lines`); the full
+/// record text is served uncapped by `get_record_lines`. Existing callers and
+/// tests use this 3-arg form unchanged.
 fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesPayload, IpcError> {
+    build_lines_payload_capped(file, start, end, Some(LINE_TEXT_CAP))
+}
+
+/// Pure helper that builds the page payload from an `OpenedFile`. `cap`
+/// truncates each line's transported text (`None` = full text). Split out so
+/// tests can exercise the line/record/byte invariants without going through
+/// Tauri state.
+fn build_lines_payload_capped(
+    file: &OpenedFile,
+    start: u64,
+    end: u64,
+    cap: Option<usize>,
+) -> Result<LinesPayload, IpcError> {
     let total = file.line_count;
     if start >= total || end > total || start >= end {
         return Err(IpcError::OutOfRange);
@@ -629,6 +679,14 @@ fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesP
             e -= 1;
         }
         let text = String::from_utf8_lossy(&file.bytes[s..e]).into_owned();
+        let full_len = text.len() as u64;
+        let text = match cap {
+            Some(c) => cap_line_text(text, c),
+            None => text,
+        };
+        // Byte-based so it is correct for multi-byte UTF-8, unlike a UI-side
+        // `full_len > text.length` (chars) comparison.
+        let truncated = (text.len() as u64) < full_len;
         let fields = if line_within_record == 0 {
             Some(rec.fields.clone())
         } else {
@@ -641,12 +699,84 @@ fn build_lines_payload(file: &OpenedFile, start: u64, end: u64) -> Result<LinesP
             byte_offset_in_record,
             level: rec.level,
             fields,
+            full_len,
+            truncated,
             text,
         });
     }
     Ok(LinesPayload {
         start_line: start,
         lines,
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct LineWindowPayload {
+    /// Byte offset within the physical line where `text` begins.
+    start: u64,
+    /// Full byte length of the physical line (newline stripped).
+    full_len: u64,
+    text: String,
+}
+
+/// Return a bounded slice of a single physical line centred on `center`
+/// (a byte offset within the line), extending `radius` bytes each way. Lets
+/// the UI peek at a search match buried past `LINE_TEXT_CAP` in a monster
+/// line without dragging the whole multi-MB line across the IPC bridge.
+#[tauri::command]
+fn get_line_window(
+    state: State<'_, AppState>,
+    file_id: u64,
+    line_index: u64,
+    center: u64,
+    radius: u64,
+) -> Result<LineWindowPayload, IpcError> {
+    let guard = state.files.lock().expect("files mutex poisoned");
+    let file = guard
+        .get(&file_id)
+        .ok_or(IpcError::UnknownFile { file_id })?;
+    build_line_window(file, line_index, center, radius)
+}
+
+/// Pure helper behind `get_line_window`, split out for testing.
+fn build_line_window(
+    file: &OpenedFile,
+    line_index: u64,
+    center: u64,
+    radius: u64,
+) -> Result<LineWindowPayload, IpcError> {
+    if line_index >= file.line_count {
+        return Err(IpcError::OutOfRange);
+    }
+    let li = usize::try_from(line_index).unwrap_or(usize::MAX);
+    let line_start = file.line_offsets[li];
+    let line_end = if li + 1 < file.line_offsets.len() {
+        file.line_offsets[li + 1]
+    } else {
+        file.bytes.len() as u64
+    };
+    let s = usize::try_from(line_start).unwrap_or(usize::MAX);
+    let mut e = usize::try_from(line_end).unwrap_or(usize::MAX);
+    // Strip trailing newline so offsets line up with `build_lines_payload`.
+    if e > s && file.bytes[e - 1] == b'\n' {
+        e -= 1;
+    }
+    if e > s && file.bytes[e - 1] == b'\r' {
+        e -= 1;
+    }
+    let line_len = e - s;
+    let center = usize::try_from(center).unwrap_or(0).min(line_len);
+    let radius = usize::try_from(radius).unwrap_or(0);
+    let win_start = center.saturating_sub(radius);
+    let win_end = center.saturating_add(radius).min(line_len);
+    // `from_utf8_lossy` over a byte slice never panics on a split char, so no
+    // boundary alignment is needed; under the ASCII assumption the offsets are
+    // exact anyway.
+    let text = String::from_utf8_lossy(&file.bytes[s + win_start..s + win_end]).into_owned();
+    Ok(LineWindowPayload {
+        start: win_start as u64,
+        full_len: line_len as u64,
+        text,
     })
 }
 
@@ -2333,6 +2463,7 @@ fn main() {
             open_file,
             get_records,
             get_lines,
+            get_line_window,
             get_record_lines,
             close_file,
             test_pattern,
@@ -2455,6 +2586,100 @@ mod tests {
         assert_eq!(b.total, 4);
         assert_eq!(p.max_error_warn_sum, 3, "(error + warn) max");
         assert_eq!(p.max_total, 4);
+    }
+
+    #[test]
+    fn get_lines_caps_long_line_and_reports_full_len() {
+        let (mut file, scanner) = fresh_file();
+        let prefix = "[INFO ] 2026-05-22 16:28:59.246 [main] play - ";
+        let long_msg = "x".repeat(5000);
+        let body = format!("{prefix}{long_msg}\n");
+        extend(&mut file, &scanner, body.as_bytes());
+        assert_eq!(file.line_count, 1);
+
+        let payload = build_lines_payload(&file, 0, 1).expect("payload");
+        let line = &payload.lines[0];
+        let real_len = prefix.len() + long_msg.len();
+        assert_eq!(
+            line.full_len, real_len as u64,
+            "full_len is the untruncated length"
+        );
+        assert_eq!(line.text.len(), LINE_TEXT_CAP, "text capped to the limit");
+        assert!(line.text.len() < real_len, "line was actually truncated");
+        assert!(line.truncated, "capped line is flagged truncated");
+        assert!(
+            body.starts_with(&line.text),
+            "capped text is a prefix of the line"
+        );
+
+        // The uncapped path (get_record_lines / full-record modal) keeps it all.
+        let full = build_lines_payload_capped(&file, 0, 1, None).expect("uncapped");
+        assert_eq!(full.lines[0].text.len(), real_len, "uncapped is complete");
+        assert_eq!(full.lines[0].full_len, real_len as u64);
+        assert!(
+            !full.lines[0].truncated,
+            "uncapped line is not flagged truncated"
+        );
+    }
+
+    #[test]
+    fn get_lines_leaves_short_line_intact() {
+        let (mut file, scanner) = fresh_file();
+        let body = "[INFO ] 2026-05-22 16:28:59.246 [main] play - short\n";
+        extend(&mut file, &scanner, body.as_bytes());
+        let payload = build_lines_payload(&file, 0, 1).expect("payload");
+        let line = &payload.lines[0];
+        assert_eq!(
+            line.text,
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - short"
+        );
+        assert_eq!(line.full_len, line.text.len() as u64);
+        assert!(!line.truncated, "short line is not flagged truncated");
+    }
+
+    #[test]
+    fn multibyte_line_under_cap_is_not_flagged_truncated() {
+        // A non-ASCII line whose byte length exceeds its char count must not be
+        // mistaken for a truncated line (the modal-affordance regression).
+        let (mut file, scanner) = fresh_file();
+        let body =
+            "[INFO ] 2026-05-22 16:28:59.246 [main] play - \u{00b5}m \u{00d7} 3 \u{2192} ok\n";
+        extend(&mut file, &scanner, body.as_bytes());
+        let payload = build_lines_payload(&file, 0, 1).expect("payload");
+        let line = &payload.lines[0];
+        assert!(
+            line.full_len > line.text.chars().count() as u64,
+            "precondition: more bytes than chars"
+        );
+        assert!(!line.truncated, "multi-byte line under the cap is intact");
+    }
+
+    #[test]
+    fn line_window_centres_on_offset_and_clamps() {
+        let (mut file, scanner) = fresh_file();
+        let prefix = "[INFO ] 2026-05-22 16:28:59.246 [main] play - ";
+        let long_msg = "x".repeat(5000);
+        let body = format!("{prefix}{long_msg}\n");
+        extend(&mut file, &scanner, body.as_bytes());
+        let line_len = (prefix.len() + long_msg.len()) as u64;
+
+        // A window centred deep in the message returns a slice around it.
+        let w = build_line_window(&file, 0, 4000, 100).expect("window");
+        assert_eq!(w.full_len, line_len);
+        assert_eq!(w.start, 3900);
+        assert_eq!(w.text.len(), 200);
+        assert!(w.text.chars().all(|c| c == 'x'));
+
+        // A window past the end clamps to the line length.
+        let tail = build_line_window(&file, 0, line_len + 999, 50).expect("window");
+        assert_eq!(tail.start, line_len - 50);
+        assert_eq!(tail.text.len(), 50);
+
+        // Out-of-range line index errors.
+        assert!(matches!(
+            build_line_window(&file, 9, 0, 10),
+            Err(IpcError::OutOfRange)
+        ));
     }
 
     #[test]

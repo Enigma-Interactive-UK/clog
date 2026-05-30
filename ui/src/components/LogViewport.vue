@@ -309,6 +309,33 @@ watch(virtualRows, (rows) => {
   for (const p of wanted) void props.tab.fetchPage(p)
 })
 
+// --- Window fetch for highlighted matches past the transport cap ---
+// Any visible truncated line that carries a search match beyond the cap gets a
+// slice fetched around its match so the highlight is visible inline. A match
+// already within the transported head needs no window (it highlights in
+// place). Windows are dropped wholesale when the search/filter changes (see
+// tab.clearLineWindows), so a line with no highlights reverts to head
+// truncation. `pages` is a dep so the fetch retries once a row's page loads.
+const WINDOW_RADIUS = 600
+watch(
+  [virtualRows, () => props.tab.hits.value, () => props.tab.pages.value],
+  () => {
+    const tab = props.tab
+    if (tab.hits.value.size === 0) return
+    for (const r of virtualRows.value) {
+      const lineIdx = actualLineIndex(r.index)
+      const row = tab.lineRow(lineIdx)
+      if (!row || !row.truncated) continue
+      const hit = tab.hits.value.get(row.record_idx)
+      if (!hit || hit.ranges.length === 0) continue
+      const firstStart = hit.ranges[0][0] - row.byte_offset_in_record
+      if (firstStart < row.text.length) continue // match already in the head
+      if (tab.lineWindows.value.has(lineIdx)) continue
+      void tab.fetchLineWindow(lineIdx, firstStart, WINDOW_RADIUS)
+    }
+  },
+)
+
 // --- Sticky header ---
 interface StickyHeader {
   row: LineRow
@@ -1585,12 +1612,27 @@ onBeforeUnmount(() => {
 })
 
 // --- Rendering ---
-function renderLine(row: LineRow): LeafSpan[] {
+function renderLine(row: LineRow, lineIdx: number): LeafSpan[] {
   // Register reactive dep on the engine's rule version so saved rule edits
   // re-render the viewport without needing a scroll or tab switch.
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   rulesVersionRef.value
-  return renderLineSpans(row, props.tab.hits.value.get(row.record_idx))
+  const hit = props.tab.hits.value.get(row.record_idx)
+  // Reading lineWindows here registers the dep so a window that lands later
+  // re-renders just this row.
+  const window = props.tab.lineWindows.value.get(lineIdx)
+  return renderLineSpans(row, hit, window)
+}
+
+// A leaf is either a URL link, a truncation affordance ("show full record"),
+// or plain text. Route the first two; ignore the rest.
+function onLeafClick(span: LeafSpan, row: LineRow | null, ev: MouseEvent) {
+  if (span.action === 'show-record') {
+    ev.preventDefault()
+    if (row) void fetchAndShowRecord(row.record_idx)
+    return
+  }
+  if (span.url) void onSpanClick(span, ev)
 }
 
 async function onSpanClick(span: LeafSpan, ev: MouseEvent) {
@@ -1639,8 +1681,6 @@ const openRecordModalLoading = inject<((recordIdx: number) => number) | null>('o
 const failRecordModal = inject<((gen: number, recordIdx: number, message: string) => void) | null>('failRecordModal', null)
 const isCurrentRecordModalGen = inject<((gen: number) => boolean) | null>('isCurrentRecordModalGen', null)
 
-interface RecordHeaderLite { line_offset: number; line_count: number }
-interface RecordsResponse { headers: RecordHeaderLite[] }
 interface LinesResponse { lines: LineRow[] }
 
 async function fetchAndShowRecord(recordIdx: number) {
@@ -1648,20 +1688,10 @@ async function fetchAndShowRecord(recordIdx: number) {
   const hit = props.tab.hits.value.get(recordIdx) ?? null
   const gen = openRecordModalLoading?.(recordIdx) ?? 0
   try {
-    const recPayload = await invoke<RecordsResponse>('get_records', {
+    // Uncapped fetch: the modal shows the complete record, however large.
+    const linesPayload = await invoke<LinesResponse>('get_record_lines', {
       fileId,
-      start: recordIdx,
-      end: recordIdx + 1,
-    })
-    if (isCurrentRecordModalGen && !isCurrentRecordModalGen(gen)) return
-    const header = recPayload.headers[0]
-    if (!header) throw new Error('record not found')
-    const start = header.line_offset
-    const end = start + header.line_count
-    const linesPayload = await invoke<LinesResponse>('get_lines', {
-      fileId,
-      start,
-      end,
+      recordIdx,
     })
     if (isCurrentRecordModalGen && !isCurrentRecordModalGen(gen)) return
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -1757,11 +1787,11 @@ defineExpose({
           >&uarr;</button>
           <span class="txt">
             <span
-              v-for="(span, si) in renderLine(stickyHeader.row)"
+              v-for="(span, si) in renderLine(stickyHeader.row, stickyHeader.lineIndex)"
               :key="si"
               :class="span.cls"
               :data-url="span.url || null"
-              @click="span.url && onSpanClick(span, $event)"
+              @click="onLeafClick(span, stickyHeader.row, $event)"
             >{{ span.text }}</span>
           </span>
         </div>
@@ -1820,11 +1850,11 @@ defineExpose({
             >{{ actualLineIndex(vrow.index) + 1 }}</span>
             <span class="txt">
               <span
-                v-for="(span, si) in renderLine(lineRowVirtual(vrow.index)!)"
+                v-for="(span, si) in renderLine(lineRowVirtual(vrow.index)!, actualLineIndex(vrow.index))"
                 :key="si"
                 :class="span.cls"
                 :data-url="span.url || null"
-                @click="span.url && onSpanClick(span, $event)"
+                @click="onLeafClick(span, lineRowVirtual(vrow.index), $event)"
               >{{ span.text }}</span>
               <span
                 v-if="!chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).expanded && chevronFor(lineRowVirtual(vrow.index), actualLineIndex(vrow.index)).show"

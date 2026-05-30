@@ -519,6 +519,16 @@ textarea,
 .s-logger { color: var(--fg-logger); font-style: italic; }
 .s-message { color: var(--fg-message); }
 .s-sep { color: var(--fg-separator-dash); }
+/* Truncation affordance: the "... +N MB - show full record" marker on a line
+   whose text was capped for transport, and the ellipsis markers either side
+   of a windowed search match. Reads as a muted, clickable chip. */
+.s-truncation {
+  color: var(--accent);
+  font-style: italic;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.s-truncation:hover { opacity: 1; text-decoration: underline; }
 
 .h-exception { color: var(--hl-exception-fg); font-weight: 700; }
 .h-caused-by { color: var(--hl-caused-by-fg); font-weight: 700; }
