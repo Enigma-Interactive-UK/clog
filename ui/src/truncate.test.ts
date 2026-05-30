@@ -24,3 +24,36 @@ describe('truncate snapshot/restore pruning', () => {
     expect(pruneTruncateAfter(null, 100)).toBeNull()
   })
 })
+
+// Mirror of the context-menu enable/disable rules in onRowContextMenu.
+function truncateMenu(
+  recBefore: number,
+  recAfter: number,
+  tb: number | null,
+  ta: number | null,
+) {
+  const out: Array<{ label: string; disabled: boolean }> = []
+  if (tb === null) out.push({ label: 'Truncate before', disabled: ta !== null && recBefore >= ta })
+  if (ta === null) out.push({ label: 'Truncate after', disabled: tb !== null && recAfter <= tb })
+  return out
+}
+
+describe('truncate context menu', () => {
+  it('offers both when no cuts exist', () => {
+    const m = truncateMenu(10, 14, null, null)
+    expect(m.map((i) => i.label)).toEqual(['Truncate before', 'Truncate after'])
+    expect(m.every((i) => !i.disabled)).toBe(true)
+  })
+  it('hides before when a before-cut exists', () => {
+    const m = truncateMenu(10, 14, 5, null)
+    expect(m.map((i) => i.label)).toEqual(['Truncate after'])
+  })
+  it('disables a before-cut that would invert the window', () => {
+    const m = truncateMenu(50, 54, null, 40)
+    expect(m[0]).toEqual({ label: 'Truncate before', disabled: true })
+  })
+  it('disables an after-cut that would invert the window', () => {
+    const m = truncateMenu(10, 14, 20, null)
+    expect(m[0]).toEqual({ label: 'Truncate after', disabled: true })
+  })
+})
