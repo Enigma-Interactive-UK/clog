@@ -1613,7 +1613,7 @@ fn start_search(
     // run on a clone. Cancel any previous search, allocate a fresh flag
     // + id, and remember them on the file so cancel_search/close_file
     // can reach them.
-    let (records_snapshot, bytes_snapshot, search_id, cancel_flag) = {
+    let (records_snapshot, bytes_snapshot, search_id, cancel_flag, win_lo, win_hi) = {
         let mut guard = state.files.lock().expect("files mutex poisoned");
         let file = guard
             .get_mut(&file_id)
@@ -1623,7 +1623,8 @@ fn start_search(
         let id = file.current_search_id;
         let flag = Arc::new(AtomicBool::new(false));
         file.search_cancel = Some(flag.clone());
-        (file.records.clone(), file.bytes.clone(), id, flag)
+        let (lo, hi) = file.truncate_window();
+        (file.records.clone(), file.bytes.clone(), id, flag, lo, hi)
     };
 
     let app_handle = app.clone();
@@ -1657,6 +1658,15 @@ fn start_search(
             // still receives a terminal done message.
             Ok(Err(_)) | Err(_) => Vec::new(),
         };
+
+        // Drop hits whose record sits outside the truncate window before
+        // streaming, so the hit count and next/previous navigation only see
+        // the kept region. record_idx stays absolute (the window filters
+        // which hits stream, never renumbers them).
+        let hits: Vec<HitRef> = hits
+            .into_iter()
+            .filter(|h| h.record_first_line >= win_lo && h.record_first_line < win_hi)
+            .collect();
 
         // Stream them out in batched messages. The emitter ships
         // SEARCH_BATCH_SIZE per batch.
