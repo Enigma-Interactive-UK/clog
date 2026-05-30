@@ -313,33 +313,26 @@ fn get_markers(state: State<'_, AppState>, file_id: u64) -> Result<Vec<MarkerRef
 
 - [ ] **Step 4: Write a failing test for minimap windowing**
 
-There is already a minimap-style test path via `build_level_minimap_payload`. Add a unit test that asserts window-relative bucketing matches a manually-sliced file. Use the existing `build_level_minimap_payload` (it is a free function, callable from tests):
+`build_level_minimap_payload` is a free function callable from tests, and the `#[cfg(test)] mod tests` block uses `use super::*;`, so `RecordHeader`, `HeaderFields`, `Level` and `build_level_minimap_payload` are all already in scope (main.rs imports them at lines 19-22). `RecordHeader` has NO `Default`, so build an explicit literal (its six fields: `byte_offset: u64`, `byte_len: u32`, `line_offset: u32`, `line_count: u32`, `level: Level`, `fields: HeaderFields` - and `HeaderFields::default()` exists):
 
 ```rust
     #[test]
     fn windowed_minimap_relabels_buckets_to_span() {
-        // Two records: record A at line 0 (level Info), record B at line 5
-        // (level Error), file line_count = 10. A window of [5, 10) should put
-        // the Error record in bucket 0 of a 1-bucket grid.
-        use clog_core::record::RecordHeader;
-        let mut a = RecordHeader::default();
-        a.line_offset = 0;
-        a.line_count = 1;
-        a.level = Level::Info;
-        let mut b = RecordHeader::default();
-        b.line_offset = 5;
-        b.line_count = 1;
-        b.level = Level::Error;
-        // window [5,10): relabel B to line 0 over span 5.
-        let mut wb = b.clone();
-        wb.line_offset = 0;
+        // An Error record originally at line 5; window [5,10) relabels it to
+        // line 0 over span 5, so a 1-bucket grid must report Error.
+        let wb = RecordHeader {
+            byte_offset: 0,
+            byte_len: 0,
+            line_offset: 0,
+            line_count: 1,
+            level: Level::Error,
+            fields: HeaderFields::default(),
+        };
         let payload = build_level_minimap_payload(&[wb], 5, 1);
         assert_eq!(payload.buckets[0].worst, Level::Error);
         assert_eq!(payload.buckets[0].error, 1);
     }
 ```
-
-> If `RecordHeader` has no `Default`, construct it the way the existing tests do (inspect the slow_requests.rs test `make_file` helper at line 530 for the field set, or the existing main.rs minimap test). Match the real constructor; do not invent fields.
 
 - [ ] **Step 5: Run tests**
 
@@ -424,7 +417,7 @@ fn get_slow_request_speeds(
 
 - [ ] **Step 3: Write a failing test**
 
-`build_speed_grid` is public in `clog_core`. Add a unit test in `main.rs` tests (or extend `slow_requests.rs` tests) asserting window-relative speeds:
+`build_speed_grid` and `SlowRequestOccurrence` are public in `clog_core`. `SlowRequestOccurrence` has exactly these seven fields (slow_requests.rs:233): `timestamp_ms: Option<i64>`, `duration_ms: u32`, `line_index: u64`, `record_idx: u32`, `dup_count: u32`, `class_method: String`, `raw_path: String`. Add to the `main.rs` `#[cfg(test)]` module (`use super::*;` is in scope; `build_speed_grid`/`SlowRequestOccurrence` are reachable via `clog_core::`):
 
 ```rust
     #[test]
@@ -433,18 +426,19 @@ fn get_slow_request_speeds(
         // One occurrence at absolute line 8, duration 500ms. With a window
         // [5, 10) (span 5) it relabels to line 3 -> bucket 3 of a 5-bucket grid.
         let occ = SlowRequestOccurrence {
-            line_index: 3, // already window-relative (8 - 5)
+            timestamp_ms: None,
             duration_ms: 500,
-            raw_path: "/x".to_string(),
+            line_index: 3, // already window-relative (8 - 5)
+            record_idx: 0,
             dup_count: 1,
+            class_method: "GET.index".to_string(),
+            raw_path: "/x".to_string(),
         };
         let grid = build_speed_grid(&[occ], 5, 5);
         assert_eq!(grid.buckets[3].count, 1);
         assert_eq!(grid.buckets[3].max_ms, 500);
     }
 ```
-
-> Inspect `SlowRequestOccurrence` (slow_requests.rs line 233) and fill the struct literal with its real fields; if it has more/fewer fields than shown, match the actual definition exactly.
 
 - [ ] **Step 4: Run tests**
 
@@ -1001,15 +995,15 @@ In the component's `<style>` block (the `.total` rule lives there; search for `.
 }
 .truncate-banner-top {
   top: 0;
-  border-bottom: 1px dashed var(--border-strong, var(--fg-muted));
+  border-bottom: 1px dashed var(--border-default);
 }
 .truncate-banner-bottom {
   bottom: 0;
-  border-top: 1px dashed var(--border-strong, var(--fg-muted));
+  border-top: 1px dashed var(--border-default);
 }
 ```
 
-> Use existing palette tokens. If `--fg-muted` / `--bg-viewport` / `--border-strong` are not the exact token names in `ui/src/style.css`, substitute the nearest existing semantic tokens (check `style.css` `:root`). Do not hardcode colours (cerebrum CSS rule).
+> These tokens are confirmed present in `ui/src/style.css` (`--bg-viewport`, `--fg-muted`, `--fg-default`, `--border-default`) for both dark (`:root`) and light (`:root[data-theme="light"]`) themes. Do not hardcode colours (cerebrum CSS rule).
 
 - [ ] **Step 7: Extend the vitest with context-menu enable/disable logic**
 
@@ -1073,25 +1067,23 @@ git commit -m "Wired truncate into the viewport. The projection drops its identi
 
 **Files:**
 - Modify: `ui/src/components/StatusBar.vue`
-- Modify: `ui/src/components/LogViewport.vue` (only if StatusBar reads counts via props - inspect first)
 
-- [ ] **Step 1: Inspect StatusBar**
+`StatusBar.vue` declares `defineProps<{ tab: Tab | null }>()` and references the prop directly as `tab` in its template. The lines stat is at line 59: `<span class="stat">{{ formatCount(tab.file.value.line_count) }} lines</span>`. The `.muted` class is a global helper.
 
-Read `ui/src/components/StatusBar.vue`. Identify how it reads the current tab's line/record counts (prop or injected tab). Determine whether a windowed count is readily available (the tab exposes `truncateBefore` / `truncateAfter` and `file.line_count`).
+- [ ] **Step 1: Add a truncation hint after the lines stat**
 
-- [ ] **Step 2: Add a truncation hint**
-
-Where the line count is rendered, add a conditional suffix when a window is active. Example (adapt to the actual template and the tab reference name in StatusBar):
+Immediately after the lines `<span>` (line 59), add:
 
 ```html
-<span v-if="tab.truncateBefore.value !== null || tab.truncateAfter.value !== null" class="muted">
-  (truncated)
-</span>
+        <span
+          v-if="tab.truncateBefore.value !== null || tab.truncateAfter.value !== null"
+          class="stat muted"
+        >(truncated)</span>
 ```
 
-> Keep it minimal - a "(truncated)" marker is enough to make the state legible. Do not duplicate the per-banner counts here. Use existing `.muted` styling.
+> The surrounding block is already guarded by a `v-if` on `tab` being non-null, so `tab.truncateBefore` is safe here. Keep it minimal - the per-banner counts already show the hidden totals; this is just a legibility marker. Do not hardcode colour (use the existing `.muted` helper).
 
-- [ ] **Step 3: Verify build**
+- [ ] **Step 2: Verify build**
 
 Run: `npm --prefix ui run build`
 Expected: clean.
@@ -1152,6 +1144,7 @@ git commit -m "Logged the truncate-logs feature in project memory and updated th
 
 - **Absolute indices everywhere.** `record_idx` from `list_records_by_filters` and `record_first_line` from search stay absolute. The window only changes *which* records/hits are returned, never their numbering. Do not renumber.
 - **`get_lines` and `get_slow_request_thresholds` are intentionally NOT windowed.** `get_lines` is absolute-addressed line fetch (the projection never requests out-of-window lines, and clamping would desync the page-array offset). `get_slow_request_thresholds` returns config, not data.
-- **Match real struct shapes.** Several test snippets construct `RecordHeader` / `SlowRequestOccurrence` literals - confirm their actual fields (`record.rs`, `slow_requests.rs:233`) before writing the literal; do not invent fields.
+- **Struct shapes are pinned (verified).** `RecordHeader` (no `Default`; six fields: `byte_offset`, `byte_len`, `line_offset`, `line_count`, `level`, `fields`) and `SlowRequestOccurrence` (seven fields: `timestamp_ms`, `duration_ms`, `line_index`, `record_idx`, `dup_count`, `class_method`, `raw_path`) are reproduced exactly in the Task 2/3 test literals. `main.rs` already imports `RecordHeader`/`HeaderFields`/`Level` (lines 19-22), and the `#[cfg(test)] mod tests` uses `use super::*;`, so the literals need no extra imports.
 - **`recordIndex` is windowed after Task 2.** The viewport projection, collapse resolver, chevrons and context-menu record lookup all operate on visible (in-window) lines, so the windowed map is sufficient. The full-file fact retained is `file.line_count`, used only for the banner counts.
-- **Token names.** CSS must use existing semantic tokens from `ui/src/style.css`; verify the exact names (`--fg-muted`, `--bg-viewport`, etc.) before committing.
+- **Token names are pinned (verified).** `--bg-viewport`, `--fg-muted`, `--fg-default`, `--border-default` all exist in `ui/src/style.css` for both themes; the banner CSS uses only these.
+- **StatusBar is pinned (verified).** `defineProps<{ tab: Tab | null }>()`, template references `tab` directly, lines stat at line 59; the hint slots in right after it.
