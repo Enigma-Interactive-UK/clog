@@ -57,6 +57,10 @@ function formatBytes(n: number): string {
       <template v-if="tab">
         <span class="stat">{{ formatCount(tab.file.value.record_count) }} records</span>
         <span class="stat">{{ formatCount(tab.file.value.line_count) }} lines</span>
+        <span
+          v-if="tab.truncateBefore.value !== null || tab.truncateAfter.value !== null"
+          class="stat muted"
+        >(truncated)</span>
         <span class="stat" :title="`${formatCount(tab.file.value.size_bytes)} bytes`">{{ formatBytes(tab.file.value.size_bytes) }}</span>
       </template>
       <button
@@ -103,6 +107,7 @@ function formatBytes(n: number): string {
   .slot { display: flex; align-items: center; gap: 0.6rem; }
   .slot.right { margin-left: auto; gap: 1.5em; }
   .stat { color: var(--fg-muted); }
+  .stat.muted { color: var(--fg-dim); }
 
   .cache-hint {
     padding: 0.05rem 0.4rem;

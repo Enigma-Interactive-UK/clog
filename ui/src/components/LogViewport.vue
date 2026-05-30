@@ -33,6 +33,7 @@ import {
   type Settings,
 } from '../types'
 import type { Tab } from '../tab'
+import { canFollowTail } from '../tab'
 import {
   effectiveMode,
   isRecordExpanded,
@@ -199,14 +200,40 @@ const collapseHidesSomething = computed<boolean>(() => {
   return props.tab.manuallyCollapsed.value.size > 0
 })
 
+// A truncate window is active when either bound is set. With a window the
+// projection must NOT take the identity fast-path: the backend-windowed
+// recordIndex already holds only the in-window rows, so projecting it makes
+// the virtualiser's effective count track the kept region.
+const hasTruncate = computed<boolean>(
+  () => props.tab.truncateBefore.value !== null || props.tab.truncateAfter.value !== null,
+)
+
+// Hidden-line counts surfaced by the dashed banners. `truncateBefore` is the
+// first kept physical line, so it equals the number of lines hidden above.
+// `truncateAfter` is the exclusive end of the kept window, so everything from
+// it to line_count is hidden below.
+const hiddenBefore = computed<number>(() => props.tab.truncateBefore.value ?? 0)
+const hiddenAfter = computed<number>(() => {
+  const after = props.tab.truncateAfter.value
+  return after === null ? 0 : Math.max(0, props.tab.file.value.line_count - after)
+})
+
+function liftTruncateBefore() {
+  void props.tab.setTruncate(null, props.tab.truncateAfter.value)
+}
+function liftTruncateAfter() {
+  void props.tab.setTruncate(props.tab.truncateBefore.value, null)
+}
+
 // The ordered record list to project: filter-passing subset in filter mode,
 // else the full record map.
 const projectionRecords = computed<RecordRef[] | null>(() => {
   const filt = filteredSourceRecords.value
   if (filt !== null) return filt
   // No filter active. Only build from the full map when collapse hides
-  // something; otherwise signal identity by returning null.
-  if (!collapseHidesSomething.value) return null
+  // something or a truncate window is active; otherwise signal identity by
+  // returning null.
+  if (!collapseHidesSomething.value && !hasTruncate.value) return null
   return props.tab.recordIndex.value
 })
 
@@ -402,7 +429,7 @@ function onViewportScroll() {
     if (distance > rowHeight.value * 4) {
       props.tab.followTail.value = false
     }
-  } else if (distance <= rowHeight.value) {
+  } else if (distance <= rowHeight.value && canFollowTail(props.tab.truncateAfter.value)) {
     props.tab.followTail.value = true
   }
 }
@@ -418,8 +445,18 @@ function jumpToBottom() {
 }
 
 function toggleFollowTail() {
-  props.tab.followTail.value = !props.tab.followTail.value
-  if (props.tab.followTail.value) jumpToBottom()
+  if (props.tab.followTail.value) {
+    // Already following -> stop. (Turning follow off is always allowed.)
+    props.tab.followTail.value = false
+    return
+  }
+  // Not following -> always jump to the (windowed) bottom, but only re-engage
+  // follow when the tail is actually visible; an after-cut hides it, so
+  // following would be meaningless even though the jump is still wanted.
+  if (canFollowTail(props.tab.truncateAfter.value)) {
+    props.tab.followTail.value = true
+  }
+  jumpToBottom()
 }
 
 // Resolve which physical line within the hit's record actually contains the
@@ -1472,6 +1509,18 @@ watch(filteredSourceRecords, () => {
   scheduleMinimapFetch(true)
 })
 
+// A truncate window change reshapes the kept region, so the heatmap and
+// markers must recompute over the new window. Invalidate the cached line
+// counts and force a refetch.
+watch(
+  () => [props.tab.truncateBefore.value, props.tab.truncateAfter.value],
+  () => {
+    lastMinimapLineCount = -1
+    lastMarkerLineCount = -1
+    scheduleMinimapFetch(true)
+  },
+)
+
 // Configurable display knobs: a heatmap-blend change needs a canvas
 // repaint (alpha is baked into the pixels, not a CSS layer). Canvas
 // opacity is bound via :style so Vue handles the redraw.
@@ -1736,6 +1785,37 @@ function onRowContextMenu(row: LineRow | null, ev: MouseEvent) {
     label: 'Show full record',
     onSelect: () => { void fetchAndShowRecord(row.record_idx) },
   })
+  // Truncate group: one cut per side, snapped to the clicked record's
+  // boundaries. Offer "Truncate before" only when there is no before-cut yet,
+  // disabled when the cut would land at or past the existing after-cut (an
+  // inverted window). Symmetric rule for "Truncate after".
+  const rec = props.tab.recordIndex.value.find((r) => r.record_idx === row.record_idx)
+  if (rec) {
+    const before = rec.record_first_line
+    const after = rec.record_first_line + rec.record_line_count
+    const tb = props.tab.truncateBefore.value
+    const ta = props.tab.truncateAfter.value
+    const truncItems: MenuItem[] = []
+    if (tb === null) {
+      truncItems.push({
+        kind: 'action',
+        label: 'Truncate before',
+        disabled: ta !== null && before >= ta,
+        onSelect: () => { void props.tab.setTruncate(before, ta) },
+      })
+    }
+    if (ta === null) {
+      truncItems.push({
+        kind: 'action',
+        label: 'Truncate after',
+        disabled: tb !== null && after <= tb,
+        onSelect: () => { void props.tab.setTruncate(tb, after) },
+      })
+    }
+    if (truncItems.length > 0) {
+      items.push({ kind: 'separator' }, ...truncItems)
+    }
+  }
   const universal = buildUniversalItems?.() ?? []
   if (universal.length > 0) {
     items.push({ kind: 'separator' }, ...universal)
@@ -1811,6 +1891,13 @@ defineExpose({
         </div>
       </div>
       <div class="total" :style="{ height: `${totalSize}px` }">
+        <button
+          v-if="tab.truncateBefore.value !== null"
+          type="button"
+          class="truncate-banner truncate-banner-top"
+          :title="`Show the ${hiddenBefore} hidden lines above`"
+          @click="liftTruncateBefore"
+        >+{{ hiddenBefore }} lines before</button>
         <template v-for="vrow in virtualRows" :key="String(vrow.key)">
           <div
             v-if="lineRowVirtual(vrow.index)"
@@ -1877,6 +1964,13 @@ defineExpose({
             </span>
           </div>
         </template>
+        <button
+          v-if="tab.truncateAfter.value !== null"
+          type="button"
+          class="truncate-banner truncate-banner-bottom"
+          :title="`Show the ${hiddenAfter} hidden lines below`"
+          @click="liftTruncateAfter"
+        >+{{ hiddenAfter }} lines after</button>
       </div>
     </div>
       <button
@@ -2418,6 +2512,38 @@ defineExpose({
       100% var(--row-height),
       100% var(--row-height);
     background-repeat: repeat-y;
+  }
+
+  /* Dashed banners pinned to the head and tail of the kept window, sitting
+     above the rows (z-index 1) inside the position: relative .total. They
+     advertise the hidden-line count and lift their cut on click. */
+  .truncate-banner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--fg-muted);
+    background: color-mix(in srgb, var(--bg-viewport) 86%, transparent);
+    backdrop-filter: blur(2px);
+    border: 0;
+    cursor: pointer;
+  }
+  .truncate-banner:hover {
+    color: var(--fg-default);
+  }
+  .truncate-banner-top {
+    top: 0;
+    border-bottom: 2px dashed var(--level-error);
+  }
+  .truncate-banner-bottom {
+    bottom: 0;
+    border-top: 2px dashed var(--level-error);
   }
 
   .row {

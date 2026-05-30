@@ -94,6 +94,13 @@ export interface RecordRefsPayload {
   refs: RecordRef[]
 }
 
+export interface SetTruncatePayload {
+  before: number | null
+  after: number | null
+  line_count: number
+  record_count: number
+}
+
 export type SearchMode = 'smart' | 'regex'
 export type LevelKey = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 
@@ -188,6 +195,10 @@ export interface RestoredFile {
   manually_expanded?: number[]
   /** Header-row physical line indices forced closed against the mode. */
   manually_collapsed?: number[]
+  /** First visible physical line of the truncate window. Absent/null = no cut. */
+  truncate_before?: number | null
+  /** One past the last visible physical line of the truncate window. */
+  truncate_after?: number | null
 }
 
 export interface Session {

@@ -42,6 +42,7 @@ import {
   type RestoredFile,
   type SearchDelta,
   type SearchMode,
+  type SetTruncatePayload,
   type SlowRequestPathMode,
   type SlowRequestSummary,
   type TailDelta,
@@ -145,6 +146,27 @@ export function applyThreadGroupMaskToAllow(mask: number): Record<ThreadGroupKey
   return allow
 }
 
+// Single definition of the truncate-window out-of-range pruning rule, shared
+// by snapshot, restore and the test so the three sites cannot drift apart. A
+// before-cut keeps lines >= it, so it must be a valid line index (0..lineCount);
+// an after-cut keeps lines < it, so it may sit exactly at lineCount but must be
+// strictly positive (a cut at 0 hides everything and is meaningless).
+export function pruneTruncateBefore(value: number | null, lineCount: number): number | null {
+  return value !== null && value >= 0 && value < lineCount ? value : null
+}
+
+export function pruneTruncateAfter(value: number | null, lineCount: number): number | null {
+  return value !== null && value > 0 && value <= lineCount ? value : null
+}
+
+// Follow-tail only makes sense while the tail is visible. An after-cut hides
+// every line below it, so following the (hidden) tail is meaningless: the
+// chip would lie and the auto-scroll would do nothing. So follow-tail may
+// only engage when there is no after-cut.
+export function canFollowTail(truncateAfter: number | null): boolean {
+  return truncateAfter === null
+}
+
 export function createTab(localId: number, opened: OpenedFile, defaults: TabDefaults, hooks: TabHooks = {}) {
   // --- File handle + page cache ---
   const file = ref<OpenedFile>(opened)
@@ -231,6 +253,11 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
   // Refreshed on open, tail growth, rotation and pattern apply.
   const recordIndex = ref<RecordRef[]>([])
 
+  // --- Truncate window (physical line bounds; record-boundary snapped) ---
+  // Persisted per file. null = no cut on that side.
+  const truncateBefore = ref<number | null>(null)
+  const truncateAfter = ref<number | null>(null)
+
   function isBookmarked(lineIdx: number): boolean {
     return bookmarks.value.has(lineIdx)
   }
@@ -307,6 +334,44 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     } catch {
       // non-fatal -- keep the previous map; collapse falls back to identity
     }
+  }
+
+  // --- Truncate ------------------------------------------------------------
+
+  // Push a new truncate window to the backend, then refresh the windowed
+  // views. Setting an "after" cut disengages follow-tail (lines below the cut
+  // are not visible, so following them is meaningless). Non-fatal on error.
+  async function setTruncate(before: number | null, after: number | null): Promise<void> {
+    try {
+      const payload = await invoke<SetTruncatePayload>('set_truncate', {
+        fileId: file.value.file_id,
+        before,
+        after,
+      })
+      truncateBefore.value = payload.before
+      truncateAfter.value = payload.after
+      if (!canFollowTail(payload.after)) followTail.value = false
+      await refreshRecordIndex()
+      if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) {
+        void refreshAllowedRecords()
+      }
+      if (searchQuery.value.trim().length > 0) scheduleSearch()
+    } catch (e) {
+      const err = e as IpcError | string
+      hooks.onError?.(typeof err === 'string' ? err : err.message)
+    }
+  }
+
+  // Clear both cuts locally and on the backend, without the refresh cascade
+  // (callers that already re-index, e.g. rotation/pattern-apply, use this).
+  function resetTruncateState() {
+    truncateBefore.value = null
+    truncateAfter.value = null
+    void invoke('set_truncate', {
+      fileId: file.value.file_id,
+      before: null,
+      after: null,
+    }).catch(() => {})
   }
 
   // --- Helpers -------------------------------------------------------------
@@ -421,6 +486,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       // silently per the feature spec.
       clearBookmarks()
       clearCollapseOverrides()
+      resetTruncateState()
       void refreshRecordIndex()
       showRotationToast()
       void fetchPage(0)
@@ -635,6 +701,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       clearLineWindows()
       void fetchPage(0)
       void refreshRecordIndex()
+      resetTruncateState()
     } catch (e) {
       const err = e as IpcError | string
       patternError.value = typeof err === 'string' ? err : err.message
@@ -676,6 +743,22 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     manuallyExpanded.value = pruneIn(r.manually_expanded)
     manuallyCollapsed.value = pruneIn(r.manually_collapsed)
     transientlyExpanded.value = new Set() // never restored
+    const tb = r.truncate_before
+    const ta = r.truncate_after
+    truncateBefore.value = pruneTruncateBefore(typeof tb === 'number' ? tb : null, limit)
+    truncateAfter.value = pruneTruncateAfter(typeof ta === 'number' ? ta : null, limit)
+    // A restored after-cut hides the tail, so follow-tail cannot be active even
+    // if the saved session had it on.
+    if (!canFollowTail(truncateAfter.value)) followTail.value = false
+    if (truncateBefore.value !== null || truncateAfter.value !== null) {
+      void invoke('set_truncate', {
+        fileId: file.value.file_id,
+        before: truncateBefore.value,
+        after: truncateAfter.value,
+      })
+        .then(() => refreshRecordIndex())
+        .catch(() => {})
+    }
   }
 
   function snapshot(): RestoredFile {
@@ -693,6 +776,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       collapse_mode: collapseMode.value,
       manually_expanded: prunedManualSet(manuallyExpanded.value),
       manually_collapsed: prunedManualSet(manuallyCollapsed.value),
+      truncate_before: pruneTruncateBefore(truncateBefore.value, file.value.line_count),
+      truncate_after: pruneTruncateAfter(truncateAfter.value, file.value.line_count),
     }
   }
 
@@ -752,6 +837,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     manuallyCollapsed,
     transientlyExpanded,
     recordIndex,
+    truncateBefore,
+    truncateAfter,
     insightsOpen,
     slowRequestMode,
     slowRequestSort,
@@ -782,6 +869,8 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     setCollapseMode,
     clearCollapseOverrides,
     refreshRecordIndex,
+    setTruncate,
+    resetTruncateState,
     testPattern,
     applyPattern,
     applyRestored,
