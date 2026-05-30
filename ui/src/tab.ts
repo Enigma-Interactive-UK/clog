@@ -159,6 +159,14 @@ export function pruneTruncateAfter(value: number | null, lineCount: number): num
   return value !== null && value > 0 && value <= lineCount ? value : null
 }
 
+// Follow-tail only makes sense while the tail is visible. An after-cut hides
+// every line below it, so following the (hidden) tail is meaningless: the
+// chip would lie and the auto-scroll would do nothing. So follow-tail may
+// only engage when there is no after-cut.
+export function canFollowTail(truncateAfter: number | null): boolean {
+  return truncateAfter === null
+}
+
 export function createTab(localId: number, opened: OpenedFile, defaults: TabDefaults, hooks: TabHooks = {}) {
   // --- File handle + page cache ---
   const file = ref<OpenedFile>(opened)
@@ -342,7 +350,7 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
       })
       truncateBefore.value = payload.before
       truncateAfter.value = payload.after
-      if (after !== null) followTail.value = false
+      if (!canFollowTail(payload.after)) followTail.value = false
       await refreshRecordIndex()
       if (!isFullLevelMask(levelAllow.value) || !isFullThreadGroupMask(threadGroupAllow.value)) {
         void refreshAllowedRecords()
@@ -739,6 +747,9 @@ export function createTab(localId: number, opened: OpenedFile, defaults: TabDefa
     const ta = r.truncate_after
     truncateBefore.value = pruneTruncateBefore(typeof tb === 'number' ? tb : null, limit)
     truncateAfter.value = pruneTruncateAfter(typeof ta === 'number' ? ta : null, limit)
+    // A restored after-cut hides the tail, so follow-tail cannot be active even
+    // if the saved session had it on.
+    if (!canFollowTail(truncateAfter.value)) followTail.value = false
     if (truncateBefore.value !== null || truncateAfter.value !== null) {
       void invoke('set_truncate', {
         fileId: file.value.file_id,

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 // Import the real pruning rules from tab.ts so the boundary behaviour is
 // locked against the single definition that snapshot and restore also use.
-import { pruneTruncateBefore, pruneTruncateAfter } from './tab'
+import { pruneTruncateBefore, pruneTruncateAfter, canFollowTail } from './tab'
 
 describe('truncate snapshot/restore pruning', () => {
   it('keeps in-range bounds', () => {
@@ -55,5 +55,20 @@ describe('truncate context menu', () => {
   it('disables an after-cut that would invert the window', () => {
     const m = truncateMenu(10, 14, 20, null)
     expect(m[0]).toEqual({ label: 'Truncate after', disabled: true })
+  })
+})
+
+// Regression: the "following" chip appeared while truncated-after because the
+// scroll handler re-engaged follow-tail on settling at the (windowed) bottom.
+// Follow-tail must only engage when the tail is actually visible, i.e. no
+// after-cut. canFollowTail is the single rule the scroll auto-engage, the
+// follow toggle and the session restore all gate on.
+describe('truncate follow-tail gating', () => {
+  it('allows follow-tail when there is no after-cut', () => {
+    expect(canFollowTail(null)).toBe(true)
+  })
+  it('blocks follow-tail while an after-cut hides the tail', () => {
+    expect(canFollowTail(900)).toBe(false)
+    expect(canFollowTail(0)).toBe(false)
   })
 })

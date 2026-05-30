@@ -33,6 +33,7 @@ import {
   type Settings,
 } from '../types'
 import type { Tab } from '../tab'
+import { canFollowTail } from '../tab'
 import {
   effectiveMode,
   isRecordExpanded,
@@ -428,7 +429,7 @@ function onViewportScroll() {
     if (distance > rowHeight.value * 4) {
       props.tab.followTail.value = false
     }
-  } else if (distance <= rowHeight.value) {
+  } else if (distance <= rowHeight.value && canFollowTail(props.tab.truncateAfter.value)) {
     props.tab.followTail.value = true
   }
 }
@@ -444,8 +445,18 @@ function jumpToBottom() {
 }
 
 function toggleFollowTail() {
-  props.tab.followTail.value = !props.tab.followTail.value
-  if (props.tab.followTail.value) jumpToBottom()
+  if (props.tab.followTail.value) {
+    // Already following -> stop. (Turning follow off is always allowed.)
+    props.tab.followTail.value = false
+    return
+  }
+  // Not following -> always jump to the (windowed) bottom, but only re-engage
+  // follow when the tail is actually visible; an after-cut hides it, so
+  // following would be meaningless even though the jump is still wanted.
+  if (canFollowTail(props.tab.truncateAfter.value)) {
+    props.tab.followTail.value = true
+  }
+  jumpToBottom()
 }
 
 // Resolve which physical line within the hit's record actually contains the
@@ -2519,6 +2530,7 @@ defineExpose({
     letter-spacing: 0.04em;
     color: var(--fg-muted);
     background: color-mix(in srgb, var(--bg-viewport) 86%, transparent);
+    backdrop-filter: blur(2px);
     border: 0;
     cursor: pointer;
   }
@@ -2527,11 +2539,11 @@ defineExpose({
   }
   .truncate-banner-top {
     top: 0;
-    border-bottom: 1px dashed var(--border-default);
+    border-bottom: 2px dashed var(--level-error);
   }
   .truncate-banner-bottom {
     bottom: 0;
-    border-top: 1px dashed var(--border-default);
+    border-top: 2px dashed var(--level-error);
   }
 
   .row {
