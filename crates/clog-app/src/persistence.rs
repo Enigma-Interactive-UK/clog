@@ -225,6 +225,14 @@ pub struct RestoredFile {
     /// the mode.
     #[serde(default)]
     pub manually_collapsed: Vec<u64>,
+    /// First visible physical line (inclusive) of the truncate window, or
+    /// `None` for no "above" cut. Out-of-range values are dropped UI-side.
+    #[serde(default)]
+    pub truncate_before: Option<u64>,
+    /// One past the last visible physical line of the truncate window, or
+    /// `None` for no "below" cut.
+    #[serde(default)]
+    pub truncate_after: Option<u64>,
 }
 
 fn default_full_mask() -> u32 {
@@ -500,6 +508,8 @@ mod thresholds_tests {
             collapse_mode: "inherit".into(),
             manually_expanded: vec![],
             manually_collapsed: vec![],
+            truncate_before: None,
+            truncate_after: None,
         };
         let json = serde_json::to_string(&r).expect("serialises");
         let back: RestoredFile = serde_json::from_str(&json).expect("round-trips");
@@ -513,6 +523,8 @@ mod thresholds_tests {
         assert_eq!(r.collapse_mode, "inherit");
         assert!(r.manually_expanded.is_empty());
         assert!(r.manually_collapsed.is_empty());
+        assert_eq!(r.truncate_before, None);
+        assert_eq!(r.truncate_after, None);
     }
 
     #[test]
@@ -531,12 +543,16 @@ mod thresholds_tests {
             collapse_mode: "errors".into(),
             manually_expanded: vec![3, 9, 12],
             manually_collapsed: vec![7],
+            truncate_before: Some(12),
+            truncate_after: Some(900),
         };
         let json = serde_json::to_string(&r).expect("serialises");
         let back: RestoredFile = serde_json::from_str(&json).expect("round-trips");
         assert_eq!(back.collapse_mode, "errors");
         assert_eq!(back.manually_expanded, vec![3, 9, 12]);
         assert_eq!(back.manually_collapsed, vec![7]);
+        assert_eq!(back.truncate_before, Some(12));
+        assert_eq!(back.truncate_after, Some(900));
     }
 
     #[test]
